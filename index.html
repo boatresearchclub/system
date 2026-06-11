@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Boat Research Club</title>
+<!-- フォントをnon-blockingで読み込む（preconnect + media=print hack でレンダーブロック除去） -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"></noscript>
+<link rel="stylesheet" href="sample.css?v=20260520214511">
+
+<!-- ══ 認証スタイル（無料 / 有料 / 管理者） ══ -->
+<style>
+  /* ── 権限別: デフォルト非表示 ── */
+  .admin-only { display: none !important; }
+  .paid-only  { display: none !important; }
+
+  /* ── 有料モード時に表示 ── */
+  body.paid-mode  .paid-only  { display: revert !important; }
+  /* 管理者は有料相当なのでpaid-onlyも表示 */
+  body.admin-mode .paid-only  { display: revert !important; }
+
+  /* ── 管理者モード時に表示 ── */
+  body.admin-mode .admin-only { display: revert !important; }
+
+  /* ── 無料限定要素（有料/管理者では非表示）── */
+  .free-only { display: revert; }
+  body.paid-mode  .free-only  { display: none !important; }
+  body.admin-mode .free-only  { display: none !important; }
+
+  /* ── ロックオーバーレイ共通 ── */
+  .lock-overlay {
+    position: relative;
+  }
+  .lock-overlay::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--bg1, rgba(255,255,255,0.65));
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 2;
+  }
+  body.paid-mode  .lock-overlay::after { display: none; }
+  body.admin-mode .lock-overlay::after { display: none; }
+
+  /* ── 有料バッジ（ヘッダー内） ── */
+  #paid-badge {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(90deg, #185FA5, #378ADD);
+    border-radius: 4px;
+    padding: 2px 7px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(24,95,165,0.4);
+  }
+  body.paid-mode  #paid-badge  { display: flex; }
+  /* 管理者では有料バッジは出さず管理者バッジのみ */
+
+  /* ── ロックバナー（無料ユーザー向け） ── */
+  .free-lock-banner {
+    padding: 2rem 1.5rem;
+    text-align: center;
+    color: var(--text3, #888);
+  }
+  body.paid-mode  .free-lock-banner { display: none !important; }
+  body.admin-mode .free-lock-banner { display: none !important; }
+  .free-lock-banner .lock-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  .free-lock-banner .lock-msg  { font-size: 13px; line-height: 1.6; }
+  .free-lock-banner .lock-plan {
+    display: inline-block;
+    margin-top: 0.8rem;
+    font-size: 11px;
+    font-weight: 700;
+    color: #185FA5;
+    background: rgba(24,95,165,0.10);
+    border: 1px solid rgba(24,95,165,0.30);
+    border-radius: 6px;
+    padding: 4px 14px;
+  }
+
+  /* 会場・レース・種別・開催日程バー（進入変更バナーの上） */
+  #race-meta-bar {
+    position: sticky;
+    top: 52px;
+    z-index: 85;
+    background: var(--bg2, #fff);
+    padding: 7px 14px 7px;
+    font-size: 13px;
+    color: var(--text1, #1a1a1a);
+    border-bottom: 1px solid var(--border, rgba(0,0,0,0.10));
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  #race-meta-bar .rmb-venue {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text1, #1a1a1a);
+  }
+  #race-meta-bar .rmb-rno {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text1, #1a1a1a);
+  }
+  #race-meta-bar .rmb-day {
+    font-size: 12px;
+    color: var(--text2, #666);
+  }
+
+  /* 非管理者向けロックタブ: 有料/管理者モードで非表示 */
+  body.paid-mode  .user-only-tab { display: none !important; }
+  body.admin-mode .user-only-tab { display: none !important; }
+
+  /* 管理者モード時にロック画面を非表示 */
+
+  /* 管理者バッジ（ヘッダー内） */
+  #admin-badge {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(90deg, #b8860b, #daa520);
+    border-radius: 4px;
+    padding: 2px 7px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(184,134,11,0.4);
+  }
+  body.admin-mode #admin-badge { display: flex; }
+
+  /* 管理者パネル (BETTING_PARAMS / AI詳細設定) */
+  #admin-panel-section {
+    margin-top: 1.2rem;
+    padding: 1rem;
+    border: 1px solid #daa520;
+    border-radius: 10px;
+    background: rgba(184,134,11,0.06);
+  }
+  #admin-panel-section .admin-panel-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #daa520;
+    margin-bottom: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .admin-param-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+    font-size: 11px;
+  }
+  .admin-param-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .admin-param-label {
+    color: var(--text3, #888);
+    font-size: 10px;
+  }
+  .admin-param-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text1, #eee);
+    background: var(--bg2, #1a1a2e);
+    border: 1px solid var(--border, #333);
+    border-radius: 4px;
+    padding: 3px 7px;
+  }
+
+  /* AI予想タブ: 未認証時のブロック画面 */
+  #admin-lock-detail2 {
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    color: var(--text3, #888);
+  }
+
+  /* ── シナリオ期待値カード ── */
+  .scen-ev-card {
+    background: var(--bg2, #1a1a2e);
+    border: 1px solid var(--border, #333);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    transition: opacity .15s;
+  }
+  .scen-ev-card:active { opacity: .75; }
+  .scen-ev-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .scen-ev-venue {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text, #eee);
+  }
+  .scen-ev-race {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text2, #aaa);
+    background: var(--bg3, #222);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+  .scen-ev-badge {
+    margin-left: auto;
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  .scen-ev-card-body {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .scen-ev-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .scen-ev-label {
+    font-size: 9px;
+    color: var(--text3, #888);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .scen-ev-val {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text, #eee);
+  }
+  #admin-lock-detail2 .lock-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  #admin-lock-detail2 .lock-msg  { font-size: 13px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="nav-inner">
+    <div class="logo" onclick="goTopAndRefresh()" title="トップページへ（更新）">
+      <div class="logo-icon">⛵</div>
+      <span>Boat Research Club</span>
+    </div>
+    <div class="header-right">
+      <div class="header-meta-area">
+        <!-- 有料バッジ -->
+        <div id="paid-badge">👑 プレミアム</div>
+        <!-- 管理者バッジ -->
+        <div id="admin-badge">🔑 管理者</div>
+        <div class="header-meta" id="header-meta"></div>
+        <div class="date-nav" id="date-nav" style="display:none">
+          <button class="date-nav-btn" id="date-prev" onclick="shiftDate(-1)" title="前日">‹</button>
+          <span class="date-nav-label" id="date-nav-label"></span>
+          <button class="date-nav-btn" id="date-next" onclick="shiftDate(+1)" title="翌日">›</button>
+        </div>
+      </div>
+      <button id="refresh-btn" onclick="doRefresh()" title="更新">↻</button>
+    </div>
+  </div>
+</header>
+
+<!-- sticky nav（上段）: 締め切りアラート + 会場タブ ← スクロールで隠れる -->
+<div class="sticky-nav sticky-nav--upper">
+  <div id="alert-strip">
+    <div class="nav-inner">
+      <div class="alert-strip-title">⏱ まもなく締め切り</div>
+      <div class="alert-strip-cards" id="alert-cards"></div>
+    </div>
+  </div>
+  <div class="sticky-nav-venue">
+    <div class="nav-inner" style="padding-top:0;padding-bottom:0;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;display:flex">
+      <div id="venue-tabs"></div>
+    </div>
+  </div>
+  <div class="sticky-nav-race">
+    <div class="nav-inner" style="padding-top:0;padding-bottom:0;overflow-x:auto">
+      <div class="sticky-nav-race-inner" id="race-bar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOP PAGE ══ -->
+<div id="top-page">
+  <div class="top-hero">
+    <div class="top-hero-title">BOAT<br>RESEARCH<br>CLUB</div>
+    <div class="top-hero-sub">競艇レース分析・AI予想プラットフォーム</div>
+  </div>
+
+  <!-- 📢 お知らせ（開発記録）折りたたみセクション -->
+  <div id="news-accordion" style="margin-bottom:0.8rem">
+    <button
+      id="news-accordion-btn"
+      onclick="(function(){
+        var content = document.getElementById('news-accordion-content');
+        var arrow = document.getElementById('news-accordion-arrow');
+        var isOpen = content.style.display !== 'none';
+        content.style.display = isOpen ? 'none' : 'block';
+        arrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+      })()"
+      style="
+        width:100%;
+        display:flex;
+        align-items:center;
+        gap:8px;
+        background:var(--bg2,#fff);
+        border:1px solid var(--border,rgba(0,0,0,0.10));
+        border-radius:10px;
+        padding:10px 14px;
+        font-size:13px;
+        font-weight:700;
+        color:var(--text1,#1a1a1a);
+        cursor:pointer;
+        text-align:left;
+      "
+    >
+      <span>📢</span>
+      <span style="flex:1">お知らせ（開発記録）</span>
+      <span
+        id="news-accordion-arrow"
+        style="font-size:11px;color:var(--text3,#888);transition:transform 0.2s;display:inline-block;transform:rotate(0deg)"
+      >▼</span>
+    </button>
+    <div
+      id="news-accordion-content"
+      style="
+        display:none;
+        border:1px solid var(--border,rgba(0,0,0,0.10));
+        border-top:none;
+        border-radius:0 0 10px 10px;
+        padding:12px 14px;
+        background:var(--bg2,#fff);
+        font-size:13px;
+        color:var(--text2,#444);
+        line-height:1.7;
+      "
+    >
+      <!-- ここにお知らせ内容を入れる -->
+      <div style="color:var(--text3,#888);font-size:12px">改善点：買い目の表記の順番<br>　→2着3着も昇順<br>情報：オッズ一覧は実施未定<br>情報：選手コメントは現状一部しか表示されません(常滑、蒲郡の一部)</div>
+    </div>
+  </div>
+
+  <!-- 💬 LINEオープンチャット案内 -->
+  <a
+    href="https://lin.ee/NSdTldw"
+    target="_blank"
+    rel="noopener noreferrer"
+    style="
+      display:flex;
+      align-items:center;
+      gap:10px;
+      background:var(--bg2,#fff);
+      border:1px solid var(--border,rgba(0,0,0,0.10));
+      border-radius:10px;
+      padding:11px 13px;
+      text-decoration:none;
+      margin-bottom:0.8rem;
+      -webkit-tap-highlight-color:rgba(0,0,0,0.05);
+      touch-action:manipulation;
+    "
+  >
+    <div style="
+      width:32px;height:32px;border-radius:8px;
+      background:rgba(6,199,85,0.12);
+      display:flex;align-items:center;justify-content:center;
+      flex-shrink:0;
+    ">
+      <svg width="20" height="20" viewBox="0 0 36 36" fill="none">
+        <path d="M18 5C11.37 5 6 9.59 6 15.2c0 4.94 3.96 9.1 9.5 10.38l.5.12v3.3l4.6-2.54c.46.06.92.1 1.4.1C28.63 26.56 30 21.73 30 15.2 30 9.59 24.63 5 18 5z" fill="#06C755"/>
+        <rect x="11.5" y="14" width="3" height="3" rx="1" fill="#fff"/>
+        <rect x="16.5" y="14" width="3" height="3" rx="1" fill="#fff"/>
+        <rect x="21.5" y="14" width="3" height="3" rx="1" fill="#fff"/>
+      </svg>
+    </div>
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:700;color:var(--text1,#1a1a1a);margin-bottom:3px">承認制オープンチャット（予想コミュニティ）</div>
+      <div style="font-size:11px;color:var(--text2,#666)">公式LINEに <span style="display:inline-block;background:#06C755;color:#fff;font-size:10px;font-weight:700;border-radius:3px;padding:0 5px">オプチャ</span> と送ってください</div>
+    </div>
+    <div style="font-size:16px;color:var(--text3,#aaa)">›</div>
+  </a>
+
+  <!-- 🎯 的中速報（top_stats.js の _buildHitSokuhoPanel が書き込む） -->
+  <div class="top-section-label">🎯 本日の的中速報</div>
+  <div id="top-scen-ev-section" style="margin-bottom:0.8rem"></div>
+
+  <!-- 締め切りアラート -->
+  <div id="top-alert-strip">
+    <div class="top-alert-title"><span class="alert-dot" id="top-alert-dot"></span>⏱ まもなく締め切り</div>
+    <div class="top-alert-cards" id="top-alert-cards"></div>
+  </div>
+
+  <!-- ピックアップレース -->
+  <div id="top-pickup-section" style="display:none">
+    <div class="top-section-label">💡 ピックアップレース</div>
+    <div id="top-pickup-cards" style="
+      display:flex;flex-direction:row;gap:8px;
+      overflow-x:auto;
+      padding-bottom:6px;
+      margin-bottom:1rem;
+      scrollbar-width:none;
+      -webkit-overflow-scrolling:touch;
+    "></div>
+  </div>
+
+  <!-- 会場クイックジャンプ -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:0.6rem">
+    <div class="top-section-label" id="top-venue-date-label" style="margin-bottom:0;flex:1;min-width:0">🏟 本日の開催場</div>
+    <div class="date-nav" id="top-date-nav" style="display:none;flex-shrink:0">
+      <button class="date-nav-btn" id="top-date-prev" onclick="topShiftDate(-1)" title="前日">‹</button>
+      <span class="date-nav-label" id="top-date-nav-label"></span>
+      <button class="date-nav-btn" id="top-date-next" onclick="topShiftDate(+1)" title="翌日">›</button>
+    </div>
+  </div>
+  <div class="top-venues-row" id="top-venue-chips">
+    <span style="color:var(--text3);font-size:12px">データを読み込み中...</span>
+  </div>
+
+  <!-- 本日のAI予想成績 -->
+  <div class="top-section-label">🤖 本日のAI予想成績</div>
+<div style="font-size:11px;color:var(--text3);margin-bottom:0.2rem;padding:0 0.1rem">※以下の条件は除外</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.1rem;padding:0 0.6rem">・江戸川</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.1rem;padding:0 0.6rem">・データ不足、展示進入変更、チルト1.5以上</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.1rem;padding:0 0.6rem">・周回短縮</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.2rem;padding:0 0.6rem">・合成オッズ参加基準以下</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.4rem;padding:0 0.1rem">※回収率は1点100円で購入した場合で算出</div>
+
+  <div id="top-ai-stats-today">
+    <span style="color:var(--text3);font-size:12px">集計中...</span>
+  </div>
+
+  <!-- 過去のAI予想成績 -->
+  <div class="top-section-label" style="margin-top:1.2rem;display:flex;align-items:center;gap:8px">
+    <span>📊 過去のAI予想成績（直近30日）</span>
+    <span id="top-ai-stats-history-updated" style="font-size:11px;font-weight:400;color:var(--text3)"></span>
+  </div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.2rem;padding:0 0.1rem">※以下の条件は除外</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.1rem;padding:0 0.6rem">・江戸川</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.1rem;padding:0 0.6rem">・データ不足、展示進入変更、チルト1.5以上</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.1rem;padding:0 0.6rem">・周回短縮</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.2rem;padding:0 0.6rem">・合成オッズ参加基準以下</div>
+  <div style="font-size:11px;color:var(--text3);margin-bottom:0.4rem;padding:0 0.1rem">※回収率は1点100円で購入した場合で算出</div>
+  <div id="top-ai-stats-history-summary">
+    <span style="color:var(--text3);font-size:12px">集計中...</span>
+  </div>
+
+  <!-- ▼▼▼ CSVダウンロードボタン群: 管理者のみ表示 ▼▼▼ -->
+  <div class="admin-only" style="margin-bottom:0.7rem;padding:0 0.1rem;display:flex;flex-wrap:wrap;gap:6px">
+    <button onclick="exportBacktestCSV('hit')" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+      ⬇ 🎯 的中重視 CSV
+    </button>
+    <button onclick="exportBacktestCSV('rec')" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+      ⬇ 💰 回収重視 CSV
+    </button>
+    <button onclick="exportBacktestCSV_scen()" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+      ⬇ 🎲 シナリオ CSV
+    </button>
+    <button onclick="exportBacktestCSV()" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+      ⬇ 全部ダウンロード
+    </button>
+    <button onclick="exportStatsCSV('in_tetsup')" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--accent2,#4fc);cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+      ⬇ 🔒 イン鉄板 CSV
+    </button>
+    <button onclick="exportStatsCSV('in_neg')" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--orange,#f90);cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+      ⬇ 🚫 イン否定 CSV
+    </button>
+    <span style="width:1px;height:24px;background:var(--border);align-self:center;flex-shrink:0"></span>
+    <button onclick="exportAnalysisCSV()" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--accent,#7c6);background:var(--bg2);color:var(--accent,#7c6);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:700">
+      ⬇ 📊 改善分析 CSV（全戦略）
+    </button>
+  </div>
+  <!-- ▲▲▲ CSVダウンロードボタン群 ここまで ▲▲▲ -->
+
+  <!-- 各日詳細: 常時表示、中身は有料/管理者のみ -->
+  <div class="top-section-label" style="margin-top:0.5rem">📅 各日詳細</div>
+  <!-- 無料ユーザー向けロックカード -->
+  <div id="user-lock-ai-stats" class="user-only-tab free-lock-banner">
+    <div class="lock-icon">🔒</div>
+    <div class="lock-msg">各日の詳細成績はプレミアム会員限定です</div>
+    <div class="lock-plan">👑 プレミアムで解放</div>
+  </div>
+  <!-- 有料/管理者: 各日詳細本体 -->
+  <div id="top-ai-stats" class="paid-only admin-only">
+    <span style="color:var(--text3);font-size:12px">集計中...</span>
+  </div>
+
+  <div class="top-info-box">
+    💡 <strong>使い方：</strong>上の「本日の開催場」から会場を選ぶか、メニューカードをタップすると各機能へ進みます。<br>
+    左上の <strong>⛵ Boat Research Club</strong> をタップすると、いつでもこのページに戻れます。
+  </div>
+</div>
+
+<div class="container">
+  <!-- 会場・レース・種別・開催日程バー（進入変更バナーの上） -->
+  <div id="race-meta-bar" style="display:none"></div>
+  <!-- 常時表示バナー（タブ切替に関係なく表示） -->
+  <div id="persistent-banners"></div>
+
+  <!-- タブ -->
+  <div class="tab-bar" id="tab-bar">
+    <button class="tab-btn active" data-tab="detail" onclick="switchTab('detail')">出走表</button>
+    <button class="tab-btn" data-tab="buy" onclick="switchTab('buy')">展開分析</button>
+    <button class="tab-btn" data-tab="odds" onclick="switchTab('odds')">オッズ</button>
+    <!-- AI予想タブ: 常時表示 -->
+    <button class="tab-btn" data-tab="detail2" onclick="switchTab('detail2')">AI予想</button>
+    <button class="tab-btn" data-tab="comment" onclick="switchTab('comment')">選手情報</button>
+    <button class="tab-btn" data-tab="result" onclick="switchTab('result')">結果</button>
+  </div>
+
+  <!-- 出走表タブ -->
+  <div id="tab-detail">
+    <div id="inline-detail"></div>
+  </div>
+
+  <!-- AI予想タブ -->
+  <div id="tab-detail2" style="display:none">
+    <!-- 無料ユーザー向けロックバナー -->
+    <div id="detail2-lock-banner" class="free-lock-banner">
+      <div class="lock-icon">🔒</div>
+      <div class="lock-msg">AI予想（シナリオ・イン鉄板・イン否定・的中重視・回収重視）はプレミアム会員限定です</div>
+      <div class="lock-plan">👑 プレミアムで解放</div>
+    </div>
+    <!-- 有料/管理者のみ: AI予想本体 -->
+    <div id="detail2-panel" class="paid-only">
+      <div style="padding:2rem;text-align:center;color:var(--text3)">レースを選択するとAI予想が表示されます</div>
+    </div>
+  </div>
+
+  <!-- 展開分析タブ -->
+  <div id="tab-buy" style="display:none">
+    <div id="buy-panel">
+      <div style="padding:2rem;text-align:center;color:var(--text3)">レースを選択すると買い目が表示されます</div>
+    </div>
+  </div>
+
+  <!-- 選手情報タブ -->
+  <div id="tab-comment" style="display:none">
+    <div id="comment-panel">
+      <div style="padding:2rem;text-align:center;color:var(--text3)">レースを選択すると選手情報が表示されます</div>
+    </div>
+  </div>
+
+  <!-- 結果タブ -->
+  <div id="tab-result" style="display:none">
+    <div id="result-panel">
+      <div style="padding:2rem;text-align:center;color:var(--text3)">（未実装）</div>
+    </div>
+  </div>
+
+  <div id="tab-odds" style="display:none">
+    <div id="odds-panel">
+      <div style="padding:2rem;text-align:center;color:var(--text3)">オッズ未取得</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- data.js は同期（グローバル変数を即時定義するため defer 不可） -->
+<script src="data.js?v=20260611142302"></script>
+<!-- 残りのスクリプトは defer で並列ダウンロード・DOMContentLoaded後に順序保証付き実行 -->
+<!-- これによりHTMLパース・初期描画をブロックしなくなる -->
+<script defer src="params_obf.js?v=20260611142302"></script>
+<!-- TEMP: <script defer src="csv_export_obf.js?v=20260611142302"></script> -->
+<script defer src="sim_obf.js?v=20260611142302"></script>
+<!-- TEMP: <script defer src="backtest_obf.js?v=20260611142302"></script> -->
+<script defer src="top_page_obf.js?v=20260611142302"></script>
+<script defer src="sample_obf.js?v=20260611142302"></script>
+<script defer src="top_stats_obf.js?v=20260611142302"></script>
+<!-- TEMP: <script defer src="calibration.js?v=20260611142302"></script> -->
+<!-- TEMP: <script defer src="dynamic_inn2place.js?v=20260611142302"></script> -->
+<!-- TEMP: <script defer src="computeScenCombosWithEV.js?v=20260611142302"></script> -->
+<!-- TEMP: <script defer src="quality_filter_patch.js"></script> -->
+<!-- TEMP: <script defer src="manshu_hunter.js"></script> -->
+
+<!-- ══ 認証スクリプト（無料 / 有料 / 管理者） ══ -->
+<script>
+(function () {
+  // ── トークンハッシュ（SHA-256） ──────────────────────────────
+  // PAID_TOKEN_HASH  : 有料パスワードを sha256hex() した値に差し替えてください
+  // ADMIN_TOKEN_HASH : 既存の管理者パスワードハッシュ（変更不要）
+  const PAID_TOKEN_HASH  = 'e781c1300ffef568f7b620b29c03b22b6f8223b5c55b5594b6c11a50c5cf36b2';
+  const ADMIN_TOKEN_HASH = 'd72c16f080bee83fbbc47219c5e2be868364de15163e40d60972f64eceda5468';
+
+  // ── SHA-256 ヘルパー ─────────────────────────────────────────
+  async function sha256hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+
+  // ── URLハッシュからパラメータを取得 ─────────────────────────
+  // 例: index.html#admin=xxx&paid=yyy
+  // #以降はサーバーに送信されず、iOSホーム画面ブックマークにも残る。
+  function getHashParam(key) {
+    const hash = window.location.hash.slice(1);
+    return new URLSearchParams(hash).get(key) || '';
+  }
+
+  // ── グローバル: 現在のtierを参照できるようにする ────────────
+  // JS側で `window.APP_TIER === 'paid'` 等の条件分岐に使用可能
+  // 値: 'free' | 'paid' | 'admin'
+  window.APP_TIER = 'free';
+
+  // ── 有料モードを有効化 ───────────────────────────────────────
+  function activatePaidMode() {
+    window.APP_TIER = 'paid';
+    document.body.classList.add('paid-mode');
+  }
+
+  // ── 管理者モードを有効化 ─────────────────────────────────────
+  function activateAdminMode() {
+    window.APP_TIER = 'admin';
+    document.body.classList.add('admin-mode');
+
+    // BETTING_PARAMS と FINAL_PROB_WEIGHTS を管理者パネルに表示
+    renderAdminParams();
+  }
+
+  // ── BETTING_PARAMS をパネルに描画 ────────────────────────────
+  function renderAdminParams() {
+    const grid = document.getElementById('admin-params-display');
+    if (!grid) return;
+
+    const bp = (typeof BETTING_PARAMS !== 'undefined') ? BETTING_PARAMS : null;
+    const fw = (typeof FINAL_PROB_WEIGHTS !== 'undefined') ? FINAL_PROB_WEIGHTS : null;
+
+    if (!bp) {
+      grid.innerHTML = '<span style="color:var(--text3)">BETTING_PARAMS 未読込（sample.js 読み込み後に再表示）</span>';
+      return;
+    }
+
+    function fmt(v) {
+      if (v instanceof Set) return [...v].join(', ') || '（なし）';
+      if (typeof v === 'number') return v;
+      return String(v);
+    }
+
+    const rows = [
+      ['hit_allowed_venues', fmt(bp.hit_allowed_venues)],
+      ['skip_venues',        fmt(bp.skip_venues)],
+      ['are_hit_max',        bp.are_hit_max],
+      ['sweet_base_min',     bp.sweet_base_min],
+      ['sweet_base_max',     bp.sweet_base_max],
+      ['sweet_tenkai_max',   bp.sweet_tenkai_max],
+      ['hd1_tenkai_max',     bp.hd1_tenkai_max],
+      ['hd1_rec_base_min',   bp.hd1_rec_base_min],
+      ['hd1_rec_are_min',    bp.hd1_rec_are_min],
+      ['hd1_rec_are_max',    bp.hd1_rec_are_max],
+      ['premium_are_min',    bp.premium_are_min],
+      ['premium_are_max',    bp.premium_are_max],
+      ['hit_min_points',     bp.hit_min_points],
+    ];
+
+    grid.innerHTML = rows.map(([k, v]) => `
+      <div class="admin-param-row">
+        <span class="admin-param-label">${k}</span>
+        <span class="admin-param-val">${v}</span>
+      </div>
+    `).join('');
+
+    const sliderWrap = document.getElementById('admin-weight-sliders');
+    if (!sliderWrap || !fw) return;
+
+    const weights = [
+      { key: 'base',   label: 'ベース1着率 (base)',   min: 0.5, max: 2.0, step: 0.1 },
+      { key: 'tenkai', label: '展開補正 (tenkai)',     min: 0.5, max: 2.0, step: 0.1 },
+      { key: 'tenji',  label: '展示補正 (tenji)',      min: 0.0, max: 2.0, step: 0.1 },
+      { key: 'slit',   label: 'スリット補正 (slit)',   min: 0.0, max: 1.0, step: 0.1 },
+    ];
+
+    sliderWrap.innerHTML = weights.map(w => `
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="min-width:180px;color:var(--text2)">${w.label}</span>
+        <input type="range" min="${w.min}" max="${w.max}" step="${w.step}"
+          value="${fw[w.key] ?? 1.0}"
+          style="flex:1;min-width:100px;accent-color:#daa520"
+          oninput="
+            if(typeof FINAL_PROB_WEIGHTS!=='undefined'){
+              FINAL_PROB_WEIGHTS['${w.key}']=parseFloat(this.value);
+            }
+            this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1);
+          "
+        >
+        <span style="font-family:monospace;min-width:28px;color:#daa520;font-size:12px">
+          ${(fw[w.key] ?? 1.0).toFixed(1)}
+        </span>
+      </div>
+    `).join('');
+  }
+
+  // ── トースト表示ヘルパー ─────────────────────────────────────
+  function showMsg(msg) {
+    if (typeof showToast === 'function') {
+      showToast(msg);
+    } else {
+      const t = document.getElementById('toast');
+      if (t) {
+        t.textContent = msg;
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 3000);
+      }
+    }
+  }
+
+  // ── 認証フロー ────────────────────────────────────────────────
+  // URLハッシュ例:
+  //   有料のみ  : index.html#paid=パスワード
+  //   管理者のみ: index.html#admin=パスワード
+  //   両方同時  : index.html#admin=xxx&paid=yyy（管理者優先）
+  async function init() {
+    const adminParam = getHashParam('admin');
+    const paidParam  = getHashParam('paid');
+
+    // 管理者を先に検証（管理者は有料も兼ねる）
+    if (adminParam) {
+      const hash = await sha256hex(adminParam);
+      if (hash === ADMIN_TOKEN_HASH) {
+        activateAdminMode();
+        return; // 管理者確定→有料チェック不要
+      } else {
+        showMsg('管理者パスワードが違います');
+      }
+    }
+
+    // 有料検証
+    if (paidParam) {
+      const hash = await sha256hex(paidParam);
+      if (hash === PAID_TOKEN_HASH) {
+        activatePaidMode();
+      } else {
+        showMsg('有料パスワードが違います');
+      }
+    }
+
+    // どちらもなし → 無料モードのまま (APP_TIER = 'free')
+  }
+
+  // ── DOMロード後に実行 ─────────────────────────────────────────
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { init(); });
+  } else {
+    init();
+  }
+})();
+</script>
+
+<!-- ══ paid-only パネル保護パッチ ══
+     【展開分析タブ】会場平均・独自補正 最終確率は無料でも表示。
+       「展開シナリオ」セクションだけを無料時に隠す。
+     【AI予想タブ】全買い目を無料時に隠す（#detail2-panel 全体）。
+       「EV買い」サブタブ・セクションは管理者のみ表示（有料でも非表示）。
+     sample_obf.js が innerHTML を動的生成するため MutationObserver で監視。
+-->
+<script>
+(function () {
+  function isFreeMode() {
+    return !document.body.classList.contains('paid-mode') &&
+           !document.body.classList.contains('admin-mode');
+  }
+  function isAdminMode() {
+    return document.body.classList.contains('admin-mode');
+  }
+
+  // ── ロックバナーを生成して挿入 ────────────────────────────────
+  function makeLockBanner(msg) {
+    const div = document.createElement('div');
+    div.className = 'free-lock-banner scenario-lock-banner';
+    div.innerHTML =
+      '<div class="lock-icon">🔒</div>' +
+      '<div class="lock-msg">' + msg + '</div>' +
+      '<div class="lock-plan">👑 プレミアムで解放</div>';
+    return div;
+  }
+
+  // ── 展開シナリオセクションを隠してバナーを挿入 ──────────────────
+  function patchScenarioSection(buyPanel) {
+    if (!isFreeMode()) return;
+    if (buyPanel.querySelector('.scenario-lock-banner')) return;
+
+    const allEls = buyPanel.querySelectorAll('*');
+    let scenarioRoot = null;
+    for (const el of allEls) {
+      if (el.childNodes && [...el.childNodes].some(n =>
+        n.nodeType === 3 && n.textContent.includes('展開シナリオ')
+      )) {
+        let node = el;
+        while (node.parentElement && node.parentElement !== buyPanel) {
+          node = node.parentElement;
+        }
+        if (node.parentElement === buyPanel) {
+          scenarioRoot = node;
+          break;
+        }
+      }
+    }
+    if (!scenarioRoot) return;
+
+    let cursor = scenarioRoot;
+    while (cursor) {
+      cursor.style.display = 'none';
+      cursor._hiddenByPatch = true;
+      cursor = cursor.nextElementSibling;
+    }
+    buyPanel.appendChild(makeLockBanner('展開シナリオはプレミアム会員限定です'));
+  }
+
+  // ── AI予想パネル全体を保護（無料時）────────────────────────────
+  function guardDetail2Panel(panel) {
+    if (!panel.classList.contains('paid-only')) {
+      panel.classList.add('paid-only');
+    }
+    if (isFreeMode() && panel.innerHTML.trim() !== '') {
+      panel.innerHTML = '';
+    }
+  }
+
+  // ── EV買いを管理者のみに制限 ────────────────────────────────
+  // sample_obf.js が生成するサブタブ（「EV買い」ボタン）と
+  // 対応するコンテンツセクションを管理者以外では非表示にする。
+  function patchEvBuy(panel) {
+    if (isAdminMode()) return; // 管理者はそのまま表示
+
+    // ── サブタブボタン（「EV買い」テキストを含むボタン/要素）を隠す ──
+    const allEls = panel.querySelectorAll('*');
+    for (const el of allEls) {
+      if (el.textContent.trim().includes('EV買い') && !el._evPatched) {
+        // ボタン自体、またはボタンを含む親タブバー内の該当要素
+        const isBtn = el.tagName === 'BUTTON' || el.tagName === 'LI' ||
+                      el.getAttribute('role') === 'tab' ||
+                      el.classList.contains('sub-tab') ||
+                      el.classList.contains('subtab') ||
+                      el.classList.contains('mode-btn') ||
+                      el.classList.contains('ai-tab');
+        if (isBtn || (el.children.length === 0 && el.parentElement && (
+          el.parentElement.tagName === 'BUTTON' ||
+          el.parentElement.classList.contains('sub-tab') ||
+          el.parentElement.classList.contains('ai-tab')
+        ))) {
+          const target = (el.tagName === 'BUTTON' || el.tagName === 'LI') ? el : el.parentElement;
+          target.style.display = 'none';
+          target._evPatched = true;
+        }
+      }
+    }
+
+    // ── EV買いコンテンツセクション（「EV1.1以上」「EV買い」含む領域）を隠す ──
+    for (const el of allEls) {
+      if (!el._evContentPatched &&
+          (el.textContent.includes('EV1.1以上') || el.textContent.includes('EV買い')) &&
+          el.children.length > 0) {
+        // コンテンツ本体（サブタブより深い層）
+        const depth = (function d(n, root) {
+          let c = 0; let cur = n;
+          while (cur && cur !== root) { c++; cur = cur.parentElement; }
+          return c;
+        })(el, panel);
+        if (depth >= 2) {
+          el.style.display = 'none';
+          el._evContentPatched = true;
+        }
+      }
+    }
+  }
+
+  // ── MutationObserver でJS書き換えを検知 ─────────────────────
+  function setup() {
+    // --- 展開分析タブ: シナリオ部分だけ隠す ---
+    const buyPanel = document.getElementById('buy-panel');
+    if (buyPanel) {
+      const buyObs = new MutationObserver(() => {
+        if (isFreeMode()) {
+          if (!buyPanel.querySelector('.scenario-lock-banner')) {
+            patchScenarioSection(buyPanel);
+          }
+        }
+      });
+      buyObs.observe(buyPanel, { childList: true, subtree: false });
+      patchScenarioSection(buyPanel);
+    }
+
+    // --- AI予想タブ: 無料時は全体を隠す / 有料時はEV買いのみ管理者限定 ---
+    const d2Panel = document.getElementById('detail2-panel');
+    if (d2Panel) {
+      const d2Obs = new MutationObserver(() => {
+        guardDetail2Panel(d2Panel);
+        // 有料 or 管理者モードのとき EV買いパッチを適用
+        if (!isFreeMode()) {
+          patchEvBuy(d2Panel);
+        }
+      });
+      d2Obs.observe(d2Panel, { childList: true, subtree: true });
+      guardDetail2Panel(d2Panel);
+      if (!isFreeMode()) patchEvBuy(d2Panel);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setup);
+  } else {
+    setup();
+  }
+})();
+</script>
+
+<!-- ── 展開シミュ モーダル ── -->
+<div id="sim-modal-overlay" onclick="if(event.target===this)closeSimModal()">
+  <div id="sim-modal">
+    <div id="sim-modal-header">
+      <h3>⚡ 展開シミュ</h3>
+      <button id="sim-modal-close" onclick="closeSimModal()">✕</button>
+    </div>
+    <div class="sim-canvas-wrap">
+      <div class="sim-inner-label" style="display:flex;align-items:center;gap:6px">
+        <span>📊 スタート → 1マーク 最確展開</span>
+        <span id="sim-data-badge"></span>
+      </div>
+      <canvas id="sim-canvas"></canvas>
+      <div id="sim-legend" class="sim-legend"></div>
+    </div>
+    <div class="sim-patterns">
+      <h4>🏁 展開パターン TOP5</h4>
+      <div id="sim-patterns-list"></div>
+    </div>
+    <button class="sim-resim-btn" id="sim-resim-btn">🔄 再シミュレート</button>
+  </div>
+</div>
+
+</body>
+</html>
