@@ -504,7 +504,8 @@ function calcSlitFormationBoost(boats) {
   const ST_DIFF_SCALE      = 1.5;   // このランク差で最大効果
 
   const inside  = boats.filter(b => b.boat === 1 || b.boat === 2);
-  const outside = boats.filter(b => b.boat === 3 || b.boat === 4);
+  // [修正] まくりの主体は5・6コース（ダッシュ艇）なので outside を全ダッシュ艇に拡張
+  const outside = boats.filter(b => b.boat >= 3);
 
   function avgStRank(arr) {
     const valid = arr.map(b => {
@@ -620,17 +621,33 @@ function calcTenjiDeviation(boats, tenjiData) {
 }
 
 /**
- * 展開確率・基準1着率 拡張版（スリット隊形・展示タイム・気象補正）
+ * 展開確率・基準1着率 拡張版【三層独立相対評価モデル】
  *
- * 既存 calcTenkaiProbs のゼロサム相対評価モデルを継承し、
- * 3つの動的補正を追加する。tenjiData / venue を省略した場合は
- * 既存 calcTenkaiProbs と同等の動作になる。
+ * ┌─────────────────────────────────────────────────────┐
+ * │ 第1層: 選手能力（b.prob）                            │
+ * │   純粋な走力能力値のみ。決まり手・STバイアス一切なし │
+ * ├─────────────────────────────────────────────────────┤
+ * │ 第2層: 展開補正（layer2_modifier）                   │
+ * │   会場×個人決まり手適合度 + 1号艇被決まり手 + ST隊形 │
+ * ├─────────────────────────────────────────────────────┤
+ * │ 第3層: 当日補正（layer3_modifier）                   │
+ * │   展示タイム乖離 + 気象（風向・風速）                │
+ * └─────────────────────────────────────────────────────┘
+ *
+ * final_prob = normalize( prob × layer2_modifier × layer3_modifier )
+ *
+ * チューニングポイント:
+ *   L2_CLIP_MIN/MAX    … 第2層の上下限（広げると展開の効きが強くなる）
+ *   L3_CLIP_MIN/MAX    … 第3層の上下限（広げると展示・気象の効きが強くなる）
+ *   PERSONAL_BLEND_STRENGTH … 個人決まり手実績の会場マスタへの混ぜ込み強度
+ *   calcSlitFormationBoost / calcWindKimariBoost / calcTenjiDeviation の
+ *   各関数内の定数も独立してチューニング可能
  *
  * @param {object[]}    boats      レース艇データ（boat, name, prob 必須）
  * @param {number}      arek       荒れ指数
  * @param {object|null} tenjiData  展示キャッシュ（省略可）
  * @param {string}      venue      会場名（省略可）
- * @returns {object[]}  tenkai_prob / tenkai_score / final_prob 付き配列
+ * @returns {object[]}  tenkai_prob / tenkai_score / final_prob / layer2_modifier / layer3_modifier 付き配列
  */
 function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   const resolvedVenue = venue ?? DATA?.venue ?? '';
@@ -639,56 +656,62 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   if (!MASTER_EXT || !MASTER_EXT.venue_kimari) {
     return [...boats].map(b => ({
       ...b,
-      tenkai_prob:  b.prob,
-      tenkai_score: b.prob,
-      final_prob:   b.prob,
+      tenkai_prob:      b.prob,
+      tenkai_score:     b.prob,
+      final_prob:       b.prob,
+      layer2_modifier:  1.0,
+      layer3_modifier:  1.0,
     })).sort((a, b) => b.tenkai_prob - a.tenkai_prob);
   }
   const vKimariRaw = MASTER_EXT.venue_kimari[resolvedVenue];
   if (!vKimariRaw) {
     return [...boats].map(b => ({
       ...b,
-      tenkai_prob:  b.prob,
-      tenkai_score: b.prob,
-      final_prob:   b.prob,
+      tenkai_prob:      b.prob,
+      tenkai_score:     b.prob,
+      final_prob:       b.prob,
+      layer2_modifier:  1.0,
+      layer3_modifier:  1.0,
     })).sort((a, b) => b.tenkai_prob - a.tenkai_prob);
   }
 
-  // ── [A] スリット隊形補正係数 ──
+  // ══════════════════════════════════════════════════════
+  // 【第2層】展開補正係数の算出
+  // ══════════════════════════════════════════════════════
+
+  // ── チューニング定数 ──
+  const L2_CLIP_MIN = 0.50;  // 第2層の下限（0.5 = 最大50%減）
+  // [修正] 荒れ指数(arek)が高いほど外枠の上振れ余地を広げる（荒れレースで外枠過少評価を防ぐ）
+  // arek≦54（平均的）→ 1.80、arek≧80（高荒れ）→ 2.20、中間はリニア補間
+  const L2_CLIP_MAX = arek >= 80 ? 2.20
+    : arek <= 54 ? 1.80
+    : 1.80 + (arek - 54) / (80 - 54) * (2.20 - 1.80);
+  const L3_CLIP_MIN = 0.85;  // 第3層の下限（当日ノイズは控えめに）
+  const L3_CLIP_MAX = 1.15;  // 第3層の上限
+  const PERSONAL_BLEND_STRENGTH = 0.7;  // 個人実績の混ぜ込み強度（0〜1）
+  const FLOOR_PROB = 0.0001;
+
+  // ── [2-A] スリット隊形補正 → 会場vKimariパイの再配分に使用 ──
   const { makuriBoost, nigeDiscount } = calcSlitFormationBoost(boats);
 
-  // ── [B-2] 気象補正係数 ──
-  const weatherCtx = buildWeatherContext(tenjiData, resolvedVenue);
-  const windBoost  = calcWindKimariBoost(weatherCtx);
-
-  // ── [B-1] 展示タイム乖離マップ ──
-  const tenjiDevMap = calcTenjiDeviation(boats, tenjiData);
-
-  // ── vKimari にスリット・気象補正を乗算 → 再正規化（ゼロサム保証①） ──
+  // ── 会場vKimariにスリット補正を乗算 → 再正規化（ゼロサムΣ=1保証） ──
   const slitMul = {
     '逃げ':       nigeDiscount,
     '差し':       1.0,
     'まくり':     makuriBoost,
-    'まくり差し': makuriBoost * 0.7 + 0.3,  // まくり差しは半分の感度
+    'まくり差し': makuriBoost * 0.7 + 0.3,
     '抜き':       1.0,
   };
-
   const adjustedVKimari = {};
   for (const [k, v] of Object.entries(vKimariRaw)) {
-    const slit = slitMul[k]   ?? 1.0;
-    const wind = windBoost[k] ?? 1.0;
-    adjustedVKimari[k] = Math.max(0, v * slit * wind);
+    adjustedVKimari[k] = Math.max(0, v * (slitMul[k] ?? 1.0));
   }
-  // 再正規化 → Σ = 1.0 を保証
   const vKimariTotal = Object.values(adjustedVKimari).reduce((s, v) => s + v, 0);
   if (vKimariTotal > 0) {
-    for (const k of Object.keys(adjustedVKimari)) {
-      adjustedVKimari[k] = adjustedVKimari[k] / vKimariTotal;
-    }
+    for (const k of Object.keys(adjustedVKimari)) adjustedVKimari[k] /= vKimariTotal;
   }
 
-  // ════════ 以下は既存 calcTenkaiProbs のロジックをそのまま継承 ════════
-
+  // ── [2-B] 個人決まり手実績を会場分布にブレンド ──
   const KIMARI_HARD_EXCLUDE = {
     '逃げ':       new Set(['2','3','4','5','6']),
     '差し':       new Set(['1']),
@@ -701,7 +724,6 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
     'まくり差し': { '5': 0.05, '6': 0.08 },
     '抜き':       { '1': 0.03 },
   };
-  const PERSONAL_BLEND_STRENGTH = 0.7;
 
   function getPersonalKimari(boatName, courseStr, kimariType) {
     return getCourseMaster(boatName, courseStr)?.kimari?.[kimariType] ?? 0;
@@ -709,31 +731,24 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   function isValidFirst(boat, kimari) {
     const wc  = String(boat.boat);
     const exc = KIMARI_HARD_EXCLUDE[kimari];
-    if (!exc) return false;
-    if (exc.has(wc)) return false;
+    if (!exc || exc.has(wc)) return false;
     const soft = KIMARI_SOFT_THRESHOLD[kimari];
-    if (soft && wc in soft) {
-      return getPersonalKimari(boat.name, wc, kimari) >= soft[wc];
-    }
+    if (soft && wc in soft) return getPersonalKimari(boat.name, wc, kimari) >= soft[wc];
     return true;
   }
 
-  const boat1 = boats.find(b => b.boat === 1) || null;
-
   function blendPersonalKimari(boatObj, baseVKimari) {
-    const name   = boatObj.name;
-    const course = String(boatObj.boat);
-    const cm     = getCourseMaster(name, course);
+    const cm = getCourseMaster(boatObj.name, String(boatObj.boat));
     if (!cm) return baseVKimari;
     const runs = cm.runs ?? 0;
     if (runs < 20) return baseVKimari;
-    const trust = Math.min(runs / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
+    const trust          = Math.min(runs / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
     const personalKimari = cm.kimari ?? {};
     const BLEND_TARGETS  = ['差し', 'まくり', 'まくり差し', '抜き'];
     const personalTotal  = BLEND_TARGETS.reduce((s, k) => s + (personalKimari[k] ?? 0), 0);
     if (personalTotal <= 0) return baseVKimari;
     const blended       = { ...baseVKimari };
-    const venueBlendSum = BLEND_TARGETS.reduce((s, kk) => s + (baseVKimari[kk] ?? 0), 0);
+    const venueBlendSum = BLEND_TARGETS.reduce((s, k) => s + (baseVKimari[k] ?? 0), 0);
     for (const k of BLEND_TARGETS) {
       if (!(k in blended)) continue;
       const personalRate = (personalKimari[k] ?? 0) / personalTotal * venueBlendSum;
@@ -747,37 +762,37 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
     return blended;
   }
 
-  const kimariTypes = Object.keys(adjustedVKimari).filter(
-    k => adjustedVKimari[k] > 0 && k in KIMARI_HARD_EXCLUDE
-  );
-  const boatVKimari = {};
-  boats.forEach(b => { boatVKimari[b.boat] = blendPersonalKimari(b, adjustedVKimari); });
+  const boat1 = boats.find(b => b.boat === 1) || null;
 
-  const kimariCoefSum = {};
-  boats.forEach(b => { kimariCoefSum[b.boat] = 0; });
-
+  // 1号艇の逃げ個人実績（被まくり・被差しの逆側として扱う）
   const nigePersonalRate = (() => {
     if (!boat1) return null;
     const nigeRate = getPersonalKimari(boat1.name, '1', '逃げ');
     const nigeRuns = getCourseMaster(boat1.name, '1')?.runs ?? 0;
     if (nigeRuns < 20 || nigeRate <= 0) return null;
-    const trust     = Math.min(nigeRuns / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
-    const venueNige = adjustedVKimari['逃げ'] || 0;
-    return venueNige * (1 - trust) + nigeRate * trust;
+    const trust = Math.min(nigeRuns / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
+    return adjustedVKimari['逃げ'] * (1 - trust) + nigeRate * trust;
   })();
+
+  // 艇ごとにブレンド済みvKimariを生成
+  const boatVKimari = {};
+  boats.forEach(b => { boatVKimari[b.boat] = blendPersonalKimari(b, adjustedVKimari); });
+
+  // ── 決まり手ごとのパイ按分 → kimariCoefSum（展開適合スコア合計） ──
+  const kimariCoefSum = {};
+  boats.forEach(b => { kimariCoefSum[b.boat] = 0; });
+
+  const kimariTypes = Object.keys(adjustedVKimari).filter(
+    k => adjustedVKimari[k] > 0 && k in KIMARI_HARD_EXCLUDE
+  );
 
   for (const kimari of kimariTypes) {
     const personalAdaptation = {};
-
     for (const b of boats) {
-      if (!isValidFirst(b, kimari)) {
-        personalAdaptation[b.boat] = 0;
-        continue;
-      }
-      const wc  = String(b.boat);
-      const cm  = getCourseMaster(b.name, wc);
+      if (!isValidFirst(b, kimari)) { personalAdaptation[b.boat] = 0; continue; }
+      const wc   = String(b.boat);
+      const cm   = getCourseMaster(b.name, wc);
       const runs = cm?.runs ?? 0;
-
       let kimariRate;
       if (kimari === '逃げ') {
         kimariRate = (b.boat === 1 && nigePersonalRate != null)
@@ -788,40 +803,83 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
         if (runs < 20 || kimariRate <= 0) {
           kimariRate = boatVKimari[b.boat][kimari] || adjustedVKimari[kimari] || 0;
         } else {
-          const trust     = Math.min(runs / 100, 1.0);
-          const venueRate = boatVKimari[b.boat][kimari] || adjustedVKimari[kimari] || 0;
-          kimariRate = kimariRate * trust + venueRate * (1 - trust);
+          // [修正] PERSONAL_BLEND_STRENGTH を乗算して blendPersonalKimari と trust強度を統一
+          // 旧: trust = runs/100 のみ → blendPersonalKimari(×0.7)と二重に薄まる問題を解消
+          const trust = Math.min(runs / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
+          kimariRate  = kimariRate * trust + (boatVKimari[b.boat][kimari] || 0) * (1 - trust);
         }
       }
-
-      // ── [B-1] 展示タイム乖離補正（ゼロサム保証②） ──
-      //   加算後 adaptTotal も増減するため、比率は正規化されたまま。
-      const tenjiAdj = tenjiDevMap[b.boat] ?? 0;
-      personalAdaptation[b.boat] = Math.max(0, kimariRate + tenjiAdj);
+      personalAdaptation[b.boat] = Math.max(0, kimariRate);
     }
-
     const validBoats = boats.filter(b => isValidFirst(b, kimari));
     if (validBoats.length === 0) continue;
     const adaptTotal = validBoats.reduce((s, b) => s + personalAdaptation[b.boat], 0);
     if (adaptTotal <= 0) continue;
-
     const kimariBaseProb = adjustedVKimari[kimari] || 0;
     if (kimariBaseProb <= 0) continue;
-
     for (const b of validBoats) {
-      const adaptShare = personalAdaptation[b.boat] / adaptTotal;  // Σ=1.0
-      kimariCoefSum[b.boat] += kimariBaseProb * adaptShare;
+      kimariCoefSum[b.boat] += kimariBaseProb * (personalAdaptation[b.boat] / adaptTotal);
     }
   }
 
-  const FLOOR_PROB = 0.0001;
-  const scores = {};
+  // ── kimariCoefSum → 第2層係数（1.0基準の乗算値）に変換 ──
+  // kimariCoefSumのΣ≈1.0なので、艇ごとに「全艇平均（≈1/6）」で割って相対化する
+  const kimariMean = boats.reduce((s, b) => s + kimariCoefSum[b.boat], 0) / boats.length || 1;
+  const layer2 = {};
   boats.forEach(b => {
-    const adaptScore = kimariCoefSum[b.boat] > 0 ? kimariCoefSum[b.boat] : FLOOR_PROB;
-    scores[b.boat] = Math.max(FLOOR_PROB, b.prob * adaptScore);
+    const raw = kimariCoefSum[b.boat] > 0 ? kimariCoefSum[b.boat] / kimariMean : 0;
+    layer2[b.boat] = Math.min(L2_CLIP_MAX, Math.max(L2_CLIP_MIN, raw || L2_CLIP_MIN));
   });
 
-  const total = Object.values(scores).reduce((a, v) => a + v, 0) || 1;
+  // ══════════════════════════════════════════════════════
+  // 【第3層】当日補正係数の算出
+  // ══════════════════════════════════════════════════════
+
+  // ── [3-A] 展示タイム乖離 → 乗算係数に変換 ──
+  // [修正] 住之江は calcTenjiScore で SUMINOE_TENJI_TABLE(__coef)による補正を行うため
+  //        calcTenjiDeviation をスキップして二重補正を防ぐ
+  const tenjiDevMap = resolvedVenue === '住之江'
+    ? (() => { const m = {}; boats.forEach(b => { m[b.boat] = 0; }); return m; })()
+    : calcTenjiDeviation(boats, tenjiData);
+  // calcTenjiDeviationの戻り値は加算値（±0.03程度）→ 1.0基準の係数に変換
+  const layer3Tenji = {};
+  boats.forEach(b => {
+    // devMap値はすでにクリップ済みの小さな加算値なので 1.0 + dev として係数化
+    layer3Tenji[b.boat] = 1.0 + (tenjiDevMap[b.boat] ?? 0);
+  });
+
+  // ── [3-B] 気象補正 → 会場vKimariへの影響を艇の展開適合度に反映 ──
+  const weatherCtx = buildWeatherContext(tenjiData, resolvedVenue);
+  const windBoost  = calcWindKimariBoost(weatherCtx);
+
+  // 風の影響を「各艇のkimari適合分布で加重平均した係数」として個艇に付与
+  const layer3Wind = {};
+  boats.forEach(b => {
+    const bvk = boatVKimari[b.boat];
+    const bvkTotal = Object.values(bvk).reduce((s, v) => s + v, 0) || 1;
+    let windCoef = 0;
+    for (const [k, rate] of Object.entries(bvk)) {
+      windCoef += (rate / bvkTotal) * (windBoost[k] ?? 1.0);
+    }
+    layer3Wind[b.boat] = windCoef;
+  });
+
+  // ── 第3層 = 展示係数 × 風係数（クリップ） ──
+  const layer3 = {};
+  boats.forEach(b => {
+    const raw = layer3Tenji[b.boat] * layer3Wind[b.boat];
+    layer3[b.boat] = Math.min(L3_CLIP_MAX, Math.max(L3_CLIP_MIN, raw));
+  });
+
+  // ══════════════════════════════════════════════════════
+  // 【最終合成】prob × layer2 × layer3 → 正規化
+  // ══════════════════════════════════════════════════════
+  const scores = {};
+  boats.forEach(b => {
+    scores[b.boat] = Math.max(FLOOR_PROB, b.prob * layer2[b.boat] * layer3[b.boat]);
+  });
+  const total = Object.values(scores).reduce((s, v) => s + v, 0) || 1;
+
   return [...boats]
     .map(b => ({
       ...b,
@@ -829,7 +887,11 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
       tenkai_score:        scores[b.boat] / total,
       kimari_coef:         kimariCoefSum[b.boat],
       final_prob:          scores[b.boat] / total,
-      // デバッグ用メタ（UIへの表示用）
+      // ── レイヤー別係数（デバッグ・チューニング用） ──
+      layer2_modifier:     layer2[b.boat],      // 展開適合度（1.0基準）
+      layer3_modifier:     layer3[b.boat],      // 当日環境（1.0基準）
+      _l3_tenji:           layer3Tenji[b.boat], // うち展示タイム成分
+      _l3_wind:            layer3Wind[b.boat],  // うち気象成分
       _slit_makuri_boost:  makuriBoost,
       _slit_nige_discount: nigeDiscount,
       _wind_type:          weatherCtx.windType,
