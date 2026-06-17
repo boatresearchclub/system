@@ -11,26 +11,9 @@ sim.js
 backtest.js
 top_stats.js
 top_page.js
-analyzer.js
-renderer.js
-calibration.js
-computeScenCombosWithEV.js
-dynamic_inn2place.js
-loader.js
-config.js
-sample.js
 
 params.js
 sim.js
 backtest.js
 top_stats.js
 top_page.js
-analyzer.js
-renderer.js
-calibration.js
-computeScenCombosWithEV.js
-dynamic_inn2place.js
-loader.js
-config.js
-sample.js
-local_server.py
