@@ -711,125 +711,141 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
     for (const k of Object.keys(adjustedVKimari)) adjustedVKimari[k] /= vKimariTotal;
   }
 
-  // ── [2-B] 個人決まり手実績を会場分布にブレンド ──
-  const KIMARI_HARD_EXCLUDE = {
-    '逃げ':       new Set(['2','3','4','5','6']),
-    '差し':       new Set(['1']),
-    'まくり':     new Set(['1']),
-    'まくり差し': new Set(['1','2','3']),
-    '抜き':       new Set(),
-  };
-  const KIMARI_SOFT_THRESHOLD = {
-    'まくり':     { '2': 0.05 },
-    'まくり差し': { '5': 0.05, '6': 0.08 },
-    '抜き':       { '1': 0.03 },
-  };
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-06-17 刷新] 展開補正 第2層 ── 「1号艇被決まり手 × 他艇攻撃力」モデル
+  //
+  // 【設計思想】
+  //   ① 1号艇の「逃げ率」は b.prob（第1層）に既反映 → 展開補正では完全に無視。
+  //   ② 1号艇の「被決まり手（被差し / 被まくり / 被まくり差し）」を弱点データとして使用。
+  //      マスタの kimari['差し'] / kimari['まくり'] / kimari['まくり差し'] に格納されている
+  //      ※ 1コースの場合、差し〜まくり差し欄は被決まり手として表示される（UI仕様）
+  //   ③ 2〜6号艇の「決まり手実績（生の%値）」を攻撃力として使用。
+  //      blendPersonalKimari のような「他の決まり手を分母にした再正規化」は一切しない。
+  //   ④ ブースト = 1号艇の被決まり手率 × 他艇の決まり手率 の積（噛み合い強度）。
+  //   ⑤ 各他艇のブースト合計に比例して、1号艇の展開補正スコアをゼロサムで引き下げる。
+  //
+  // 【算出フロー】
+  //   Step1: 1号艇の被決まり手マップ boat1_vuln を取得（会場傾向とブレンド）
+  //   Step2: 2〜6号艇の攻撃力 attack[boat] を生の個人実績で計算（runs不足→会場値）
+  //   Step3: boost[boat] = Σ(対象決まり手 k: boat1_vuln[k] * attack_k[boat])
+  //   Step4: 1号艇スコア = 基準値(1.0) − ブースト合計（他艇が奪った分）
+  //          他艇スコア = 基準値(1.0) + boost[boat] × BOOST_SCALE
+  //   Step5: 全艇スコアを平均1.0に正規化 → layer2 係数にクリップ
+  // ══════════════════════════════════════════════════════════════════
 
-  function getPersonalKimari(boatName, courseStr, kimariType) {
-    return getCourseMaster(boatName, courseStr)?.kimari?.[kimariType] ?? 0;
-  }
-  function isValidFirst(boat, kimari) {
-    const wc  = String(boat.boat);
-    const exc = KIMARI_HARD_EXCLUDE[kimari];
-    if (!exc || exc.has(wc)) return false;
-    const soft = KIMARI_SOFT_THRESHOLD[kimari];
-    if (soft && wc in soft) return getPersonalKimari(boat.name, wc, kimari) >= soft[wc];
-    return true;
-  }
+  // チューニング定数
+  // BOOST_SCALE: 噛み合い強度をlayer2係数の変動幅に変換するスケール係数
+  // 大きくすると展開補正のメリハリが増す（1.0〜3.0 が実用範囲）
+  // BOOST_SCALE: 噛み合い強度をlayer2係数の変動幅に変換するスケール係数
+  // 1.5: クリップ回避＋適切なメリハリのデフォルト推奨値（1.0〜3.0 が実用範囲）
+  const BOOST_SCALE = 1.5;
+  // VULN_TRUST_MAX: 1号艇の被決まり手個人実績を何走で最大信頼とするか
+  const VULN_TRUST_MAX = 100;
+  // ATTACK_TRUST_MAX: 他艇の攻撃力個人実績を何走で最大信頼とするか
+  const ATTACK_TRUST_MAX = 100;
+  // 被決まり手・攻撃力のデータ不足時に使用する会場デフォルト値の重み
+  const VENUE_FALLBACK_WEIGHT = 0.5;
 
-  function blendPersonalKimari(boatObj, baseVKimari) {
-    const cm = getCourseMaster(boatObj.name, String(boatObj.boat));
-    if (!cm) return baseVKimari;
-    const runs = cm.runs ?? 0;
-    if (runs < 20) return baseVKimari;
-    const trust          = Math.min(runs / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
-    const personalKimari = cm.kimari ?? {};
-    const BLEND_TARGETS  = ['差し', 'まくり', 'まくり差し', '抜き'];
-    const personalTotal  = BLEND_TARGETS.reduce((s, k) => s + (personalKimari[k] ?? 0), 0);
-    if (personalTotal <= 0) return baseVKimari;
-    const blended       = { ...baseVKimari };
-    const venueBlendSum = BLEND_TARGETS.reduce((s, k) => s + (baseVKimari[k] ?? 0), 0);
-    for (const k of BLEND_TARGETS) {
-      if (!(k in blended)) continue;
-      const personalRate = (personalKimari[k] ?? 0) / personalTotal * venueBlendSum;
-      blended[k] = baseVKimari[k] * (1 - trust) + personalRate * trust;
-    }
-    const origTotal  = Object.values(baseVKimari).reduce((s, v) => s + v, 0);
-    const blendTotal = Object.values(blended).reduce((s, v) => s + v, 0);
-    if (blendTotal > 0) {
-      for (const k of Object.keys(blended)) blended[k] = blended[k] / blendTotal * origTotal;
-    }
-    return blended;
-  }
+  // 対象決まり手（1号艇が被り得る決まり手のみ）
+  const TARGET_KIMARI = ['差し', 'まくり', 'まくり差し'];
+
+  // 攻撃可能コース定義（各決まり手で仕掛けられるコース）
+  const ATTACK_VALID_COURSE = {
+    '差し':       new Set(['2', '3', '4', '5', '6']),
+    'まくり':     new Set(['2', '3', '4', '5', '6']),
+    'まくり差し': new Set(['4', '5', '6']),
+  };
 
   const boat1 = boats.find(b => b.boat === 1) || null;
 
-  // 1号艇の逃げ個人実績（被まくり・被差しの逆側として扱う）
-  const nigePersonalRate = (() => {
-    if (!boat1) return null;
-    const nigeRate = getPersonalKimari(boat1.name, '1', '逃げ');
-    const nigeRuns = getCourseMaster(boat1.name, '1')?.runs ?? 0;
-    if (nigeRuns < 20 || nigeRate <= 0) return null;
-    const trust = Math.min(nigeRuns / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
-    return adjustedVKimari['逃げ'] * (1 - trust) + nigeRate * trust;
-  })();
-
-  // 艇ごとにブレンド済みvKimariを生成
-  const boatVKimari = {};
-  boats.forEach(b => { boatVKimari[b.boat] = blendPersonalKimari(b, adjustedVKimari); });
-
-  // ── 決まり手ごとのパイ按分 → kimariCoefSum（展開適合スコア合計） ──
-  const kimariCoefSum = {};
-  boats.forEach(b => { kimariCoefSum[b.boat] = 0; });
-
-  const kimariTypes = Object.keys(adjustedVKimari).filter(
-    k => adjustedVKimari[k] > 0 && k in KIMARI_HARD_EXCLUDE
-  );
-
-  for (const kimari of kimariTypes) {
-    const personalAdaptation = {};
-    for (const b of boats) {
-      if (!isValidFirst(b, kimari)) { personalAdaptation[b.boat] = 0; continue; }
-      const wc   = String(b.boat);
-      const cm   = getCourseMaster(b.name, wc);
-      const runs = cm?.runs ?? 0;
-      let kimariRate;
-      if (kimari === '逃げ') {
-        kimariRate = (b.boat === 1 && nigePersonalRate != null)
-          ? nigePersonalRate
-          : (adjustedVKimari['逃げ'] || 0);
-      } else {
-        kimariRate = getPersonalKimari(b.name, wc, kimari);
-        if (runs < 20 || kimariRate <= 0) {
-          kimariRate = boatVKimari[b.boat][kimari] || adjustedVKimari[kimari] || 0;
-        } else {
-          // [修正] PERSONAL_BLEND_STRENGTH を乗算して blendPersonalKimari と trust強度を統一
-          // 旧: trust = runs/100 のみ → blendPersonalKimari(×0.7)と二重に薄まる問題を解消
-          const trust = Math.min(runs / 100, 1.0) * PERSONAL_BLEND_STRENGTH;
-          kimariRate  = kimariRate * trust + (boatVKimari[b.boat][kimari] || 0) * (1 - trust);
-        }
-      }
-      personalAdaptation[b.boat] = Math.max(0, kimariRate);
-    }
-    const validBoats = boats.filter(b => isValidFirst(b, kimari));
-    if (validBoats.length === 0) continue;
-    const adaptTotal = validBoats.reduce((s, b) => s + personalAdaptation[b.boat], 0);
-    if (adaptTotal <= 0) continue;
-    const kimariBaseProb = adjustedVKimari[kimari] || 0;
-    if (kimariBaseProb <= 0) continue;
-    for (const b of validBoats) {
-      kimariCoefSum[b.boat] += kimariBaseProb * (personalAdaptation[b.boat] / adaptTotal);
+  // ── Step1: 1号艇の被決まり手マップ（弱点） ──
+  // 会場のvKimari分布を下限として、個人実績でブレンド
+  const boat1_vuln = {};
+  {
+    const cm1    = boat1 ? getCourseMaster(boat1.name, '1') : null;
+    const runs1  = cm1?.runs ?? 0;
+    const trust1 = Math.min(runs1 / VULN_TRUST_MAX, 1.0);
+    for (const k of TARGET_KIMARI) {
+      const venueRate  = adjustedVKimari[k] ?? 0;
+      // 1コース選手のマスタ kimari[k] が被決まり手率（UI仕様と一致）
+      const personalRate = (cm1 && runs1 >= 20) ? (cm1.kimari?.[k] ?? venueRate) : venueRate;
+      // 個人実績を信頼度でブレンド（データ不足は会場値に寄せる）
+      boat1_vuln[k] = personalRate * trust1 + venueRate * (1 - trust1) * VENUE_FALLBACK_WEIGHT;
     }
   }
 
-  // ── kimariCoefSum → 第2層係数（1.0基準の乗算値）に変換 ──
-  // kimariCoefSumのΣ≈1.0なので、艇ごとに「全艇平均（≈1/6）」で割って相対化する
-  const kimariMean = boats.reduce((s, b) => s + kimariCoefSum[b.boat], 0) / boats.length || 1;
+  // ── Step2: 2〜6号艇の攻撃力（決まり手実績の生パーセンテージ） ──
+  // blendPersonalKimari のような「他の決まり手との比率正規化」は行わない。
+  // 生のkimari率（全進入に対する実績値）をそのまま使用する。
+  const attackPower = {};  // attackPower[boat][kimari] = 攻撃力（0〜1）
+  for (const b of boats) {
+    if (b.boat === 1) continue;
+    const wc        = String(b.boat);
+    const cm        = getCourseMaster(b.name, wc);
+    const runs      = cm?.runs ?? 0;
+    const trust     = Math.min(runs / ATTACK_TRUST_MAX, 1.0);
+    attackPower[b.boat] = {};
+    for (const k of TARGET_KIMARI) {
+      if (!ATTACK_VALID_COURSE[k]?.has(wc)) {
+        attackPower[b.boat][k] = 0;
+        continue;
+      }
+      const venueRate    = adjustedVKimari[k] ?? 0;
+      // 生の個人実績をそのまま使用（正規化・ブレンドなし）
+      const personalRate = (cm && runs >= 20) ? (cm.kimari?.[k] ?? 0) : 0;
+      // データ不足の場合は会場値にフォールバック
+      attackPower[b.boat][k] = (runs >= 20 && personalRate > 0)
+        ? personalRate * trust + venueRate * (1 - trust)
+        : venueRate * VENUE_FALLBACK_WEIGHT;
+    }
+  }
+
+  // ── Step3: 各他艇のブースト量 = 1号艇弱点 × 攻撃力 の噛み合い積 ──
+  const boost = {};
+  boats.forEach(b => { boost[b.boat] = 0; });
+  let totalBoost = 0;
+  for (const b of boats) {
+    if (b.boat === 1) continue;
+    let bsum = 0;
+    for (const k of TARGET_KIMARI) {
+      bsum += (boat1_vuln[k] ?? 0) * (attackPower[b.boat]?.[k] ?? 0);
+    }
+    boost[b.boat] = bsum;
+    totalBoost += bsum;
+  }
+
+  // ── Step4: 基準スコア = 1.0 + boost × BOOST_SCALE（他艇） ──
+  //           1号艇 = 1.0 − totalBoost × BOOST_SCALE（ゼロサム引き下げ）
+  const rawScore = {};
+  boats.forEach(b => {
+    if (b.boat === 1) {
+      rawScore[b.boat] = 1.0 - totalBoost * BOOST_SCALE;
+    } else {
+      rawScore[b.boat] = 1.0 + boost[b.boat] * BOOST_SCALE;
+    }
+    rawScore[b.boat] = Math.max(0, rawScore[b.boat]);  // 負値防止
+  });
+
+  // ── Step5: 全艇平均を1.0に正規化 → layer2 係数にクリップ ──
+  const scoreMean = boats.reduce((s, b) => s + rawScore[b.boat], 0) / boats.length || 1;
   const layer2 = {};
   boats.forEach(b => {
-    const raw = kimariCoefSum[b.boat] > 0 ? kimariCoefSum[b.boat] / kimariMean : 0;
-    layer2[b.boat] = Math.min(L2_CLIP_MAX, Math.max(L2_CLIP_MIN, raw || L2_CLIP_MIN));
+    const normalized = rawScore[b.boat] / scoreMean;
+    layer2[b.boat] = Math.min(L2_CLIP_MAX, Math.max(L2_CLIP_MIN, normalized));
   });
+
+  // デバッグログ（展開補正の内訳を確認可能）
+  if (typeof console !== 'undefined') {
+    console.log('[layer2 展開補正] 1号艇被決まり手:', JSON.stringify(boat1_vuln));
+    boats.forEach(b => {
+      if (b.boat !== 1) {
+        console.log(`[layer2 展開補正] ${b.boat}号艇 攻撃力:`, JSON.stringify(attackPower[b.boat]),
+          `ブースト:${boost[b.boat].toFixed(4)} → layer2:${layer2[b.boat].toFixed(3)}`);
+      } else {
+        console.log(`[layer2 展開補正] 1号艇 totalBoost:${totalBoost.toFixed(4)} → layer2:${layer2[b.boat].toFixed(3)}`);
+      }
+    });
+  }
 
   // ══════════════════════════════════════════════════════
   // 【第3層】当日補正係数の算出
@@ -852,17 +868,17 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   const weatherCtx = buildWeatherContext(tenjiData, resolvedVenue);
   const windBoost  = calcWindKimariBoost(weatherCtx);
 
-  // 風の影響を「各艇のkimari適合分布で加重平均した係数」として個艇に付与
+  // 風の影響を「会場vKimari分布で加重平均した係数」として全艇に付与
+  // （boatVKimariを廃止したため adjustedVKimari ベースで計算）
   const layer3Wind = {};
-  boats.forEach(b => {
-    const bvk = boatVKimari[b.boat];
-    const bvkTotal = Object.values(bvk).reduce((s, v) => s + v, 0) || 1;
-    let windCoef = 0;
-    for (const [k, rate] of Object.entries(bvk)) {
-      windCoef += (rate / bvkTotal) * (windBoost[k] ?? 1.0);
+  {
+    const vkTotal = Object.values(adjustedVKimari).reduce((s, v) => s + v, 0) || 1;
+    let baseWindCoef = 0;
+    for (const [k, rate] of Object.entries(adjustedVKimari)) {
+      baseWindCoef += (rate / vkTotal) * (windBoost[k] ?? 1.0);
     }
-    layer3Wind[b.boat] = windCoef;
-  });
+    boats.forEach(b => { layer3Wind[b.boat] = baseWindCoef; });
+  }
 
   // ── 第3層 = 展示係数 × 風係数（クリップ） ──
   const layer3 = {};
@@ -885,7 +901,7 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
       ...b,
       tenkai_prob:         scores[b.boat] / total,
       tenkai_score:        scores[b.boat] / total,
-      kimari_coef:         kimariCoefSum[b.boat],
+      kimari_coef:         b.boat === 1 ? -(totalBoost) : boost[b.boat],  // デバッグ用: ブースト量
       final_prob:          scores[b.boat] / total,
       // ── レイヤー別係数（デバッグ・チューニング用） ──
       layer2_modifier:     layer2[b.boat],      // 展開適合度（1.0基準）
