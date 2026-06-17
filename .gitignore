@@ -1,0 +1,7 @@
+bak.*
+bak2.*
+bak3.*
+local_server.py
+__pycache__/
+odds_data/
+tenji_data/
