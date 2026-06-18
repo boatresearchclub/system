@@ -73,6 +73,9 @@
   }
   body.paid-mode  .free-lock-banner { display: none !important; }
   body.admin-mode .free-lock-banner { display: none !important; }
+
+  /* 各日詳細バナー: 有料ユーザーにも表示（管理者のみ admin-only の top-ai-stats が出る） */
+  body.paid-mode  #user-lock-ai-stats { display: revert !important; }
   .free-lock-banner .lock-icon { font-size: 2rem; margin-bottom: 0.5rem; }
   .free-lock-banner .lock-msg  { font-size: 13px; line-height: 1.6; }
   .free-lock-banner .lock-plan {
@@ -424,12 +427,11 @@
     </button>
   </div>
   <div class="top-section-label" style="margin-top:0.5rem">📅 各日詳細</div>
-  <div id="user-lock-ai-stats" class="user-only-tab free-lock-banner">
+  <div id="user-lock-ai-stats" class="free-lock-banner" style="display:revert">
     <div class="lock-icon">🔒</div>
-    <div class="lock-msg">各日の詳細成績はプレミアム会員限定です</div>
-    <div class="lock-plan">👑 プレミアムで解放</div>
+    <div class="lock-msg">各日の詳細成績は管理者限定です</div>
   </div>
-  <div id="top-ai-stats" class="paid-only admin-only">
+  <div id="top-ai-stats" class="admin-only">
     <span style="color:var(--text3);font-size:12px">集計中...</span>
   </div>
 
@@ -502,7 +504,10 @@
 <script defer src="loader.js?v=20260612223149"></script>
 <script defer src="analyzer.js?v=20260612223149"></script>
 <script defer src="renderer.js?v=20260612223149"></script>
+<script defer src="computeScenCombosWithEV.js?v=20260612223149"></script>
 <script defer src="top_stats_obf.js?v=20260612223149"></script>
+<script defer src="calibration.js?v=20260612223149"></script>
+<script defer src="dynamic_inn2place.js?v=20260612223149"></script>
 <script>
 (function () {
   // ── トークンハッシュ（SHA-256） ──────────────────────────────
