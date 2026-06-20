@@ -15,7 +15,7 @@
   --green2: #d9f6ea;
   --red: #ff3b3b;
   --red2: #ffe1e1;
-  --orange: #ff7a00;
+  --orange: #e2680a;
   --orange2: #fff1e0;
   --radius: 10px;
   --radius-sm: 6px;
@@ -171,6 +171,34 @@ body {
 .tenji-delta-plus  { color: #22c55e; font-size: 11px; font-weight: 600; }
 .tenji-delta-minus { color: #ef4444; font-size: 11px; font-weight: 600; }
 .tenji-tilt { font-size: 0.72rem; color: var(--text3); }
+
+/* 汎用テーブル（展開分析・選手情報タブなど、専用クラスを持たないtable全般） */
+table:not(.tenji-table):not(.prob-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+table:not(.tenji-table):not(.prob-table) th {
+  text-align: left;
+  color: var(--text2);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .03em;
+  padding: 7px 8px;
+  background: var(--bg4);
+  border-bottom: 1px solid var(--border2);
+}
+table:not(.tenji-table):not(.prob-table) td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+table:not(.tenji-table):not(.prob-table) tr:hover td {
+  background: var(--bg3);
+}
+table:not(.tenji-table):not(.prob-table) tr:last-child td {
+  border-bottom: none;
+}
 
 /* ── RESULT TAB ── */
 .result-panel-inner { padding: 1.25rem; }
