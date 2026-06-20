@@ -3,8 +3,8 @@
   --bg2: #ffffff;
   --bg3: #f0f5ff;
   --bg4: #e7eefc;
-  --border: rgba(0, 40, 90, 0.12);
-  --border2: rgba(0, 40, 90, 0.20);
+  --border: rgba(0, 40, 90, 0.16);
+  --border2: rgba(0, 40, 90, 0.26);
   --text: #0a0e16;
   --text2: #28324a;
   --text3: #515f7a;
@@ -86,17 +86,18 @@ body {
 
 /* DETAIL PANEL */
 .detail-panel { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 1.25rem; box-shadow: 0 6px 18px rgba(0,40,90,0.08); }
-.bt-head-simple { display: grid; grid-template-columns: 32px 82px 40px 28px 60px 52px 52px; gap: 4px; padding: .4rem 1.25rem; font-size: 11px; color: var(--text3); font-weight: 700; letter-spacing: .08em; border-bottom: 1px solid var(--border); background: var(--bg3); }
+.bt-head-simple { display: grid; grid-template-columns: 32px 82px 40px 28px 60px 52px 52px; gap: 4px; padding: .4rem 1.25rem; font-size: 11px; color: var(--text2); font-weight: 700; letter-spacing: .08em; border-bottom: 1px solid var(--border2); background: var(--bg4); }
 .detail-panel .bt-row { grid-template-columns: 32px 82px 40px 28px 60px 52px 52px; }
-.bt-row { display: grid; grid-template-columns: 32px 82px 40px 28px 60px 52px 52px; gap: 4px; padding: .75rem 1.25rem; align-items: center; border-bottom: 1px solid var(--border); font-size: 13px; transition: background .12s; }
+.bt-row { display: grid; grid-template-columns: 32px 82px 40px 28px 60px 52px 52px; gap: 4px; padding: .75rem 1.25rem; align-items: center; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 500; transition: background .12s; }
+.bt-row:nth-child(even) { background: rgba(0, 40, 90, 0.025); }
 .bt-row:last-child { border-bottom: none; }
-.bt-row:hover { background: var(--bg3); }
+.bt-row:hover { background: var(--bg4); }
 /* .bt-row.top1 removed */
-.bt-grade { font-size: 11px; color: var(--text3); }
+.bt-grade { font-size: 11px; color: var(--text2); font-weight: 700; }
 
 /* BOAT CIRCLES */
 .boat-circle { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
-.b1 { background: #ffffff; color: #111; border: 1px solid rgba(0,0,0,0.15); }
+.b1 { background: #ffffff; color: #111; border: 1.5px solid rgba(0,0,0,0.35); }
 .b2 { background: #000000; color: #fff; }
 .b3 { background: #e60012; color: #fff; }
 .b4 { background: #0066cc; color: #fff; }
@@ -105,10 +106,10 @@ body {
 
 /* GRADE TAGS */
 .grade-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
-.ga1 { background: rgba(79,124,255,.2); color: var(--accent2); }
-.ga2 { background: rgba(79,124,255,.1); color: #8aabff; }
+.ga1 { background: rgba(79,124,255,.22); color: #1a5ce0; }
+.ga2 { background: rgba(79,124,255,.13); color: #3d6fd6; }
 .gb1 { background: var(--bg4); color: var(--text2); }
-.gb2 { background: rgba(255,90,90,.1); color: #ff8a8a; }
+.gb2 { background: rgba(255,90,90,.15); color: #d6453f; }
 
 /* PERSISTENT BANNERS (タブ共通・常時表示) */
 #persistent-banners { margin-bottom: 0; }
@@ -208,7 +209,7 @@ body {
 .buy-label { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; min-width: 30px; text-align: center; }
 .bl-honmei { background: rgba(61,214,140,.15); color: var(--green); }
 .bl-taikou { background: rgba(245,200,66,.12); color: var(--gold); }
-.bl-ana, .bl-gyaku { background: rgba(255,90,90,.1); color: #ff8a8a; }
+.bl-ana, .bl-gyaku { background: rgba(255,90,90,.15); color: #d6453f; }
 /* 決まり手別カラー */
 .bl-nige    { background: rgba(0,102,255,.13); color: var(--accent2); }        /* 逃げ: 青 */
 .bl-sashi   { background: rgba(0,184,107,.13); color: var(--green); }          /* 差し: 緑 */
@@ -339,7 +340,7 @@ body {
 #sim-modal-close {
   width:28px; height:28px; border-radius:50%;
   background:#f0f5ff; border:none; cursor:pointer;
-  font-size:16px; color:#3d4a63;
+  font-size:16px; color:#28324a;
   display:flex; align-items:center; justify-content:center;
   flex-shrink:0;
 }
@@ -350,18 +351,18 @@ body {
 #sim-canvas { display:block; width:100%; }
 .sim-inner-label {
   font-size:10px; font-weight:700; letter-spacing:.12em;
-  color:#6c7a94; text-transform:uppercase; padding:8px 12px 4px;
+  color:#515f7a; text-transform:uppercase; padding:8px 12px 4px;
 }
 .sim-legend {
   display:flex; flex-wrap:wrap; gap:6px 14px;
-  padding:4px 12px 10px; font-size:11px; color:#3d4a63;
+  padding:4px 12px 10px; font-size:11px; color:#28324a;
 }
 .sim-legend-item { display:flex; align-items:center; gap:5px; }
 .sim-legend-dot  { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .sim-patterns    { padding:0 12px 4px; }
 .sim-patterns h4 {
   font-size:10px; font-weight:700; letter-spacing:.12em;
-  color:#6c7a94; text-transform:uppercase; margin-bottom:8px;
+  color:#515f7a; text-transform:uppercase; margin-bottom:8px;
 }
 .sim-pat-row {
   display:flex; align-items:center; gap:8px;
@@ -369,9 +370,9 @@ body {
   background:#fff; border:1px solid rgba(0,40,90,0.1);
   border-left:3px solid transparent; margin-bottom:6px;
 }
-.sim-pat-no   { font-size:10px; color:#6c7a94; min-width:16px; }
+.sim-pat-no   { font-size:10px; color:#515f7a; min-width:16px; }
 .sim-pat-boats { display:flex; align-items:center; gap:2px; min-width:76px; }
-.sim-pat-desc  { font-size:11px; color:#3d4a63; flex:1; line-height:1.5; }
+.sim-pat-desc  { font-size:11px; color:#28324a; flex:1; line-height:1.5; }
 .sim-pat-prob  { font-size:12px; font-weight:700; color:#0066ff; min-width:36px; text-align:right; }
 .sim-resim-btn {
   display:block; width:calc(100% - 24px); margin:8px 12px 16px;
