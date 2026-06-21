@@ -284,29 +284,68 @@
   //
   // これにより「1コースをモデルが過小評価しているか」が正確にわかる。
   // ══════════════════════════════════════════════════════════════════
+  // ── boatProbs 取得のフォールバック ──
+  // 上流オブジェクトのフィールド名・形式がブレているケースに対応する。
+  //   名前ブレ:  boatProbs / finalProbs / winProbs / probs / boatProbsRaw
+  //   形式ブレ:  { "1": 0.3, ... } / { 1: 0.3, ... } / [b0..b5] (0始まり配列)
+  //             / [{boat:1, prob:0.3}, ...] (オブジェクト配列)
+  function _getBoatProb(r, course) {
+    const candidates = [r.boatProbs, r.finalProbs, r.winProbs, r.probs, r.boatProbsRaw];
+    for (const bp of candidates) {
+      if (bp == null) continue;
+      // オブジェクト配列 [{boat, prob}] 形式
+      if (Array.isArray(bp) && bp.length && typeof bp[0] === 'object' && bp[0] !== null) {
+        const hit = bp.find(b => Number(b.boat ?? b.course ?? b.frame) === course);
+        const v = hit && (hit.prob ?? hit.winProb ?? hit.est);
+        if (v != null) return Number(v);
+        continue;
+      }
+      // 数値配列（0始まり or 1始まりの両方を試す）
+      if (Array.isArray(bp)) {
+        if (bp[course] != null) return Number(bp[course]);       // 1始まり想定
+        if (bp[course - 1] != null) return Number(bp[course - 1]); // 0始まり想定
+        continue;
+      }
+      // プレーンオブジェクト（キーが数値/文字列どちらでも bp[course] でヒットする）
+      if (bp[course] != null) return Number(bp[course]);
+      if (bp[String(course)] != null) return Number(bp[String(course)]);
+    }
+    return null;
+  }
+
+  // ── actualResult から1着枠番を取得するフォールバック ──
+  //   名前ブレ:  actualResult（"1-2-3"等の文字列） / actual1st / winnerCourse / result
+  //   形式ブレ:  文字列(区切り文字違い) / 配列 [1,2,3] / 数値そのもの
+  function _getWinnerCourse(r) {
+    const cands = [r.actual1st, r.winnerCourse, r.actualResult, r.result];
+    for (const v of cands) {
+      if (v == null) continue;
+      if (typeof v === 'number') return v;
+      if (Array.isArray(v)) return parseInt(v[0], 10);
+      const n = parseInt((v + '').trim().split(/[-－−,\s]/)[0], 10);
+      if (!Number.isNaN(n)) return n;
+    }
+    return null;
+  }
+
   function calcCalibrationByCourse(results) {
     const courses = [1, 2, 3, 4, 5, 6];
 
     // 各コース（枠番）ごとに全レースの boatProbs を展開して集計
-    return courses.map(course => {
+    const stats = courses.map(course => {
       let sumEst   = 0;  // 予測勝率の合計
       let sumAct   = 0;  // 実際に勝った回数
       let count    = 0;  // boatProbs にデータがあった艇×レース数
 
       results.forEach(r => {
-        const bp = r.boatProbs;
-        if (!bp || bp[course] == null) return; // このレースにデータなし
+        const est = _getBoatProb(r, course);
+        if (est == null) return; // このレースにデータなし
 
-        const est = bp[course]; // モデルのこの枠番の予測勝率
-        const won = (() => {
-          if (!r.actualResult) return null;
-          const first = parseInt((r.actualResult + '').split(/[-－−]/)[0]);
-          return first === course ? 1 : 0;
-        })();
-        if (won === null) return;
+        const winner = _getWinnerCourse(r);
+        if (winner == null) return;
 
         sumEst += est;
-        sumAct += won;
+        sumAct += (winner === course ? 1 : 0);
         count++;
       });
 
@@ -315,6 +354,26 @@
 
       return { course, count, estAvg, actual };
     });
+
+    // ── 診断ログ：全コースで count === 0 のとき、原因特定のため実データ形状を出力 ──
+    if (stats.every(s => s.count === 0) && results.length > 0) {
+      const sample = results.find(r => r) || {};
+      console.warn(
+        '[calibration] コース別キャリブレーション: 全コースで0件。\n' +
+        'boatProbs系フィールドまたは勝者情報の取得に失敗しています。サンプルのキー一覧:',
+        Object.keys(sample),
+        '\nboatProbs候補の値:', {
+          boatProbs: sample.boatProbs, finalProbs: sample.finalProbs,
+          winProbs: sample.winProbs, probs: sample.probs, boatProbsRaw: sample.boatProbsRaw,
+        },
+        '\n勝者情報候補の値:', {
+          actual1st: sample.actual1st, winnerCourse: sample.winnerCourse,
+          actualResult: sample.actualResult, result: sample.result,
+        }
+      );
+    }
+
+    return stats;
   }
 
   // コース別勝率キャリブレーション HTML生成
