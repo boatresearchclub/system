@@ -2984,6 +2984,8 @@ def main():
         log(f"  起動時push: {len(today_csvs)}件（当日分）+ index.json")
 
         # 起動時は data/*.json を書き出してpush（inject→data.js埋め込みは廃止）
+        # [fix] 起動前に取得済みのresult JSONを確実にBRCsystem/dataに反映する
+        write_result_json()
         write_all_json_files()
         git_push([Path(p) for p in today_csvs] + [idx])
         log("  ✓ 起動時push完了（公式情報取得はバックグラウンドで実行中）")
