@@ -35,7 +35,6 @@ async function fetchAndMergeJsonData() {
   const idx = await safeFetch(`${DATA_BASE_URL}/index.json`, true);
   if (!idx) {
     // index.json がなければ何もしない（フェーズ1未完了 or 初回push前）
-    console.log('[fetchAndMergeJsonData] data/index.json なし → スキップ');
     return;
   }
 
@@ -59,8 +58,9 @@ async function fetchAndMergeJsonData() {
     safeFetch(`${DATA_BASE_URL}/result_${nd}.json`).then(data => {
       if (!data) return;
       for (const [key, val] of Object.entries(data)) {
-        // key = "{slug}_{rno}" → RESULT_DATA キー = "{slug}_{YYYYMMDD}_{rno}"
-        const m = key.match(/^(.+)_(\d+)$/);
+        // key = "{slug}_{rno}" または "{slug} {rno}"（実データはスペース区切り）
+        // → RESULT_DATA キー = "{slug}_{YYYYMMDD}_{rno}"
+        const m = key.match(/^(.+)[ _](\d+)$/);
         const fullKey = m ? `${m[1]}_${nd}_${m[2]}` : `${key}_${nd}`;
         if (!RESULT_DATA[fullKey]) RESULT_DATA[fullKey] = val;
       }
@@ -92,7 +92,6 @@ async function fetchAndMergeJsonData() {
 
   // 全fetch並列実行（失敗しても続行）
   await Promise.allSettled([...resultFetches, ...historyFetches, masterFetch]);
-  console.log('[fetchAndMergeJsonData] 完了');
 }
 
 
@@ -130,7 +129,6 @@ function invalidateRenderCache() {
   const keys = Object.keys(_renderCache);
   keys.forEach(k => delete _renderCache[k]);
   if (keys.length > 0) {
-    console.log(`[renderCache] invalidated ${keys.length} entries`);
   }
 }
 

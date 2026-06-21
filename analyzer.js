@@ -594,8 +594,8 @@ function calcWindKimariBoost(weatherCtx) {
  * @returns {object}  { [boat番号]: 乖離補正値（クリップ済み） }
  */
 function calcTenjiDeviation(boats, tenjiData) {
-  const TENJI_DEV_CLIP   = 0.05;  // ±5% クリップ
-  const TENJI_DEV_WEIGHT = 0.60;  // 加算強度
+  const TENJI_DEV_CLIP   = 0.08;  // ±8% クリップ
+  const TENJI_DEV_WEIGHT = 0.90;  // 加算強度
 
   const devMap = {};
   boats.forEach(b => { devMap[b.boat] = 0; });
@@ -680,14 +680,17 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   // ══════════════════════════════════════════════════════
 
   // ── チューニング定数 ──
-  const L2_CLIP_MIN = 0.50;  // 第2層の下限（0.5 = 最大50%減）
+  // [2026-06-20] L2_CLIP_MIN/MAX は旧ゼロサムモデル専用だったため未使用化。
+  // 現在は Stage1 の NIGE_CLIP_MIN/MAX（下記）と Stage2 の CONDITIONAL_BOOST_SCALE が
+  // 同等の役割を担う。完全削除はせず参考値として残置。
+  const L2_CLIP_MIN = 0.50;  // (未使用) 第2層の下限（0.5 = 最大50%減）
   // [修正] 荒れ指数(arek)が高いほど外枠の上振れ余地を広げる（荒れレースで外枠過少評価を防ぐ）
   // arek≦54（平均的）→ 1.80、arek≧80（高荒れ）→ 2.20、中間はリニア補間
-  const L2_CLIP_MAX = arek >= 80 ? 2.20
+  const L2_CLIP_MAX = arek >= 80 ? 2.20  // (未使用)
     : arek <= 54 ? 1.80
     : 1.80 + (arek - 54) / (80 - 54) * (2.20 - 1.80);
-  const L3_CLIP_MIN = 0.85;  // 第3層の下限（当日ノイズは控えめに）
-  const L3_CLIP_MAX = 1.15;  // 第3層の上限
+  const L3_CLIP_MIN = 0.80;  // 第3層の下限
+  const L3_CLIP_MAX = 1.20;  // 第3層の上限
   const PERSONAL_BLEND_STRENGTH = 0.7;  // 個人実績の混ぜ込み強度（0〜1）
   const FLOOR_PROB = 0.0001;
 
@@ -814,85 +817,105 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
     totalBoost += bsum;
   }
 
-  // ── Step4: 基準スコア = 1.0 + boost × BOOST_SCALE（他艇） ──
-  //           1号艇 = 1.0 − totalBoost × BOOST_SCALE（ゼロサム引き下げ）
-  const rawScore = {};
-  boats.forEach(b => {
-    if (b.boat === 1) {
-      rawScore[b.boat] = 1.0 - totalBoost * BOOST_SCALE;
-    } else {
-      rawScore[b.boat] = 1.0 + boost[b.boat] * BOOST_SCALE;
-    }
-    rawScore[b.boat] = Math.max(0, rawScore[b.boat]);  // 負値防止
-  });
+  // ── Step4（旧）はここで終了。旧実装は「1号艇 = 1.0 − totalBoost」「他艇 = 1.0 + boost」を
+  //    同じ配列内で平均1.0に正規化していたため、1号艇のスコアと他艇のスコアが
+  //    ゼロサムで強く連動し、(a) 60%+帯で1号艇が過大評価される、
+  //    (b) 攻撃力の強い艇が複数いるレースで1号艇スコアが不自然に振れ単調性が崩れる、
+  //    という2つの問題を生んでいた（2026-06-20 キャリブレーション結果より判明）。
+  //
+  // [2026-06-20 刷新] 二段階モデルへ分離:
+  //   Stage1: 1号艇の「逃げ確率」を、他艇と切り離した独立変数として算出・専用クリップ。
+  //   Stage2: 「逃げなかった場合」の条件付き勝率を 2〜6号艇間でのみ配分。
+  //   Final : final_prob[1] = nige_prob
+  //           final_prob[k] = (1 − nige_prob) × conditionalShare[k]  (k=2..6)
+  //   こうすることで1号艇の確率と他艇間の配分が数式上も独立になり、
+  //   それぞれを別々にキャリブレーションパネルで検証・調整できる。
+  // ══════════════════════════════════════════════════════════════════
 
-  // ── Step5: 全艇平均を1.0に正規化 → layer2 係数にクリップ ──
-  const scoreMean = boats.reduce((s, b) => s + rawScore[b.boat], 0) / boats.length || 1;
-  const layer2 = {};
-  boats.forEach(b => {
-    const normalized = rawScore[b.boat] / scoreMean;
-    layer2[b.boat] = Math.min(L2_CLIP_MAX, Math.max(L2_CLIP_MIN, normalized));
-  });
-
-  // デバッグログ（展開補正の内訳を確認可能）
-  if (typeof console !== 'undefined') {
-    console.log('[layer2 展開補正] 1号艇被決まり手:', JSON.stringify(boat1_vuln));
-    boats.forEach(b => {
-      if (b.boat !== 1) {
-        console.log(`[layer2 展開補正] ${b.boat}号艇 攻撃力:`, JSON.stringify(attackPower[b.boat]),
-          `ブースト:${boost[b.boat].toFixed(4)} → layer2:${layer2[b.boat].toFixed(3)}`);
-      } else {
-        console.log(`[layer2 展開補正] 1号艇 totalBoost:${totalBoost.toFixed(4)} → layer2:${layer2[b.boat].toFixed(3)}`);
-      }
-    });
-  }
-
-  // ══════════════════════════════════════════════════════
-  // 【第3層】当日補正係数の算出
-  // ══════════════════════════════════════════════════════
-
-  // ── [3-A] 展示タイム乖離 → 乗算係数に変換 ──
-  // [修正] 住之江は calcTenjiScore で SUMINOE_TENJI_TABLE(__coef)による補正を行うため
-  //        calcTenjiDeviation をスキップして二重補正を防ぐ
-  const tenjiDevMap = resolvedVenue === '住之江'
+  // ── 第3層を先に計算（Stage1/2どちらも layer3 を使うため）──
+  const tenjiDevMapPre = resolvedVenue === '住之江'
     ? (() => { const m = {}; boats.forEach(b => { m[b.boat] = 0; }); return m; })()
     : calcTenjiDeviation(boats, tenjiData);
-  // calcTenjiDeviationの戻り値は加算値（±0.03程度）→ 1.0基準の係数に変換
-  const layer3Tenji = {};
-  boats.forEach(b => {
-    // devMap値はすでにクリップ済みの小さな加算値なので 1.0 + dev として係数化
-    layer3Tenji[b.boat] = 1.0 + (tenjiDevMap[b.boat] ?? 0);
-  });
-
-  // ── [3-B] 気象補正 → 会場vKimariへの影響を艇の展開適合度に反映 ──
-  const weatherCtx = buildWeatherContext(tenjiData, resolvedVenue);
-  const windBoost  = calcWindKimariBoost(weatherCtx);
-
-  // 風の影響を「会場vKimari分布で加重平均した係数」として全艇に付与
-  // （boatVKimariを廃止したため adjustedVKimari ベースで計算）
-  const layer3Wind = {};
+  const layer3TenjiPre = {};
+  boats.forEach(b => { layer3TenjiPre[b.boat] = 1.0 + (tenjiDevMapPre[b.boat] ?? 0); });
+  const weatherCtxPre  = buildWeatherContext(tenjiData, resolvedVenue);
+  const windBoostPre   = calcWindKimariBoost(weatherCtxPre);
+  const layer3WindPre  = {};
   {
     const vkTotal = Object.values(adjustedVKimari).reduce((s, v) => s + v, 0) || 1;
     let baseWindCoef = 0;
     for (const [k, rate] of Object.entries(adjustedVKimari)) {
-      baseWindCoef += (rate / vkTotal) * (windBoost[k] ?? 1.0);
+      baseWindCoef += (rate / vkTotal) * (windBoostPre[k] ?? 1.0);
     }
-    boats.forEach(b => { layer3Wind[b.boat] = baseWindCoef; });
+    boats.forEach(b => { layer3WindPre[b.boat] = baseWindCoef; });
   }
-
-  // ── 第3層 = 展示係数 × 風係数（クリップ） ──
   const layer3 = {};
   boats.forEach(b => {
-    const raw = layer3Tenji[b.boat] * layer3Wind[b.boat];
+    const raw = layer3TenjiPre[b.boat] * layer3WindPre[b.boat];
     layer3[b.boat] = Math.min(L3_CLIP_MAX, Math.max(L3_CLIP_MIN, raw));
   });
 
   // ══════════════════════════════════════════════════════
-  // 【最終合成】prob × layer2 × layer3 → 正規化
+  // 【Stage1】1号艇の逃げ確率（nige_prob）── 独立変数
+  // ══════════════════════════════════════════════════════
+  //
+  // チューニングポイント:
+  //   NIGE_CLIP_MIN/MAX … 逃げ確率の下限・上限。ここを絞れば
+  //   キャリブレーションパネルの「60%+帯」を直接抑え込める。
+  //   NIGE_BOOST_SCALE  … 被決まり手プレッシャーの効き具合。
+  const NIGE_CLIP_MIN   = 0.25;  // 1号艇がどれだけ弱くても下限25%
+  const NIGE_CLIP_MAX   = 0.85;  // 1号艇がどれだけ強くても上限85%（旧モデルの過大評価対策）
+  const NIGE_BOOST_SCALE = BOOST_SCALE; // 被決まり手プレッシャーの効き（既存値を踏襲）
+
+  const rawNige = (boat1 ? boat1.prob : 0)
+    * layer3[1]
+    * Math.max(0, 1.0 - totalBoost * NIGE_BOOST_SCALE);
+  const nigeProbClipped = Math.min(NIGE_CLIP_MAX, Math.max(NIGE_CLIP_MIN, rawNige));
+
+  // ── [2026-06-20 追加] コース別キャリブレーション補正 ──
+  // クリップ後の値（旧 nigeProb）はまだ「平均74.7%→実績60.8%」という
+  // 系統的な過大評価を含んでいる。calibrateCourse1Prob（区分線形補間、
+  // computeScenCombosWithEV.js 側で実測ベースに自動更新される）を通して
+  // 実績水準に引き寄せる。関数が未ロードの場合は従来通りクリップ後の値を使う
+  // （フォールバック。下流の二重補正にはならない）。
+  const nigeProb = (typeof calibrateCourse1Prob === 'function')
+    ? calibrateCourse1Prob(nigeProbClipped)
+    : nigeProbClipped;
+
+  // ══════════════════════════════════════════════════════
+  // 【Stage2】2〜6号艇の条件付き勝率（「1号艇が逃げなかった場合」の配分）
+  // ══════════════════════════════════════════════════════
+  //
+  // CONDITIONAL_BOOST_SCALE: 攻撃力の効き。中間帯（20〜60%）の過小評価是正のため
+  // 旧 BOOST_SCALE よりやや強めに設定（次回バックテストで要再検証）。
+  const CONDITIONAL_BOOST_SCALE = 1.8;
+
+  const others = boats.filter(b => b.boat !== 1);
+  const othersProbTotal = others.reduce((s, b) => s + b.prob, 0) || 1;
+  const condRaw = {};
+  others.forEach(b => {
+    const baseShare = b.prob / othersProbTotal; // 1号艇を除いた相対能力
+    condRaw[b.boat] = Math.max(0, baseShare * (1.0 + boost[b.boat] * CONDITIONAL_BOOST_SCALE) * layer3[b.boat]);
+  });
+  const condTotal = Object.values(condRaw).reduce((s, v) => s + v, 0) || 1;
+  const conditionalShare = {};
+  others.forEach(b => { conditionalShare[b.boat] = condRaw[b.boat] / condTotal; });
+
+  // ── 表示・デバッグ用に layer2_modifier 相当値を逆算 ──
+  // （UIの「展開補正」列が参照する値。実際の final_prob 計算には使わない＝
+  //   下流の二重補正を防ぐため、ここはあくまで「表示用の換算値」）
+  const layer2 = {};
+  layer2[1] = Math.max(0, 1.0 - totalBoost * NIGE_BOOST_SCALE);
+  others.forEach(b => { layer2[b.boat] = 1.0 + boost[b.boat] * CONDITIONAL_BOOST_SCALE; });
+
+
+  // ══════════════════════════════════════════════════════
+  // 【最終合成】二段階モデル: final_prob[1]=nigeProb, final_prob[k]=(1−nigeProb)×conditionalShare[k]
   // ══════════════════════════════════════════════════════
   const scores = {};
-  boats.forEach(b => {
-    scores[b.boat] = Math.max(FLOOR_PROB, b.prob * layer2[b.boat] * layer3[b.boat]);
+  scores[1] = Math.max(FLOOR_PROB, nigeProb);
+  others.forEach(b => {
+    scores[b.boat] = Math.max(FLOOR_PROB, (1 - nigeProb) * (conditionalShare[b.boat] ?? 0));
   });
   const total = Object.values(scores).reduce((s, v) => s + v, 0) || 1;
 
@@ -903,15 +926,19 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
       tenkai_score:        scores[b.boat] / total,
       kimari_coef:         b.boat === 1 ? -(totalBoost) : boost[b.boat],  // デバッグ用: ブースト量
       final_prob:          scores[b.boat] / total,
-      // ── レイヤー別係数（デバッグ・チューニング用） ──
+      // [2026-06-20 追加] 1号艇のみ: コース別補正前の値（calibration.js が
+      // 自己崩壊ループなしで再学習するための「生データ」）
+      _rawCourseProb:      b.boat === 1 ? nigeProbClipped : null,
+      // ── レイヤー別係数（デバッグ・チューニング用。表示換算値。final_probの直接の入力ではない）──
       layer2_modifier:     layer2[b.boat],      // 展開適合度（1.0基準）
       layer3_modifier:     layer3[b.boat],      // 当日環境（1.0基準）
-      _l3_tenji:           layer3Tenji[b.boat], // うち展示タイム成分
-      _l3_wind:            layer3Wind[b.boat],  // うち気象成分
+      _l3_tenji:           layer3TenjiPre[b.boat], // うち展示タイム成分
+      _l3_wind:            layer3WindPre[b.boat],  // うち気象成分
       _slit_makuri_boost:  makuriBoost,
       _slit_nige_discount: nigeDiscount,
-      _wind_type:          weatherCtx.windType,
-      _tenji_dev:          tenjiDevMap[b.boat] ?? 0,
+      _wind_type:          weatherCtxPre.windType,
+      _tenji_dev:          tenjiDevMapPre[b.boat] ?? 0,
+      _nige_prob:          b.boat === 1 ? nigeProb : null, // デバッグ用: Stage1の独立逃げ確率
     }))
     .sort((a, b) => b.tenkai_prob - a.tenkai_prob);
 }
@@ -1245,18 +1272,24 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
         .map(b => {
           const sc = String(b.boat);
           let p2;
+          // avg_rank補正用（calc3rdScoresのrankCoefと同じ指標を2着側にも適用する）
+          // [2026-06-20 追加] 旧実装は p2 が rate2/trust ブレンドのみで個人の
+          // 「自コース×勝者コースでの平均着順」を一切使っておらず、3着側
+          // （calc3rdScores の rankCoef）と非対称だった。
+          // キャリブレーション診断で2着予測の1位-2位的中率差が3%しかなく
+          // 識別力が弱いと出ていたため、3着と同じ signal を追加して順位の
+          // 分離を強める。
+          let _avgRank2 = null;
           if(useInn2){
             const baseP2 = inn2Place[sc] ?? null;
             const personEntry2 = winnerCO[b.name]?.[sc]?.['1'];
             const personRate2  = personEntry2?.rate2 ?? null;
             const personTrust2 = personEntry2?.trust ?? 0;
-            console.log(`[p2debug] ${b.name} ${sc}枠 baseP2:${baseP2?.toFixed(3)} personRate2:${personRate2} trust:${personTrust2} cond:${baseP2 != null && personRate2 != null && personTrust2 > 0.3}`);
+            _avgRank2 = personEntry2?.avg_rank ?? null;
             if(baseP2 != null && personRate2 != null && personTrust2 > 0.3){ // 他箇所と統一(count>=10相当)
               p2 = personRate2 * personTrust2 + baseP2 * (1 - personTrust2);
-              console.log(`[p2debug] → 個人補正適用 p2:${p2.toFixed(3)}`);
             } else {
               p2 = baseP2;
-              console.log(`[p2debug] → baseのみ p2:${p2?.toFixed(3)}`);
             }
             if(p2 == null){
               const bt = ranked2.find(r => r.boat === b.boat);
@@ -1269,6 +1302,7 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             const personEntry = winnerCO[b.name]?.[sc]?.[wc];
             const personRate2 = personEntry?.rate2 ?? null;
             const personTrust = personEntry?.trust ?? 0;
+            _avgRank2 = personEntry?.avg_rank ?? null;
             if(baseTR != null && personRate2 != null && personTrust > 0.3){
               const wPerson = personTrust;
               const wNat    = (1 - personTrust);  // ② 修正: trTrust二重適用を排除
@@ -1284,6 +1318,14 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             const bt = ranked2.find(r => r.boat === b.boat);
             p2 = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
           }
+
+          // avg_rank補正を適用（3.5を中央値とし、平均着順が良いほど上方修正）
+          // 3着側[0.5,1.5]より分散が大きい指標のため[0.7,1.3]とやや狭いクリップ。
+          const rankCoef2 = _avgRank2 != null
+            ? Math.max(0.7, Math.min(1.3, (3.5 - _avgRank2) / 1.5 + 0.85))
+            : 1.0;
+          p2 *= rankCoef2;
+
           return { boat: b.boat, name: b.name, p2 };
         });
 
@@ -1317,7 +1359,6 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
       const p2Sum = place2List.reduce((s, x) => s + x.p2, 0) || 1;
       place2List.forEach(x => { x.p2 = x.p2 / p2Sum; });
       place2List.sort((a, b) => b.p2 - a.p2);
-      console.log(`[p2debug] 正規化後(winner:${winner.boat} ${kimari}):`, place2List.map(x => `${x.boat}枠:${(x.p2*100).toFixed(0)}%`));
       scenarioPlace2[winner.boat][kimari] = place2List;
     }
   }

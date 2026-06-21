@@ -154,8 +154,8 @@ def st_rank_to_correction(st_rank) -> float:
     """
     if st_rank is None:
         return 1.0
-    raw = 1.0 + (3.0 - st_rank) * (0.2 / 2.5)
-    return max(0.7, min(1.2, raw))
+    raw = 1.0 + (3.0 - st_rank) * (0.12 / 2.5)
+    return max(0.82, min(1.12, raw))
 
 
 def form_correction(player_idx: dict | None, overall_win) -> float:
@@ -176,10 +176,10 @@ def form_correction(player_idx: dict | None, overall_win) -> float:
     if bayesian is None or not base or base <= 0:
         return 1.0
     ratio = bayesian / base
-    if   ratio >= 1.20: return 1.12
-    elif ratio >= 1.08: return 1.06
-    elif ratio <= 0.80: return 0.88
-    elif ratio <= 0.92: return 0.94
+    if   ratio >= 1.20: return 1.08
+    elif ratio >= 1.08: return 1.04
+    elif ratio <= 0.80: return 0.92
+    elif ratio <= 0.92: return 0.96
     else:               return 1.00
 
 

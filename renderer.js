@@ -4276,7 +4276,7 @@ function updateEV(){
           _lastResultHash = _newHash;
           if(typeof latest === 'object' && latest !== null){
             for(const [key, val] of Object.entries(latest)){
-              const m = key.match(/^(.+)_(\d+)$/);
+              const m = key.match(/^(.+)[ _](\d+)$/);
               const fullKey = m ? `${m[1]}_${dateNd}_${m[2]}` : `${key}_${dateNd}`;
               RESULT_DATA[fullKey] = val;
             }

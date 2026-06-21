@@ -43,7 +43,7 @@ TENJI_DIR   = DATA_COLLECT_DIR / "data"
 COMMENT_DIR = DATA_COLLECT_DIR / "data"
 RESULT_DIR  = DATA_COLLECT_DIR / "data"
 ODDS_DIR    = DATA_COLLECT_DIR / "data"
-DATA_DIR    = DATA_COLLECT_DIR / "data"  # (※SCRIPTS_DIRのエラーを防ぐためDATA_COLLECT_DIRに統一)
+DATA_DIR    = SCRIPTS_DIR / "data"       # GitHubにpushする書き出し先（BRCsystem/data）
 
 # オッズ取得間隔（秒）
 ODDS_FETCH_INTERVAL = 300   # 5分ごと
@@ -1089,21 +1089,22 @@ def write_today_json():
 
 def write_tenji_json_file(days_back=HISTORY_DAYS):
     """
-    tenji_data/*.json を読んで data/tenji_YYYYMMDD.json を書き出す。
+    データ収集側の tenji_YYYYMMDD.json（既に集約済みフォーマット）を読み込み、
+    そのまま BRCsystem/data/tenji_YYYYMMDD.json に書き出す。
 
-    【目的】
-    sample.js が 3分ごとに fetch する `data/tenji_YYYYMMDD.json` を生成する。
-    inject_tenji_to_html() が data.js に埋め込む処理とは完全に独立しており、
-    どちらの処理にも影響を与えない。
+    【背景】
+    以前は TENJI_DIR 配下に「会場_日付_R番号」ごとの個別ファイル
+    （tenji_kiryu_20260617_R01.json）が出力され、それを本関数が集約していた。
+    現在はデータ収集側のスクリプトが日付単位で既に集約済みの
+    tenji_YYYYMMDD.json を直接出力するようになったため、
+    個別ファイルを集約するロジックは不要。読み込んでそのまま書き出すだけでよい。
 
-    【出力フォーマット】
-        data/tenji_20260522.json = {
-            "heiwajima_20260522_1": { "1": {...}, "__weather": ..., ... },
-            "heiwajima_20260522_2": { ... },
+    【入力フォーマット（= 出力フォーマットと同一）】
+        TENJI_DIR/tenji_20260616.json = {
+            "ashiya_20260616_1": { "1": {...}, "__weather": ..., ... },
+            "ashiya_20260616_2": { ... },
             ...
         }
-    inject_tenji_to_html() が構築する tenji_all dict と同一構造なので
-    sample.js 側のパーサ変更は不要。
     """
     from datetime import timedelta
     today = datetime.now().date()
@@ -1112,74 +1113,31 @@ def write_tenji_json_file(days_back=HISTORY_DAYS):
         for d in range(0, days_back + 1)
     ]
 
-    MOTOR_KEYS = (
-        ("motor_no",    "__motor_no"),
-        ("motor_rate2", "__motor_rate2"),
-        ("motor_rate3", "__motor_rate3"),
-        ("motor_rank",  "__motor_rank"),
-        ("prev_user",   "__prev_user"),
-    )
-    WIND_KEYS = (
-        ("weather",             "__weather"),
-        ("weather_degree",      "__weather_degree"),
-        ("water_degree",        "__water_degree"),
-        ("wind_speed",          "__wind_speed"),
-        ("wind_direction",      "__wind_direction"),
-        ("wind_direction_text", "__wind_direction_text"),
-        ("wave_height",         "__wave_height"),
-    )
-
-    # 日付ごとに tenji_all を仕分け
-    tenji_by_date: dict[str, dict] = {}
-
-    for fpath in glob.glob(str(TENJI_DIR / "*.json")):
-        fname = Path(fpath).name
-        # 対象日付かチェック
-        matched_date = next((d for d in target_dates if d in fname), None)
-        if not matched_date:
-            continue
-        m = re.match(r"tenji_(.+)_(\d{8})_R?(\d+)\.json", fname)
-        if not m:
-            continue
-        venue, date_nd, race = m.group(1), m.group(2), str(int(m.group(3)))
-        embed_key = f"{venue}_{date_nd}_{race}"
-
-        try:
-            with open(fpath, encoding="utf-8") as f:
-                rows = json.load(f)
-            by_frame = {str(r["frame"]): r for r in rows}
-
-            if rows:
-                first = rows[0]
-                for wind_key, ek_w in WIND_KEYS:
-                    val = first.get(wind_key)
-                    if val is not None:
-                        by_frame[ek_w] = val
-
-            for r in rows:
-                frame_key = str(r["frame"])
-                if frame_key not in by_frame:
-                    continue
-                for motor_key, ek_m in MOTOR_KEYS:
-                    val = r.get(motor_key)
-                    if val is not None:
-                        by_frame[frame_key][ek_m] = val
-
-            tenji_by_date.setdefault(date_nd, {})[embed_key] = by_frame
-        except Exception:
-            continue
-
-    if not tenji_by_date:
-        log("  [JSON] tenji_data/ に対象ファイルなし → tenji_YYYYMMDD.json スキップ")
-        return False
-
     DATA_DIR.mkdir(exist_ok=True)
     written = []
-    for date_nd, tenji_all in tenji_by_date.items():
+
+    for date_nd in target_dates:
+        src_path = TENJI_DIR / f"tenji_{date_nd}.json"
+        if not src_path.exists():
+            continue
+        try:
+            with open(src_path, encoding="utf-8") as f:
+                tenji_all = json.load(f)
+        except Exception as e:
+            log(f"  [JSON] {src_path.name} 読み込み失敗: {e}")
+            continue
+
+        if not isinstance(tenji_all, dict) or not tenji_all:
+            continue
+
         out_path = DATA_DIR / f"tenji_{date_nd}.json"
         with open(out_path, 'w', encoding='utf-8') as _wf:
             _wf.write(json.dumps(tenji_all, ensure_ascii=False, separators=(",", ":")))
         written.append(f"tenji_{date_nd}.json({len(tenji_all)}R)")
+
+    if not written:
+        log("  [JSON] data/ に対象の tenji_YYYYMMDD.json なし → スキップ")
+        return False
 
     log(f"  [JSON] {', '.join(written)} 書き出し完了")
     return True
@@ -2000,37 +1958,51 @@ def _write_and_push_odds_json() -> bool:
     オッズ取得直後に呼ぶ軽量push。
     data/odds_YYYYMMDD.json を更新してそのファイルだけgit push する。
     data.js（巨大）は触らないため push が高速に完了する。
+
+    【背景】
+    以前は ODDS_DIR 配下に「会場slug_日付_R番号」ごとの個別ファイル
+    （odds_kiryu_20260617_R01.json）が出力され、それを本関数が集約していた。
+    現在はデータ収集側のスクリプトが日付単位で既に集約済みの
+    odds_YYYYMMDD.json を直接出力するようになったため、
+    個別ファイルを集約するロジックは不要。読み込んでそのまま書き出すだけでよい。
+
+    【入力フォーマット（= 出力フォーマットと同一）】
+        ODDS_DIR/odds_20260616.json = {
+            "芦屋": { "8": {"3t": {...}, "2f": {...}, "tan": {...}, "final": true}, "9": {...} },
+            "江戸川": { ... },
+            ...
+        }
     """
+    from datetime import timedelta
 
     DATA_DIR.mkdir(exist_ok=True)
-    slug_venue = {v: k for k, v in VENUE_SLUG.items()}
 
-    by_date: dict[str, dict] = {}
-    for fpath in sorted(ODDS_DIR.glob("odds_*.json")):
-        m = re.match(r"odds_([a-z]+)_(\d{8})_R(\d{2})\.json$", fpath.name)
-        if not m:
-            continue
-        slug, date_nd, rno_str = m.group(1), m.group(2), str(int(m.group(3)))
-        venue = slug_venue.get(slug, slug)
-        try:
-            if fpath.stat().st_size == 0:
-                continue
-            with open(fpath, encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            continue
-        race_data = {k: v for k, v in data.items() if k != "fetched_at"}
-        by_date.setdefault(date_nd, {}).setdefault(venue, {})[rno_str] = race_data
-
-    if not by_date:
-        return False
+    today = datetime.now().date()
+    target_dates = [
+        (today - timedelta(days=d)).strftime("%Y%m%d")
+        for d in range(0, HISTORY_DAYS + 1)
+    ]
 
     written_paths = []
-    for date_nd, venues_data in by_date.items():
+    total_races = 0
+    for date_nd in target_dates:
+        src_path = ODDS_DIR / f"odds_{date_nd}.json"
+        if not src_path.exists() or src_path.stat().st_size == 0:
+            continue
+        try:
+            with open(src_path, encoding="utf-8") as f:
+                venues_data = json.load(f)
+        except Exception:
+            continue
+
+        if not isinstance(venues_data, dict) or not venues_data:
+            continue
+
         out_path = DATA_DIR / f"odds_{date_nd}.json"
         with open(out_path, 'w', encoding='utf-8') as _wf:
             _wf.write(json.dumps(venues_data, ensure_ascii=False, separators=(",", ":")))
         written_paths.append(out_path)
+        total_races += sum(len(races) for races in venues_data.values())
 
     if not written_paths:
         return False
@@ -2042,7 +2014,6 @@ def _write_and_push_odds_json() -> bool:
         tracked = [l for l in out.strip().splitlines() if not l.startswith("??")]
         if not tracked:
             return False
-        total_races = sum(len(races) for venues in by_date.values() for races in venues.values())
         msg = f"odds json {datetime.now().strftime('%Y-%m-%d %H:%M')} ({total_races}R)"
         _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg))
     log(f"  [OddsJSON] ✓ 軽量pushキューに追加: {[p.name for p in written_paths]}")
@@ -2323,6 +2294,26 @@ def fetch_tenji_for_csv(csv_paths: list):
                     log(f"    [展示] エラー: {e}")
 
         log("  展示取得完了")
+
+        # ★ 修正: バックグラウンド取得完了後に tenji_YYYYMMDD.json を書き出してpush。
+        # メインループの変更検知（prev_tenji との比較）は CSV変更時に先行更新されるため、
+        # 展示JSONが書かれてもループ側では「差分なし」と判定されpushが漏れることがある。
+        # ここで明示的に書き出し＆pushすることで確実にGitHubへ反映する。
+        try:
+            write_tenji_json_file()
+            with _git_lock:
+                for _tj in DATA_DIR.glob("tenji_*.json"):
+                    _run_nolock(["git", "add", str(_tj)])
+                _code_t, _out_t = _run_nolock(["git", "status", "--porcelain"])
+                _tracked_t = [_l for _l in _out_t.strip().splitlines() if not _l.startswith("??")]
+                if _tracked_t:
+                    _msg_t = f"tenji update {datetime.now().strftime('%Y-%m-%d %H:%M')} [bg fetch完了]"
+                    _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, _msg_t))
+                    log("  [BG展示] tenji_YYYYMMDD.json pushキューに追加")
+                else:
+                    log("  [BG展示] 差分なし → pushスキップ")
+        except Exception as _e:
+            log(f"  [BG展示] push失敗（スキップ）: {_e}")
 
     import threading as _threading
     _threading.Thread(target=_bg_fetch, daemon=True).start()
@@ -3160,15 +3151,6 @@ def main():
                             log(f"  ✓ 結果情報 pushキューに追加 [{result_summary}]")
                             result_push_done = True
 
-                # オッズJSON変更チェック → 軽量push
-                odds_changed = any(
-                    p not in prev_odds or prev_odds[p] != curr_odds.get(p)
-                    for p in curr_odds
-                )
-                if odds_changed and not csv_changed:
-                    _write_and_push_odds_json()
-                    log("  オッズ情報 pushキューに追加")
-
                 # race_index取得（CSV変更時のみ）
                 if csv_changed:
                     fetch_and_inject_race_index()
@@ -3189,7 +3171,18 @@ def main():
                 prev_tenji   = curr_tenji
                 prev_comment = curr_comment
                 prev_result  = curr_result
-                prev_odds    = curr_odds
+
+            # ── オッズJSON変更チェック（if changed: の外で独立検知）──────────────
+            # オッズだけが変わってCSV・展示・結果に変化がない場合、
+            # if changed: ブロックに入らず push が漏れるのを防ぐ。
+            odds_changed = any(
+                p not in prev_odds or prev_odds[p] != curr_odds.get(p)
+                for p in curr_odds
+            )
+            if odds_changed:
+                _write_and_push_odds_json()
+                log("  オッズ情報 pushキューに追加")
+            prev_odds = curr_odds
 
     except KeyboardInterrupt:
         log("\n[終了]")
