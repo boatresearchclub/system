@@ -1943,7 +1943,7 @@ def _check_missing_tenji_and_odds(venues: dict, deadline_map: dict) -> None:
     log("  [終了チェック] 最終データ書き出し＋push 開始...")
     try:
         write_all_json_files()
-        pushed = git_push([INDEX_HTML])
+        pushed = git_push([INDEX_HTML], urgent=True)
         if pushed:
             log("  [終了チェック] ✅ 最終push完了 → アプリに反映されました")
         else:
@@ -2610,9 +2610,15 @@ def _summarize_push_targets(changed_files):
     return ", ".join(parts) if parts else "（不明）"
 
 
-def git_push(changed_files):
+def git_push(changed_files, urgent=False):
     # git add（難読化含む）はここで実施し、commit+push はキューに委譲する。
     # → 複数系統のpushが短時間に重なってGitHub PagesがCancelledになるのを防ぐ。
+    # urgent=True: priority=0（緊急）でキューに積む。
+    #   → tenji/odds/result の緊急pushが途切れず供給される状況でも、
+    #     PUSH_NORMAL のまま後回しにされ続ける「飢餓」を防ぐために使う。
+    #     （例: RACE_INDEX_DATA を埋め込んだ data.js の push）
+    #   同じpriority内はFIFO（_push_seq）で順序が保たれるため、
+    #   先行する緊急push（tenji/odds/result）を追い越すことはない。
     with _git_lock:
         _git_add_locked(changed_files)
         push_summary = _summarize_push_targets(changed_files)
@@ -2621,8 +2627,9 @@ def git_push(changed_files):
         tracked = [l for l in out.strip().splitlines() if not l.startswith("??")]
         if not tracked:
             return False
-        _push_queue.put((PUSH_NORMAL, next(_push_seq), "raw", None, msg))
-        log(f"  pushキューに追加 [{push_summary}]")
+        priority = PUSH_URGENT if urgent else PUSH_NORMAL
+        _push_queue.put((priority, next(_push_seq), "raw", None, msg))
+        log(f"  pushキューに追加 [{push_summary}]" + ("（緊急）" if urgent else ""))
         return True
 
 def _run_nolock(cmd):
@@ -2722,7 +2729,14 @@ def _git_add_locked(changed_files):
         else:
             _run_nolock(["git", "add", str(JS_FILE_OBF)])
 
-    # data.js はスケルトンのみ・データ埋め込みなし → push不要
+    # data.js: フェーズ2導入前は「スケルトンのみ・push不要」だったが、
+    # 現在は fetch_and_inject_race_index() / inject_odds_to_html() 等が
+    # RACE_INDEX_DATA 等の実データを data.js に書き込んでいるため、
+    # ここで明示的に git add しないとステージングされず、
+    # git commit（-aなし）に一切含まれないまま永遠に未pushとなる。
+    # ── これが「RACE_INDEX_DATAが更新されない」不具合の根本原因 ──
+    if DATA_JS.exists():
+        _run_nolock(["git", "add", str(DATA_JS)])
     if PLAYER_ID_MAP.exists():
         _run_nolock(["git", "add", str(PLAYER_ID_MAP)])
 
@@ -2997,11 +3011,12 @@ def main():
             fetch_and_inject_race_index()
             write_all_json_files()
             # race_index_*.json 等 data/ 配下の新規ファイルも確実に add
-            if DATA_DIR.exists():
-                for jf in DATA_DIR.glob("*.json"):
-                    import subprocess as _sp
-                    _sp.run(["git", "add", str(jf)], cwd=str(SCRIPTS_DIR))
-            pushed = git_push([INDEX_HTML])
+            # ── _git_lock を取らずに直接 subprocess で git add すると、
+            #    同時刻に走る result/odds の緊急push（_git_lock保持中）と
+            #    .git/index.lock を奪い合って "File exists" で失敗するため、
+            #    git_push() の _git_add_locked（_git_lock保護下）にまとめて渡す ──
+            extra_files = list(DATA_DIR.glob("*.json")) if DATA_DIR.exists() else []
+            pushed = git_push([INDEX_HTML] + extra_files, urgent=True)
             if pushed:
                 log("  [BG] 公式情報・JSONファイル更新 完了 → push済み")
             else:
@@ -3025,7 +3040,7 @@ def main():
                     def _bg():
                         fetch_and_inject_race_index()
                         write_all_json_files()
-                        pushed = git_push([INDEX_HTML])
+                        pushed = git_push([INDEX_HTML], urgent=True)
                         log("  [深夜監視][BG] 公式情報・JSONファイル更新 完了" + (" → push済み" if pushed else "（変更なし）"))
                     _threading.Thread(target=_bg, daemon=True).start()
                     break
@@ -3154,8 +3169,14 @@ def main():
                             result_push_done = True
 
                 # race_index取得（CSV変更時のみ）
+                # → RACE_INDEX_DATA を埋め込んだ data.js は、tenji/odds/result の
+                #   緊急pushに埋もれて後回しにされ続けないよう、ここで即座に
+                #   urgent push する（CSV本体のpushは従来通り通常優先度のまま）。
                 if csv_changed:
-                    fetch_and_inject_race_index()
+                    if fetch_and_inject_race_index():
+                        race_index_pushed = git_push([INDEX_HTML], urgent=True)
+                        if race_index_pushed:
+                            log("  ✓ RACE_INDEX_DATA(data.js) 緊急pushキューに追加")
 
                 # CSV変更 or fetch以外の変更がある場合 → 通常の全JSON書き出し＋push
                 # fetch系のみ変更の場合は上で個別push済みのためスキップ

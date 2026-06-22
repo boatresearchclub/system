@@ -47,6 +47,15 @@ async function fetchAndMergeJsonData() {
   if (todayNd) {
     const todayData = await safeFetch(`${DATA_BASE_URL}/today_${todayNd}.json`, true);
     if (todayData) {
+      // data.js ビルド時点で埋め込まれた古い venue（今日 today_*.json に
+      // 存在しないもの＝前日以前の開催場）を ALL_DATA から削除する。
+      // これをやらないと GitHub Pages 等で data.js のビルドが古い場合に
+      // 「本日の開催場」へ前日の会場が混入し続けるバグになる。
+      for (const venue of Object.keys(ALL_DATA)) {
+        if (!Object.prototype.hasOwnProperty.call(todayData, venue)) {
+          delete ALL_DATA[venue];
+        }
+      }
       for (const [venue, vdata] of Object.entries(todayData)) {
         ALL_DATA[venue] = vdata;
       }
