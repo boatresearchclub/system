@@ -739,9 +739,16 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   // チューニング定数
   // BOOST_SCALE: 噛み合い強度をlayer2係数の変動幅に変換するスケール係数
   // 大きくすると展開補正のメリハリが増す（1.0〜3.0 が実用範囲）
-  // BOOST_SCALE: 噛み合い強度をlayer2係数の変動幅に変換するスケール係数
-  // 1.5: クリップ回避＋適切なメリハリのデフォルト推奨値（1.0〜3.0 が実用範囲）
-  const BOOST_SCALE = 1.5;
+  //
+  // 【2026-06-23 変更】1.5 → 0.7
+  // 理由: 1.5のとき totalBoost≈0.23 と合わさって
+  //   layer2[1] = 1.0 - 0.23×1.5 ≈ ▼0.65 が全レース固定的に発生し、
+  //   1号艇を系統的に過小評価していた（996件実測: 推定54.7%→実績59.7%、+5pt乖離）。
+  //   0.7にすることで layer2[1] ≈ ▼0.84 程度に抑え、
+  //   展開補正を「方向性の差別化」に留める（絶対量の過剰引き下げを防ぐ）。
+  //   Stage2（2〜6号艇の条件付き配分）は CONDITIONAL_BOOST_SCALE で別管理するため
+  //   BOOST_SCALE の変更は1号艇のみに実質的な影響を与える。
+  const BOOST_SCALE = 0.7;
   // VULN_TRUST_MAX: 1号艇の被決まり手個人実績を何走で最大信頼とするか
   const VULN_TRUST_MAX = 100;
   // ATTACK_TRUST_MAX: 他艇の攻撃力個人実績を何走で最大信頼とするか
@@ -864,7 +871,11 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   //   キャリブレーションパネルの「60%+帯」を直接抑え込める。
   //   NIGE_BOOST_SCALE  … 被決まり手プレッシャーの効き具合。
   const NIGE_CLIP_MIN   = 0.25;  // 1号艇がどれだけ弱くても下限25%
-  const NIGE_CLIP_MAX   = 0.85;  // 1号艇がどれだけ強くても上限85%（旧モデルの過大評価対策）
+  // 【2026-06-23 変更】0.85 → 0.80
+  // BOOST_SCALE を 1.5→0.7 に下げたことで rawNige が上昇するため、
+  // クリップ上限も合わせて引き下げ（996件実測の最高帯実績≈58%に対して余裕を持たせる）。
+  // calibrateCourse1Prob が上から整形するため、ここは粗い上限として機能すれば十分。
+  const NIGE_CLIP_MAX   = 0.80;
   const NIGE_BOOST_SCALE = BOOST_SCALE; // 被決まり手プレッシャーの効き（既存値を踏襲）
 
   const rawNige = (boat1 ? boat1.prob : 0)

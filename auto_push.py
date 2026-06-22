@@ -888,8 +888,9 @@ def inject_result_to_html(days_back=RESULT_DAYS):
 
 def write_result_json(days_back=None):
     """
-    result_data/*.json を data/result_YYYYMMDD.json として日付単位にまとめて書き出す。
-    フェーズ1: HTMLへの埋め込み(inject_result_to_html)と並行稼働。干渉なし。
+    fetch_result.py が RESULT_DIR に書き込んだ統合済み result_{YYYYMMDD}.json を
+    そのまま DATA_DIR へ転送（read→write）する。
+    _write_and_push_odds_json() と同じ構造。
 
     出力フォーマット:
         data/result_20260511.json = {
@@ -908,45 +909,24 @@ def write_result_json(days_back=None):
     DATA_DIR.mkdir(exist_ok=True)
     written = 0
 
-    # 日付ごとにまとめる
-    days_data: dict[str, dict] = {}
-    for fpath in glob.glob(str(RESULT_DIR / "*.json")):
-        fname = Path(fpath).name
-        m = re.match(r"result_(.+)_(\d{8})_R(\d+)\.json", fname)
-        if not m:
+    target_dates = [
+        (today - timedelta(days=d)).strftime("%Y%m%d")
+        for d in range(0, days_back + 1)
+    ]
+    for date_nd in target_dates:
+        src_path = RESULT_DIR / f"result_{date_nd}.json"
+        if not src_path.exists() or src_path.stat().st_size == 0:
             continue
-        venue_slug, date_nd, race_str = m.group(1), m.group(2), str(int(m.group(3)))
-
-        # 対象日付か確認
         try:
-            file_date = datetime.strptime(date_nd, "%Y%m%d").date()
-        except ValueError:
-            continue
-        if (today - file_date).days > days_back:
-            continue
-
-        try:
-            with open(fpath, encoding="utf-8") as f:
+            with open(src_path, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             continue
-
-        race_key = f"{venue_slug}_{race_str}"
-        days_data.setdefault(date_nd, {})[race_key] = {
-            "sanrentan":  data.get("sanrentan", []),
-            "nirentan":   data.get("nirentan", []),
-            "tansho":     data.get("tansho", []),
-            "fukusho":    data.get("fukusho", []),
-            "kimari":     data.get("kimari", ""),
-            "henkan":     data.get("henkan", []),
-            "fetched_at": data.get("fetched_at", ""),
-        }
-
-    # 日付ごとにファイル書き出し
-    for date_nd, races in days_data.items():
+        if not isinstance(data, dict) or not data:
+            continue
         out_path = DATA_DIR / f"result_{date_nd}.json"
-        with open(out_path, 'w', encoding='utf-8') as _wf:
-            _wf.write(json.dumps(races, ensure_ascii=False, separators=(",", ":")))
+        with open(out_path, 'w', encoding='utf-8') as wf:
+            wf.write(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
         written += 1
 
     log(f"  [JSON] result_YYYYMMDD.json 書き出し完了: {written}日分")
@@ -1244,13 +1224,15 @@ def fetch_result_for_venues(venues_in_csv: dict[str, str]) -> bool:
 
     def fetch_one(args):
         slug, date_nd, race = args
-        fname = RESULT_DIR / f"result_{slug}_{date_nd}_R{race:02d}.json"
-        # 取得済みはスキップ
-        if fname.exists():
+        # 取得済みはスキップ（統合済みファイル内のrace_keyで判定）
+        merged_path = RESULT_DIR / f"result_{date_nd}.json"
+        if merged_path.exists():
             try:
-                with open(fname, encoding="utf-8") as f:
-                    existing = json.load(f)
-                if existing.get("sanrentan") or existing.get("cancelled"):
+                with open(merged_path, encoding="utf-8") as f:
+                    merged = json.load(f)
+                race_key = f"{slug}_{int(race)}"
+                entry = merged.get(race_key, {})
+                if entry.get("sanrentan") or entry.get("cancelled"):
                     return slug, race, "skip"
             except Exception:
                 pass
@@ -2826,16 +2808,20 @@ def backfill_past_results():
             slug = VENUE_SLUG.get(venue_name)
             if not slug:
                 continue
+            merged_path = RESULT_DIR / f"result_{date_nd}.json"
+            merged_cache: dict = {}
+            if merged_path.exists():
+                try:
+                    with open(merged_path, encoding="utf-8") as f:
+                        merged_cache = json.load(f)
+                except Exception:
+                    merged_cache = {}
             for race in range(1, 13):
-                fname = RESULT_DIR / f"result_{slug}_{date_nd}_R{race:02d}.json"
-                if fname.exists():
-                    try:
-                        with open(fname, encoding="utf-8") as f:
-                            existing = json.load(f)
-                        if existing.get("sanrentan") or existing.get("cancelled"):
-                            continue  # 取得済み or 中止登録済み
-                    except Exception:
-                        pass
+                # 取得済みはスキップ（統合済みファイル内のrace_keyで判定）
+                race_key = f"{slug}_{int(race)}"
+                entry = merged_cache.get(race_key, {})
+                if entry.get("sanrentan") or entry.get("cancelled"):
+                    continue  # 取得済み or 中止登録済み
                 tasks.append((slug, date_nd, race))
                 total_missing += 1
 
