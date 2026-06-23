@@ -239,7 +239,7 @@
     return `
       <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
         <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">📐 確率キャリブレーション</div>
-        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">推定的中率 vs 実績的中率（${totalValid}件）</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">推定勝率 vs 実績勝率（全艇×全レース　${totalValid}件）</div>
 
         <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:3px">
@@ -374,6 +374,57 @@
     }
 
     return stats;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 確率帯別 勝率キャリブレーション（左パネル「📐 確率キャリブレーション」用）
+  // ──────────────────────────────────────────────────────────────────
+  // [2026-06-23 修正] 旧実装は results を hitProbEst（レース単位・買い目の
+  //   合成的中確率）でビン分けしていた。hitProbEst は1レースにつき1値しか
+  //   存在しないため母数は最大 totalAll 件（≒996件）で、特に低確率帯は
+  //   サンプルが極端に少なく（N<10常態化）、実用に耐えないグラフになっていた。
+  //
+  //   「確率キャリブレーション」として本来見たいのは
+  //     「モデルが各艇に与えた勝率予測 vs 実際にその艇が勝てたか」
+  //   であり、これは calcCalibrationByCourse と同じ集計単位
+  //   （艇 × レース）を使えば、最大 totalAll × 6 件まで母数を増やせる。
+  //   → boatProbs を全艇展開し、コースで束ねる代わりに確率帯（BINS）で束ね直す。
+  //
+  // 【重要】この関数の戻り値は表示専用。
+  //   updateCalibPoints()（hitProbEst の自己補正テーブル CALIB_POINTS 更新）には
+  //   引き続き calcCalibration() の結果（hitProbEst集計）を渡すこと。
+  //   CALIB_POINTS は「買い目合成確率(hitProbEst)」を補正するためのテーブルで、
+  //   computeScenCombosWithEV.js の ev = synthOdds × calibrateProb(rawHitProbEst)
+  //   に直結している。ここで艇単位の勝率集計を混ぜて渡すと、無関係な統計量で
+  //   hitProbEst の補正テーブルが歪み、EV計算全体が壊れるため絶対に混在させない。
+  function calcWinProbCalibration(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const binned = BINS.map(bin => ({
+      label: bin.label, min: bin.min, max: bin.max,
+      total: 0, hits: 0, sumEst: 0,
+    }));
+
+    (results || []).forEach(r => {
+      const winner = _getWinnerCourse(r);
+      if (winner == null) return;
+      courses.forEach(course => {
+        const est = _getBoatProb(r, course);
+        if (est == null) return;
+        const bin = binned.find(b => est >= b.min && est < b.max);
+        if (!bin) return; // 値域外（負値や1.01以上など想定外データ）は無視
+        bin.total++;
+        bin.sumEst += est;
+        if (winner === course) bin.hits++;
+      });
+    });
+
+    return binned.map(b => ({
+      label  : b.label,
+      total  : b.total,
+      hits   : b.hits,
+      actual : b.total > 0 ? b.hits / b.total : null,
+      estAvg : b.total > 0 ? b.sumEst / b.total : null,
+    }));
   }
 
   // コース別勝率キャリブレーション HTML生成
@@ -791,7 +842,6 @@
       const container = _ensureContainer();
       const all       = allResultsScenAll || [];
       const totalAll  = all.length;
-      const totalValid = _diagValid;
 
       // 修正: allResultsScenAll が [] のまま呼ばれたとき（非同期計算完了前）は
       // 「集計中」表示にしてデータ不足と区別する
@@ -824,14 +874,17 @@
       const binStatsRaw = calcCalibration(allRaw);
       if (typeof updateCalibPoints === 'function') updateCalibPoints(binStatsRaw);
 
-      // ―― ② パネル表示用の集計（二重補正の排除） ――
-      // r.hitProbEst は computeScenCombosWithEV 側で既に calibrateProb() 済みの値。
-      // ここで再度 calibrateProb() を適用すると二重補正になるため、
-      // 補正済みの値をそのまま集計するだけでよい。
-      const binStats = calcCalibration(all);
+      // ―― ② パネル表示用の集計 ――
+      // [2026-06-23 修正] 表示には calcWinProbCalibration（艇×レース集計、
+      // 母数は最大 totalAll×6）を使う。calcCalibration（hitProbEst集計、
+      // 母数は最大 totalAll）は上の binStatsRaw/updateCalibPoints 専用のまま
+      // 維持し、表示側のビン分けと混同しない（混ぜると hitProbEst の自己補正
+      // テーブル CALIB_POINTS が無関係な統計で歪み、EV計算が壊れるため）。
+      const winProbBinStats = calcWinProbCalibration(all);
+      const totalValidWin   = winProbBinStats.reduce((s, b) => s + b.total, 0);
 
-      const calError   = calcCalibrationError(binStats);
-      const violations = countMonotonicViolations(binStats);
+      const calError   = calcCalibrationError(winProbBinStats);
+      const violations = countMonotonicViolations(winProbBinStats);
       const p2stats    = calcPlace2Calibration(all);
       const p3stats    = calcPlace3Calibration(all);
       // コース別キャリブレーション（パネル表示用：補正済み値）
@@ -854,7 +907,7 @@
       container.innerHTML = `
         <div class="ai-stats-card" style="margin-bottom:0.6rem">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
-            ${buildCalibrationHTML(binStats, calError, violations, totalValid)}
+            ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
             ${buildPlace2CalibHTML(p2stats, p3stats)}
             <div class="admin-only">${buildCoursCalibHTML(courseStats, all.length)}</div>
           </div>
