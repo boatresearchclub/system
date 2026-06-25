@@ -85,7 +85,7 @@
   // 崩壊済みテーブルが保存されている可能性が高いため、キーをバージョンアップして
   // クリーンな状態から再構築する（v1 の汚染データはこのファイルの読み込み時に破棄する）。
   const _CALIB_LS_KEY_LEGACY = 'scen_calib_points_v1';
-  const _CALIB_LS_KEY        = 'scen_calib_points_v2';
+  const _CALIB_LS_KEY        = 'scen_calib_points_v3';
 
   // ── 汚染データの強制クレンジング（使い捨てリセット）──
   // 旧バージョンのキーが残っていた場合は問答無用で削除する。
@@ -95,6 +95,11 @@
       if (localStorage.getItem(_CALIB_LS_KEY_LEGACY) != null) {
         localStorage.removeItem(_CALIB_LS_KEY_LEGACY);
         console.warn(`[computeScenCombosWithEV] 旧キー(${_CALIB_LS_KEY_LEGACY})の汚染済み補正テーブルを破棄しました。`);
+      }
+      // [2026-06-25] v2キーも旧キー扱いで破棄（60日データで再学習させるため）
+      if (localStorage.getItem('scen_calib_points_v2') != null) {
+        localStorage.removeItem('scen_calib_points_v2');
+        console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_points_v2)を破棄しました（60日再学習のため）。');
       }
       const rawV2 = localStorage.getItem(_CALIB_LS_KEY);
       if (rawV2) {
@@ -122,18 +127,17 @@
   }
 
   const CALIB_POINTS = _loadCalibFromLS() || [
-    // [推定値(中心), 実績的中率]  ← calibration.js の estAvg / actual から転記
-    [0.00,  0.00],   // 0–10% ビン（サンプル少のため外挿基準点）
-    [0.17,  0.33],   // 10–20% ビン: 推定17% → 実績33%
-    [0.27,  0.37],   // 20–30% ビン: 推定27% → 実績37%
-    [0.36,  0.48],   // 30–40% ビン: 推定36% → 実績48%
-    [0.47,  0.57],   // 40–60% ビン: 推定47% → 実績57%
-    [0.64,  0.75],   // 60%+  ビン: 推定64% → 実績75%
-    // [2026-06-20 修正] 旧 [1.00, 1.00] は「推定100%→実績100%」という
-    // 競艇の実態にそぐわない仮定で高確率帯を100%側へ強く引っ張り、
-    // 60%+ビンの過大評価（キャリブレーションパネルで実証済み: 推定68%→実績33%）を招いていた。
-    // データのない領域は「最後の実測点の水準でフラットに延長」が安全な外挿。
-    [1.00,  0.75],   // 外挿基準点（最後の実測値と同水準に固定。100%への収束を仮定しない）
+    // [推定値(中心), 実績的中率]  ← calibration.js パネルの実測値（2026-06-25更新）
+    // ※ localStorage(v3)に実測値が蓄積されれば自動的にこちらは使われなくなる
+    [0.00,  0.00],   // 0–10% ビン: 外挿基準点
+    [0.05,  0.05],   // 0–10% ビン: 実測 推定2%→実績5%（過小評価を補正）
+    [0.15,  0.12],   // 10–20% ビン: 推定15% → 実績12%
+    [0.25,  0.16],   // 20–30% ビン: 推定25% → 実績16%（過大評価を補正）
+    [0.35,  0.18],   // 30–40% ビン: 推定35% → 実績18%（最大の過大評価を補正）
+    [0.50,  0.57],   // 40–60% ビン: 推定55% → 実績57%（ほぼ正確）
+    [0.63,  0.40],   // 60%+  ビン: 推定63% → 実績40%（過大評価を補正）
+    // 右端フラット外挿（60%+帯の実績水準で頭打ち。100%への収束を仮定しない）
+    [1.00,  0.40],
   ];
 
   /**
@@ -188,8 +192,15 @@
   //   の3点テーブルとする。将来 calcCalibrationByCourse 側がビン別集計に
   //   対応したら、ここも hitProbEst 同様の多点補間に拡張できる。
   // ─────────────────────────────────────────────────────────────────────────
-  const _COURSE1_CALIB_LS_KEY = 'scen_calib_course1_v1';
+  const _COURSE1_CALIB_LS_KEY = 'scen_calib_course1_v2'; // [2026-06-25] v1→v2: 60日データで再学習
 
+  // [2026-06-25] course1 v1旧キーを破棄（60日再学習のため）
+  try {
+    if (localStorage.getItem('scen_calib_course1_v1') != null) {
+      localStorage.removeItem('scen_calib_course1_v1');
+      console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_course1_v1)を破棄しました。');
+    }
+  } catch (_e) {}
   function _loadCourse1CalibFromLS() {
     try {
       const raw = localStorage.getItem(_COURSE1_CALIB_LS_KEY);
@@ -278,8 +289,8 @@
     // [2026-06-20 追加] 自己崩壊ループ対策。
     // バックテスト全体の有効データ件数が少ない状態で更新すると、
     // 偏ったビンの値がそのままテーブルに刻まれて次回以降の補正を歪める。
-    const MIN_TOTAL_SAMPLES_HARD  = 30; // これ未満は問答無用でスキップ
-    const MIN_TOTAL_SAMPLES_RECOMMENDED = 50; // 推奨下限（警告のみ、更新は許可）
+    const MIN_TOTAL_SAMPLES_HARD  = 100; // これ未満は問答無用でスキップ
+    const MIN_TOTAL_SAMPLES_RECOMMENDED = 200; // 推奨下限（警告のみ、更新は許可）
     const totalValidForUpdate = binStats.reduce((s, b) => s + (b.total || 0), 0);
 
     if (totalValidForUpdate < MIN_TOTAL_SAMPLES_HARD) {
@@ -511,6 +522,11 @@
           //   EV1.1 フィルタで全件除外されるバグがあった。
           const _combos = _cached.slice();
           let _hitProbEst = null;
+          // [修正] キャッシュヒット時の weighted2nd/3rd 受け皿（下のtry内で設定）
+          let _cacheWeighted2nd   = {};
+          let _cacheRanked2ndList = [];
+          let _cacheWeighted3rd   = {};
+          let _cacheRanked3rdList = [];
           try {
             const _rd = vdata?.races?.[String(rno)];
             if (_rd?.boats && typeof window._setDataForCalc === 'function'
@@ -544,6 +560,30 @@
                     if (_cnt > 0 && typeof calibrateProb === 'function') {
                       _hitProbEst = calibrateProb(_raw);
                     }
+
+                    // ── [修正] キャッシュヒット時も weighted2nd/3rd を計算する ──
+                    // 旧実装は _sd を hitProbEst 計算にのみ使い捨てており、
+                    // weighted2nd/weighted3rd/ranked2ndList/ranked3rdList が
+                    // 常に空のまま返っていた。表示済み（=キャッシュあり）レースが
+                    // 大半を占めるため、これにより pred2ndRank / 確率値キャリブレーション
+                    // が実質機能していなかった。fp1st（予測1着艇）を再現し、
+                    // 非キャッシュ経路と同一の calcWeighted2nd/3rd を適用する。
+                    try {
+                      let _cFp1st = null, _cBest = -Infinity;
+                      _ranked.forEach(b => {
+                        if (b.boat != null && b.final_prob != null && b.final_prob > _cBest) {
+                          _cBest = b.final_prob; _cFp1st = b.boat;
+                        }
+                      });
+                      if (_cFp1st != null) {
+                        const _w2 = calcWeighted2nd(_sd, _cFp1st);
+                        const _w3 = calcWeighted3rd(_sd, _cFp1st);
+                        _cacheWeighted2nd     = _w2.weighted;
+                        _cacheRanked2ndList   = _w2.ranked;
+                        _cacheWeighted3rd     = _w3.weighted;
+                        _cacheRanked3rdList   = _w3.ranked;
+                      }
+                    } catch (_we) { /* 計算失敗時は空のまま（後段でフォールバック） */ }
                   }
                 }
               } finally {
@@ -602,10 +642,13 @@
             ev          : null,
             boatProbs   : _boatProbs,
             boatProbsRaw: _boatProbsRaw,
+            // [修正] 旧実装は常に null/{} だった。計算できていれば反映する。
             pred2ndRank : null,
             pred3rdRank : null,
-            weighted2nd : {},
-            weighted3rd : {},
+            ranked2ndList: _cacheRanked2ndList,
+            ranked3rdList: _cacheRanked3rdList,
+            weighted2nd : _cacheWeighted2nd,
+            weighted3rd : _cacheWeighted3rd,
             _fromCache  : true,
           };
         }

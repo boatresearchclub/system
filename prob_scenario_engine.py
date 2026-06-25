@@ -176,8 +176,10 @@ def form_correction(player_idx: dict | None, overall_win) -> float:
     if bayesian is None or not base or base <= 0:
         return 1.0
     ratio = bayesian / base
-    if   ratio >= 1.20: return 1.08
-    elif ratio >= 1.08: return 1.04
+    # [2026-06-25] 過大評価抑制: base_rate×st_corr×form_corrの乗算増幅を緩和
+    # 上限を1.08→1.05、1.04→1.02に絞る。下側は据え置き（抑制方向は安全）
+    if   ratio >= 1.20: return 1.05   # 旧1.08 → 絞り込み
+    elif ratio >= 1.08: return 1.02   # 旧1.04 → 絞り込み
     elif ratio <= 0.80: return 0.92
     elif ratio <= 0.92: return 0.96
     else:               return 1.00

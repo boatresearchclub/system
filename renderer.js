@@ -1,6 +1,25 @@
 function arekClass(v){ return v < 45 ? 'arek-lo' : v < 65 ? 'arek-md' : 'arek-hi'; }
 function arekLabel(v){ return v < 45 ? '安定' : v < 65 ? '中荒れ' : '大荒れ'; }
 
+// 結果comboを正規化（区切り文字を統一）して比較用キーを作る
+// ※ AI予想タブ・オッズタブなど複数の描画関数から共通利用するためトップレベルに配置
+function normalizeCombo(s){ return (s||'').replace(/[－−\-]/g,'-'); }
+
+// 艇番文字列（例: "1−2−3"）を color-circle バッジ列に変換
+// ※ AI予想タブ・オッズタブなど複数の描画関数から共通利用するためトップレベルに配置
+function comboToBadges(combo){
+  return (combo || '').split(/([－−\-])/).map(part => {
+    if (/^[－−\-]$/.test(part)) {
+      return `<span style="color:var(--text3);font-size:13px;margin:0 1px;font-weight:400">−</span>`;
+    }
+    const n = part.trim();
+    if (/^[1-6]$/.test(n)) {
+      return `<span class="boat-circle b${n}" style="width:22px;height:22px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${n}</span>`;
+    }
+    return part;
+  }).join('');
+}
+
 function weightDots(w, max=3){
   let s='';
   for(let i=0;i<max;i++) s+=`<span class="wdot${i<w?'':' empty'}"></span>`;
@@ -1621,27 +1640,13 @@ function renderBuy(rno){
   const hasResult = !!(resultRd && resultRd.sanrentan && resultRd.sanrentan.length > 0);
 
   // 結果comboを正規化（区切り文字を統一）して比較用セットを作成
-  function normalizeCombo(s){ return (s||'').replace(/[－−\-]/g,'-'); }
+  // normalizeCombo / comboToBadges はファイル先頭でトップレベル定義済み（オッズタブ等と共通利用）
   // sanrentan[0] が確定着順（1着-2着-3着）。全件Setにすると払戻データの他組み合わせと誤マッチする
   const resultSan3  = hasResult && resultRd.sanrentan[0] ? new Set([normalizeCombo(resultRd.sanrentan[0].combo)]) : null;
   // nirentan は sanrentan と独立してチェック（sanrentan がなくても 2連単的中を正しく判定する）
   const resultNiren = resultRd?.nirentan?.[0] ? new Set([normalizeCombo(resultRd.nirentan[0].combo)]) : null;
 
   function hitBadge(){ return `<span class="hit-badge">🎯 的中</span>`; }
-
-  // 艇番文字列（例: "1−2−3"）を color-circle バッジ列に変換
-  function comboToBadges(combo){
-    return (combo || '').split(/([－−\-])/).map(part => {
-      if (/^[－−\-]$/.test(part)) {
-        return `<span style="color:var(--text3);font-size:13px;margin:0 1px;font-weight:400">−</span>`;
-      }
-      const n = part.trim();
-      if (/^[1-6]$/.test(n)) {
-        return `<span class="boat-circle b${n}" style="width:22px;height:22px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${n}</span>`;
-      }
-      return part;
-    }).join('');
-  }
 
   function buy3Row(r){
     const nc = normalizeCombo(r.c);
@@ -3245,8 +3250,9 @@ function renderOdds(rno) {
   }
 
   // ── 各種別のテーブルを生成 ──
+  // 3連単（3t）のみ「1着列×2着グループ×3着行」のマトリクス表で表示する。
+  // 他の券種（3連複・2連単・2連複・単勝）は人気順の縦リストのまま。
   const TYPES = [
-    { key: "3t",  label: "3連単", cols: 3 },
     { key: "3f",  label: "3連複", cols: 3 },
     { key: "2t",  label: "2連単", cols: 2 },
     { key: "2f",  label: "2連複", cols: 2 },
@@ -3261,8 +3267,74 @@ function renderOdds(rno) {
       .sort((a, b) => a.odds - b.odds);
   }
 
-  // 各種別のHTMLを生成
-  const sectionsHtml = TYPES.map(({ key, label }) => {
+  // 艇番 → 選手名 のマップ（マトリクス表のヘッダーに使用）
+  const _rd_odds   = DATA.races?.[String(rno)];
+  const _nameByBoat = {};
+  (_rd_odds?.boats || []).forEach(b => { _nameByBoat[b.boat] = b.name; });
+
+  // ── 3連単マトリクス表を生成 ──
+  // 列=1着艇(1-6) → 各列内で2着艇(残り5艇)ごとにグルーピング → 各グループ内の行=3着艇(残り4艇)
+  function build3tMatrixHtml(dict) {
+    if (!dict || Object.keys(dict).length === 0) return '';
+
+    // combo文字列("1-2-3"等)からオッズを引くためのマップを作成（区切り文字ゆれを吸収）
+    const oddsByCombo = {};
+    Object.entries(dict).forEach(([combo, odds]) => {
+      oddsByCombo[normalizeCombo(combo)] = odds;
+    });
+
+    const boatNums = [1, 2, 3, 4, 5, 6];
+
+    const columnsHtml = boatNums.map(first => {
+      const seconds = boatNums.filter(n => n !== first);
+
+      const groupsHtml = seconds.map(second => {
+        const thirds = boatNums.filter(n => n !== first && n !== second);
+
+        const rowsHtml = thirds.map(third => {
+          const combo = `${first}-${second}-${third}`;
+          const odds  = oddsByCombo[combo];
+          const oddsHigh  = odds != null && odds >= 100;
+          const oddsColor = odds == null ? 'var(--text3)' : (oddsHigh ? 'var(--red)' : 'var(--text)');
+          const oddsLabel = odds != null ? odds.toFixed(1) : '—';
+          return `<div style="display:flex;align-items:center;gap:4px;padding:3px 4px;border-bottom:1px solid var(--border)">
+            <span class="boat-circle b${third}" style="width:18px;height:18px;font-size:10px;line-height:18px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${third}</span>
+            <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:${oddsColor};flex:1;text-align:right">${oddsLabel}</span>
+          </div>`;
+        }).join('');
+
+        return `<div style="display:flex">
+          <span class="boat-circle b${second}" style="width:18px;font-size:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;align-self:stretch">${second}</span>
+          <div style="flex:1;min-width:0">${rowsHtml}</div>
+        </div>`;
+      }).join('');
+
+      const nm = _nameByBoat[first] || '';
+      return `<div style="flex:1;min-width:0;border-right:1px solid var(--border)">
+        <div class="boat-circle b${first}" style="display:flex;align-items:center;gap:4px;padding:4px 6px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden">
+          <span style="flex-shrink:0">${first}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis">${nm}</span>
+        </div>
+        ${groupsHtml}
+      </div>`;
+    }).join('');
+
+    return `<div style="display:flex;overflow-x:auto;border:1px solid var(--border);border-radius:6px">${columnsHtml}</div>`;
+  }
+
+  const matrix3tHtml = build3tMatrixHtml(raceOdds['3t']);
+  const matrix3tCount = raceOdds['3t'] ? Object.keys(raceOdds['3t']).length : 0;
+  const matrix3tSection = matrix3tCount > 0
+    ? `<div class="buy-card">
+        <div class="buy-card-title">3連単
+          <span style="font-weight:400;color:var(--text3);font-size:10px;margin-left:6px">${matrix3tCount}通り</span>
+        </div>
+        ${matrix3tHtml}
+      </div>`
+    : '';
+
+  // 各種別のHTMLを生成（リスト形式の券種）
+  const sectionsHtml = matrix3tSection + TYPES.map(({ key, label }) => {
     const entries = sortedEntries(raceOdds[key]);
     if (entries.length === 0) return '';
 
