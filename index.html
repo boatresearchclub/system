@@ -425,7 +425,96 @@
     <button onclick="exportAnalysisCSV()" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--accent,#7c6);background:var(--bg2);color:var(--accent,#7c6);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:700">
       ⬇ 📊 改善分析 CSV（全戦略）
     </button>
+    <span style="width:1px;height:24px;background:var(--border);align-self:center;flex-shrink:0"></span>
+    <button onclick="adminRecalcAllScenCombos()" id="admin-recalc-btn" style="font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid #e07;background:var(--bg2);color:#e07;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:700">
+      🔄 シナリオ全件再計算
+    </button>
   </div>
+
+  <script>
+  // ── 管理者専用: シナリオ買い目キャッシュを全件再計算する ──
+  // LocalStorageのscen_c_*を削除した後、全履歴レースを順番に再計算して
+  // 新しいロジック（KIMARI_PLACE2_BIAS等）を反映させる。
+  // 完了後にページをリロードするとキャリブレーションパネルの数字が更新される。
+  window.adminRecalcAllScenCombos = async function() {
+    if (window.APP_TIER !== 'admin') return;
+
+    const btn = document.getElementById('admin-recalc-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 再計算中...';
+
+    // ① localStorageのscen_c_*を全削除
+    try {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('scen_c_'))
+        .forEach(k => localStorage.removeItem(k));
+      // メモリキャッシュも全削除
+      if (typeof _scenComboCache !== 'undefined') {
+        Object.keys(_scenComboCache).forEach(k => delete _scenComboCache[k]);
+      }
+    } catch(_e) {}
+
+    // ② 全履歴日付を収集
+    const allDates = [];
+    try {
+      // ALL_DATA_HISTORY: { "YYYY-MM-DD": { venue: vdata } }
+      if (typeof ALL_DATA_HISTORY !== 'undefined') {
+        Object.keys(ALL_DATA_HISTORY).sort().forEach(d => allDates.push(d));
+      }
+      // 当日データも含める
+      if (typeof ALL_DATA !== 'undefined') {
+        const todayDate = Object.values(ALL_DATA)?.[0]?.date;
+        if (todayDate && !allDates.includes(todayDate)) allDates.push(todayDate);
+      }
+    } catch(_e) {}
+
+    let total = 0, done = 0;
+
+    // ③ 各日付×会場×レース を再計算
+    for (const dateStr of allDates) {
+      let dataForDate = {};
+      try {
+        dataForDate = (typeof getDataForDate === 'function') ? getDataForDate(dateStr) : {};
+      } catch(_e) { continue; }
+
+      for (const [venue, vdata] of Object.entries(dataForDate)) {
+        if (!vdata || !vdata.races) continue;
+        if (venue === '江戸川') continue;
+
+        const raceNos = Object.keys(vdata.races).map(Number).sort((a,b)=>a-b);
+        total += raceNos.length;
+
+        for (const rno of raceNos) {
+          try {
+            // computeScenCombosWithEV が使える場合はそちらを優先（buy+EV両方キャッシュ）
+            if (typeof computeScenCombosWithEV === 'function') {
+              computeScenCombosWithEV(venue, vdata, rno);
+            } else if (typeof computeScenCombos === 'function') {
+              computeScenCombos(venue, vdata, rno);
+            }
+          } catch(_e) {}
+          done++;
+
+          // UIを固まらせないために少し待つ（50件ごと）
+          if (done % 50 === 0) {
+            btn.textContent = `⏳ ${done}/${total} 件処理中...`;
+            await new Promise(r => setTimeout(r, 0));
+          }
+        }
+      }
+    }
+
+    btn.textContent = `✅ 完了（${done}件）`;
+    setTimeout(() => {
+      if (confirm(`${done}件の再計算が完了しました。\nページをリロードしてキャリブレーションパネルを確認しますか？`)) {
+        location.reload();
+      } else {
+        btn.disabled = false;
+        btn.textContent = '🔄 シナリオ全件再計算';
+      }
+    }, 500);
+  };
+  </script>
   <div class="top-section-label" style="margin-top:0.5rem">📅 各日詳細</div>
   <div id="user-lock-ai-stats" class="free-lock-banner" style="display:revert">
     <div class="lock-icon">🔒</div>
