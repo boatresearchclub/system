@@ -116,6 +116,35 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
     return map;
   }
 
+  // ── 常滑専用: 実測補正テーブルから __coef を生成 ──
+  // diff = 1周 + 展示（回り足は含まない）
+  if(venue === '常滑'){
+    const lap1Vals  = fieldRawVals(boats, tenjiData, 'lap1');
+    const tenjiVals = fieldRawVals(boats, tenjiData, 'tenji');
+    if(!tenjiVals) return null;
+
+    const sums = boats.map((b, i) => {
+      let s = tenjiVals[i];
+      if(lap1Vals) s += lap1Vals[i];
+      return s;
+    });
+    const rawAvg = sums.reduce((a, v) => a + v, 0) / sums.length;
+    const avg = Math.round(rawAvg * 100) / 100;
+
+    const map = {};
+    boats.forEach((b, i) => {
+      const diff = Math.round((avg - sums[i]) * 100) / 100; // 速い=プラス
+      const row  = _tokonameTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0 };
+      map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
+      map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
+      map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
+      map[`__diff_${b.boat}`]  = diff;
+      map[b.boat] = 1 / boats.length;
+    });
+    map.__isSuminoe = true;  // バッジ表示を住之江と共通化
+    return map;
+  }
+
   const cfg = VENUE_TENJI_CONFIG[venue] || VENUE_TENJI_CONFIG["_default"];
 
   // ① 項目別の生タイム値を取得

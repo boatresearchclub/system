@@ -3254,15 +3254,13 @@ function renderOdds(rno) {
   const _nameByBoat = {};
   (_rd_odds?.boats || []).forEach(b => { _nameByBoat[b.boat] = b.name; });
 
-  // 艇番カラー（CSSの .b1〜.b6 と同じ配色をインラインで再現。
-  // table内では .boat-circle 等の固定サイズクラスに依存せず自前で組む）
+  // 艇番カラー（CSSの .b1〜.b6 と同じ配色をインラインで再現）
   const BOAT_BG = { 1:'#ffffff', 2:'#000000', 3:'#e60012', 4:'#0066cc', 5:'#ffcc00', 6:'#00a651' };
   const BOAT_FG = { 1:'#111111', 2:'#ffffff', 3:'#ffffff', 4:'#ffffff', 5:'#111111', 6:'#ffffff' };
-  const BOAT_BORDER = n => n === 1 ? 'border:1.5px solid rgba(0,0,0,0.35);' : '';
+  const BOAT_BORDER = n => n === 1 ? 'border:1px solid rgba(0,0,0,0.35);' : '';
 
   // ── 3連単マトリクス表を生成（テーブル構造）──
-  // 列=1着艇(1-6) → 各列内で2着艇(残り5艇)ごとに行グループ化 → 各グループ内の行=3着艇(残り4艇)
-  // table を使うことで列幅が自然に確保され、ラッパーの overflow-x:auto で確実に横スクロールできる。
+  // 列=1着艇(1-6) → 各列内で2着艇(残り5艇)ごとに行グループ化（艇番カラーの縦帯） → 各グループ内の行=3着艇(残り4艇)
   function build3tMatrixHtml(dict) {
     if (!dict || Object.keys(dict).length === 0) return '';
 
@@ -3272,21 +3270,23 @@ function renderOdds(rno) {
     });
 
     const boatNums = [1, 2, 3, 4, 5, 6];
-    const COL_W = 92; // 各1着列の幅(px)
+    const COL_W = 118; // 各1着列の幅(px): 「艇番バッジ＋オッズ」セル分
 
-    // ── ヘッダー行: 1着艇番+選手名 ──
+    // 正方形角丸の艇番バッジ（画像のデザイン: 丸ではなく角丸スクエア）
+    const boatBadge = (n, size, fontSize) =>
+      `<span style="width:${size}px;height:${size}px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;flex-shrink:0;background:${BOAT_BG[n]};color:${BOAT_FG[n]};${BOAT_BORDER(n)}">${n}</span>`;
+
+    // ── ヘッダー行: 艇番バッジ(グレー系)＋選手名 ──
     const headHtml = boatNums.map(first => {
       const nm = _nameByBoat[first] || '';
-      return `<th style="width:${COL_W}px;min-width:${COL_W}px;padding:0;border:none">
-        <div style="display:flex;align-items:center;gap:3px;padding:4px 5px;background:${BOAT_BG[first]};color:${BOAT_FG[first]};${BOAT_BORDER(first)}font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;border-radius:4px 4px 0 0">
-          <span style="flex-shrink:0">${first}</span>
-          <span style="overflow:hidden;text-overflow:ellipsis">${nm}</span>
+      return `<th style="min-width:${COL_W}px;padding:0;border:1px solid var(--border);background:var(--bg2)">
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;white-space:nowrap;overflow:hidden">
+          <span style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;background:var(--bg3);color:var(--text2)">${first}</span>
+          <span style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis">${nm}</span>
         </div>
       </th>`;
     }).join('');
 
-    // ── 本体: 各列ごとに「2着グループ(5)×3着行(4)」= 20行。列ごとに2着順は異なるため
-    //          最大20行のグリッドとして、各列のセルを縦に積む(rowspanで2着艇番セルを結合)。
     // 各列に対して [{second, cells:[{third,odds}, x4]}, x5] を作る
     const perColumnGroups = boatNums.map(first => {
       const seconds = boatNums.filter(n => n !== first);
@@ -3302,32 +3302,32 @@ function renderOdds(rno) {
       });
     });
 
-    // 20行分（5グループ×4行）を構築。各セルは「2着バッジ(rowspan=4) + 3着バッジ + オッズ」の3要素。
+    // 20行分（5グループ×4行）を構築。各セルは「2着バッジ(rowspan=4・艇番カラー縦帯) + 3着バッジ + オッズ」
     const TOTAL_ROWS = 5 * 4;
     const bodyRows = [];
     for (let r = 0; r < TOTAL_ROWS; r++) {
-      const groupIdx = Math.floor(r / 4);
-      const rowInGroup = r % 4;
-      const isGroupStart = rowInGroup === 0;
+      const groupIdx     = Math.floor(r / 4);
+      const rowInGroup    = r % 4;
+      const isGroupStart  = rowInGroup === 0;
+      const stripeBg       = groupIdx % 2 === 1 ? 'background:var(--bg3);' : '';
 
       const tds = boatNums.map((first, colIdx) => {
         const group = perColumnGroups[colIdx][groupIdx];
         const cell  = group.cells[rowInGroup];
         const odds  = cell.odds;
-        const oddsHigh  = odds != null && odds >= 100;
-        const oddsColor = odds == null ? 'var(--text3)' : (oddsHigh ? 'var(--red)' : 'var(--text)');
         const oddsLabel = odds != null ? odds.toFixed(1) : '—';
+        const oddsColor = odds == null ? 'var(--text3)' : 'var(--text)';
 
         const secondBadgeTd = isGroupStart
-          ? `<td rowspan="4" style="width:22px;padding:0;border:none;vertical-align:middle">
-              <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:${BOAT_BG[group.second]};color:${BOAT_FG[group.second]};${BOAT_BORDER(group.second)}margin:0 auto">${group.second}</div>
+          ? `<td rowspan="4" style="width:34px;padding:0;border:1px solid var(--border);vertical-align:middle;background:${BOAT_BG[group.second]}">
+              <div style="display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${BOAT_FG[group.second]}">${group.second}</div>
             </td>`
           : '';
 
-        return `${secondBadgeTd}<td style="padding:3px 4px;border-bottom:1px solid var(--border);white-space:nowrap">
-          <div style="display:flex;align-items:center;gap:4px">
-            <span style="width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;background:${BOAT_BG[cell.third]};color:${BOAT_FG[cell.third]};${BOAT_BORDER(cell.third)}">${cell.third}</span>
-            <span style="font-family:var(--mono);font-size:11px;font-weight:600;color:${oddsColor}">${oddsLabel}</span>
+        return `${secondBadgeTd}<td style="padding:4px 8px;border:1px solid var(--border);white-space:nowrap;${stripeBg}">
+          <div style="display:flex;align-items:center;gap:6px">
+            ${boatBadge(cell.third, 18, 11)}
+            <span style="font-family:var(--mono);font-size:13px;font-weight:500;color:${oddsColor};margin-left:auto">${oddsLabel}</span>
           </div>
         </td>`;
       }).join('');
@@ -3335,8 +3335,8 @@ function renderOdds(rno) {
       bodyRows.push(`<tr>${tds}</tr>`);
     }
 
-    return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:6px">
-      <table style="border-collapse:collapse;table-layout:fixed">
+    return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--accent2);border-radius:6px">
+      <table style="border-collapse:collapse;table-layout:auto;width:100%">
         <thead><tr>${headHtml}</tr></thead>
         <tbody>${bodyRows.join('')}</tbody>
       </table>
