@@ -638,7 +638,21 @@ def _apply_venue_band3040_bias(boats: list, venue: str) -> list:
     """
     prob が 0.30〜0.40 の帯に属する艇に会場別バイアス係数を乗算し、
     全艇を再正規化して返す（インプレース更新）。
+
+    [2026-06-26] スキップ条件:
+      1号艇 prob が全体2位との差 >= 0.15（= 突出メンバー）の場合は補正をかけない。
+      band3040_bias は「平均的な1号艇が過大評価されていた」実績から導出した係数であり、
+      峰竜太クラスの支配的な1号艇に無差別適用すると逆バイアスになる。
     """
+    # ── 突出1号艇スキップ判定 ──
+    sorted_probs = sorted([bt.get("prob", 0) for bt in boats], reverse=True)
+    boat1_prob   = next((bt.get("prob", 0) for bt in boats if int(bt.get("boat", 0)) == 1), None)
+    if (boat1_prob is not None
+            and len(sorted_probs) >= 2
+            and boat1_prob == sorted_probs[0]           # 1号艇がトップ
+            and boat1_prob - sorted_probs[1] >= 0.15):  # 2位と15%以上の差
+        return boats  # 突出メンバーは補正スキップ
+
     raw_coef = _VENUE_BAND3040_COEF.get(venue, _VENUE_BAND3040_COEF["_default"])
 
     # 低サンプル会場はデフォルト(1.0)とブレンドして係数を緩和
@@ -721,6 +735,12 @@ def calc_prob_from_master(
     scores, dq_list, base_rates = [], [], []
     has_insufficient = False
 
+    # [2026-06-26] 1号艇突出判定用に全艇の overall_win を事前収集して付与
+    for bt in boats:
+        _nm = normalize_name(bt.get("name", ""))
+        _pi = player_index.get(_nm)
+        bt["_overall_win"] = (_pi.get("overall_win") or 0.0) if _pi else 0.0
+
     for bt in boats:
         name   = normalize_name(bt.get("name", ""))
         course = int(bt.get("boat", 1))
@@ -788,7 +808,20 @@ def calc_prob_from_master(
         # 両者が同時に上振れするケース（好調×好ST）でも最大1.10倍に抑制し
         # base_rate × combined がキャリブレーション実績と整合するようにする。
         # 下限は据え置き（抑制方向は安全）。
-        combined  = min(st_corr * form_corr, 1.10)
+        #
+        # [2026-06-26] 1号艇かつ実力突出（overall_win が全艇中最高かつ場平均超）の場合は
+        # キャップを 1.10 → 1.15 に緩和。
+        # 「峰竜太 81.5% vs 他艇 22.5%以下」のような格差メンバーで
+        # 1号艇基準確率が場平均を下回るという非直感的な出力を防ぐ。
+        _cap = 1.10
+        if course == 1 and overall_w is not None:
+            other_wins = [
+                bt2.get("_overall_win", 0) for bt2 in boats
+                if int(bt2.get("boat", 0)) != 1
+            ]
+            if other_wins and overall_w > max(other_wins) * 1.30:
+                _cap = 1.15
+        combined  = min(st_corr * form_corr, _cap)
         scores.append(base_rate * combined)
         dq_list.append(dq)
 
