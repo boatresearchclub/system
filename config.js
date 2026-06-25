@@ -63,9 +63,9 @@ const VENUE_TENJI_CONFIG = {
     weight:    { lap1:4.5,    mawari:1.0,   chokusen:0,     tenji:2.0  },
   },
 
-  // ── まくり強会場 → 直線を採用 ──
+  // ── 蒲郡: 実測テーブル方式（1周+直線+展示、回り足は使わない）──
   "蒲郡": {
-    available: { lap1:true,   mawari:true,  chokusen:true,  tenji:true },
+    available: { lap1:true,   mawari:false, chokusen:true,  tenji:true },
     weight:    { lap1:4.5,    mawari:0,     chokusen:1.0,   tenji:2.0  },
   },
   "戸田": {
@@ -337,6 +337,90 @@ const TOKONAME_TENJI_TABLE = {
 // 常滑補正テーブルを引いて行を返す
 function _tokonameTableLookup(boat, diff) {
   const rows = TOKONAME_TENJI_TABLE[boat];
+  if (!rows) return null;
+  const d = Math.round(diff * 100) / 100;
+  for (const r of rows) {
+    const okLo = r.lo === null || d >= r.lo;
+    const okHi = r.hi === null || d <  r.hi;
+    if (okLo && okHi) return r;
+  }
+  return rows[rows.length - 1];
+}
+
+// ── 蒲郡 展示補正テーブル（1周+直線+展示 合算diff → 各着補正率） ──
+// diff = 6艇平均合算 - 各艇合算（速い艇→プラス、遅い艇→マイナス）
+// ※ 回り足は含まない
+const GAMAGORI_TENJI_TABLE = {
+  1: [
+    { lo: null,  hi: -0.40, p1: -19, p2:  3, p3:  6, p3r: -11 },
+    { lo: -0.39, hi: -0.20, p1: -13, p2:  8, p3:  6, p3r:   1 },
+    { lo: -0.19, hi:  0.00, p1:  -8, p2:  0, p3:  2, p3r:  -5 },
+    { lo:  0.01, hi:  0.19, p1:  -5, p2:  1, p3:  2, p3r:  -2 },
+    { lo:  0.20, hi:  0.39, p1:   0, p2:  1, p3: -1, p3r:   0 },
+    { lo:  0.40, hi:  0.59, p1:   7, p2: -2, p3: -2, p3r:   2 },
+    { lo:  0.60, hi:  0.79, p1:   7, p2: -3, p3: -1, p3r:   3 },
+    { lo:  0.80, hi: null,  p1:  13, p2: -3, p3: -3, p3r:   7 },
+  ],
+  2: [
+    { lo: null,  hi: -0.60, p1:  -5, p2:  -5, p3: -8, p3r: -18 },
+    { lo: -0.59, hi: -0.40, p1:  -3, p2:  -1, p3: -5, p3r:  -9 },
+    { lo: -0.39, hi: -0.20, p1:  -5, p2:  -3, p3: -3, p3r: -11 },
+    { lo: -0.19, hi:  0.00, p1:  -3, p2:  -1, p3:  1, p3r:  -3 },
+    { lo:  0.01, hi:  0.19, p1:  -2, p2:   1, p3:  2, p3r:   0 },
+    { lo:  0.20, hi:  0.39, p1:   5, p2:   2, p3:  1, p3r:   8 },
+    { lo:  0.40, hi:  0.59, p1:   8, p2:   1, p3:  1, p3r:  10 },
+    { lo:  0.60, hi:  0.79, p1:   6, p2:  13, p3:  1, p3r:  20 },
+    { lo:  0.80, hi: null,  p1:  24, p2:  -3, p3: -2, p3r:  19 },
+  ],
+  3: [
+    { lo: null,  hi: -0.80, p1:  -3, p2:  -5, p3: -8, p3r: -17 },
+    { lo: -0.79, hi: -0.60, p1:  -4, p2:  -7, p3: -9, p3r: -20 },
+    { lo: -0.59, hi: -0.40, p1:  -5, p2:  -7, p3: -3, p3r: -15 },
+    { lo: -0.39, hi: -0.20, p1:  -4, p2:  -4, p3:  4, p3r:  -5 },
+    { lo: -0.19, hi:  0.00, p1:  -1, p2:  -2, p3: -2, p3r:  -5 },
+    { lo:  0.01, hi:  0.19, p1:   1, p2:   3, p3:  1, p3r:   4 },
+    { lo:  0.20, hi:  0.39, p1:   4, p2:   3, p3:  4, p3r:  10 },
+    { lo:  0.40, hi:  0.59, p1:  10, p2:  13, p3: -2, p3r:  20 },
+    { lo:  0.60, hi: null,  p1:   8, p2:  10, p3:  2, p3r:  20 },
+  ],
+  4: [
+    { lo: null,  hi: -0.80, p1:  -5, p2:  -6, p3: -11, p3r: -21 },
+    { lo: -0.79, hi: -0.60, p1:  -4, p2:  -9, p3:  -3, p3r: -16 },
+    { lo: -0.59, hi: -0.40, p1:  -1, p2:  -6, p3:  -2, p3r:  -9 },
+    { lo: -0.39, hi: -0.20, p1:  -4, p2:  -3, p3:   2, p3r:  -4 },
+    { lo: -0.19, hi:  0.00, p1:  -1, p2:  -1, p3:  -2, p3r:  -3 },
+    { lo:  0.01, hi:  0.19, p1:   2, p2:   1, p3:   0, p3r:   3 },
+    { lo:  0.20, hi:  0.39, p1:   3, p2:   3, p3:   3, p3r:   9 },
+    { lo:  0.40, hi:  0.59, p1:   3, p2:   6, p3:   1, p3r:  10 },
+    { lo:  0.60, hi: null,  p1:   7, p2:  13, p3:   2, p3r:  22 },
+  ],
+  5: [
+    { lo: null,  hi: -0.80, p1:  -2, p2:  -1, p3:  -8, p3r: -10 },
+    { lo: -0.79, hi: -0.60, p1:  -3, p2:  -6, p3:  -5, p3r: -13 },
+    { lo: -0.59, hi: -0.40, p1:  -2, p2:  -4, p3:  -3, p3r: -10 },
+    { lo: -0.39, hi: -0.20, p1:  -2, p2:  -1, p3:  -1, p3r:  -4 },
+    { lo: -0.19, hi:  0.00, p1:  -1, p2:  -3, p3:   2, p3r:  -2 },
+    { lo:  0.01, hi:  0.19, p1:   0, p2:   3, p3:  -1, p3r:   2 },
+    { lo:  0.20, hi:  0.39, p1:   1, p2:   2, p3:   4, p3r:   6 },
+    { lo:  0.40, hi:  0.59, p1:   8, p2:  12, p3:   2, p3r:  22 },
+    { lo:  0.60, hi: null,  p1:  12, p2:   1, p3:  10, p3r:  22 },
+  ],
+  6: [
+    { lo: null,  hi: -1.00, p1:  -1, p2:  -4, p3:  -6, p3r: -11 },
+    { lo: -0.99, hi: -0.80, p1:   0, p2:  -2, p3:  -6, p3r:  -9 },
+    { lo: -0.79, hi: -0.60, p1:  -1, p2:  -5, p3:  -4, p3r: -10 },
+    { lo: -0.59, hi: -0.40, p1:  -1, p2:  -2, p3:  -5, p3r:  -7 },
+    { lo: -0.39, hi: -0.20, p1:   0, p2:   1, p3:  -2, p3r:   0 },
+    { lo: -0.19, hi:  0.00, p1:   1, p2:   0, p3:   1, p3r:   2 },
+    { lo:  0.01, hi:  0.19, p1:   0, p2:  -1, p3:   3, p3r:   2 },
+    { lo:  0.20, hi:  0.39, p1:   0, p2:   2, p3:   1, p3r:   3 },
+    { lo:  0.40, hi: null,  p1:   0, p2:   5, p3:   6, p3r:  11 },
+  ],
+};
+
+// 蒲郡補正テーブルを引いて行を返す
+function _gamagoriTableLookup(boat, diff) {
+  const rows = GAMAGORI_TENJI_TABLE[boat];
   if (!rows) return null;
   const d = Math.round(diff * 100) / 100;
   for (const r of rows) {

@@ -772,29 +772,26 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     ? `<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(0,102,255,.12);color:var(--accent2);margin-left:8px;vertical-align:middle">展示情報込み</span>`
     : '';
 
-  // ── 住之江: 軸候補・切り候補バッジ ──
+  // ── 住之江・常滑: 軸候補・切り候補バッジ（p3r ±10% 基準）──
   let suminoePivotBadges = '';
   if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
-    const pivotBoats = []; // diffプラス大 = 軸候補
-    const cutBoats   = []; // diffマイナス大 = 切り候補
+    const pivotBoats = []; // p3r >= +10% = 軸候補
+    const cutBoats   = []; // p3r <= -10% = 切り候補
     ranked2.forEach(b => {
-      const diff = tenjiScoreMap[`__diff_${b.boat}`];
-      if (diff == null) return;
-      if (diff >= 0.40)  pivotBoats.push({ boat: b.boat, diff });
-      if (diff <= -0.40) cutBoats.push({ boat: b.boat, diff });
+      const pivot = tenjiScoreMap[`__pivot_${b.boat}`];
+      if (pivot === 'axis') pivotBoats.push(b.boat);
+      if (pivot === 'cut')  cutBoats.push(b.boat);
     });
-    pivotBoats.sort((a, b) => b.diff - a.diff);
-    cutBoats.sort((a, b) => a.diff - b.diff);
 
     const boatCircleS = n =>
       `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
 
     if (pivotBoats.length > 0) {
-      const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
+      const circles = pivotBoats.map(n => boatCircleS(n)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;
     }
     if (cutBoats.length > 0) {
-      const circles = cutBoats.map(x => boatCircleS(x.boat)).join('');
+      const circles = cutBoats.map(n => boatCircleS(n)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${circles}</span>`;
     }
   }
