@@ -772,26 +772,29 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     ? `<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(0,102,255,.12);color:var(--accent2);margin-left:8px;vertical-align:middle">展示情報込み</span>`
     : '';
 
-  // ── 住之江・常滑: 軸候補・切り候補バッジ（p3r ±10% 基準）──
+  // ── 住之江: 軸候補・切り候補バッジ ──
   let suminoePivotBadges = '';
   if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
-    const pivotBoats = []; // p3r >= +10% = 軸候補
-    const cutBoats   = []; // p3r <= -10% = 切り候補
+    const pivotBoats = []; // diffプラス大 = 軸候補
+    const cutBoats   = []; // diffマイナス大 = 切り候補
     ranked2.forEach(b => {
-      const pivot = tenjiScoreMap[`__pivot_${b.boat}`];
-      if (pivot === 'axis') pivotBoats.push(b.boat);
-      if (pivot === 'cut')  cutBoats.push(b.boat);
+      const diff = tenjiScoreMap[`__diff_${b.boat}`];
+      if (diff == null) return;
+      if (diff >= 0.40)  pivotBoats.push({ boat: b.boat, diff });
+      if (diff <= -0.40) cutBoats.push({ boat: b.boat, diff });
     });
+    pivotBoats.sort((a, b) => b.diff - a.diff);
+    cutBoats.sort((a, b) => a.diff - b.diff);
 
     const boatCircleS = n =>
       `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
 
     if (pivotBoats.length > 0) {
-      const circles = pivotBoats.map(n => boatCircleS(n)).join('');
+      const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;
     }
     if (cutBoats.length > 0) {
-      const circles = cutBoats.map(n => boatCircleS(n)).join('');
+      const circles = cutBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${circles}</span>`;
     }
   }
@@ -3274,9 +3277,11 @@ function renderOdds(rno) {
       `<span style="width:${size}px;height:${size}px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;flex-shrink:0;background:${BOAT_BG[n]};color:${BOAT_FG[n]};${BOAT_BORDER(n)}">${n}</span>`;
 
     // ── ヘッダー行: 艇番バッジ(グレー系)＋選手名 ──
+    // tbody側は各1着列につき「2着バッジ用td + 3着セル用td」の2セル構成のため、
+    // theadのthもcolspan="2"にして列数を一致させる（不一致だとレイアウトが右にずれる）。
     const headHtml = boatNums.map(first => {
       const nm = _nameByBoat[first] || '';
-      return `<th style="min-width:${COL_W}px;padding:0;border:1px solid var(--border);background:var(--bg2)">
+      return `<th colspan="2" style="min-width:${COL_W}px;padding:0;border:1px solid var(--border);background:var(--bg2)">
         <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;white-space:nowrap;overflow:hidden">
           <span style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;background:var(--bg3);color:var(--text2)">${first}</span>
           <span style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis">${nm}</span>
@@ -3316,12 +3321,12 @@ function renderOdds(rno) {
         const oddsColor = odds == null ? 'var(--text3)' : 'var(--text)';
 
         const secondBadgeTd = isGroupStart
-          ? `<td rowspan="4" style="width:34px;padding:0;border:1px solid var(--border);vertical-align:middle;background:${BOAT_BG[group.second]}">
+          ? `<td rowspan="4" style="width:34px;height:144px;padding:0;border:1px solid var(--border);vertical-align:middle;background:${BOAT_BG[group.second]}">
               <div style="display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${BOAT_FG[group.second]}">${group.second}</div>
             </td>`
           : '';
 
-        return `${secondBadgeTd}<td style="padding:4px 8px;border:1px solid var(--border);white-space:nowrap;${stripeBg}">
+        return `${secondBadgeTd}<td style="height:36px;padding:4px 8px;border:1px solid var(--border);white-space:nowrap;${stripeBg}">
           <div style="display:flex;align-items:center;gap:6px">
             ${boatBadge(cell.third, 18, 11)}
             <span style="font-family:var(--mono);font-size:13px;font-weight:500;color:${oddsColor};margin-left:auto">${oddsLabel}</span>
@@ -3333,7 +3338,7 @@ function renderOdds(rno) {
     }
 
     return `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--accent2);border-radius:6px">
-      <table style="border-collapse:collapse;table-layout:auto;width:100%">
+      <table style="border-collapse:collapse;table-layout:auto;width:100%;box-sizing:border-box">
         <thead><tr>${headHtml}</tr></thead>
         <tbody>${bodyRows.join('')}</tbody>
       </table>

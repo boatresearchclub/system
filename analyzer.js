@@ -806,15 +806,16 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   // BOOST_SCALE: 噛み合い強度をlayer2係数の変動幅に変換するスケール係数
   // 大きくすると展開補正のメリハリが増す（1.0〜3.0 が実用範囲）
   //
-  // 【2026-06-23 変更】1.5 → 0.7
-  // 理由: 1.5のとき totalBoost≈0.23 と合わさって
-  //   layer2[1] = 1.0 - 0.23×1.5 ≈ ▼0.65 が全レース固定的に発生し、
-  //   1号艇を系統的に過小評価していた（996件実測: 推定54.7%→実績59.7%、+5pt乖離）。
-  //   0.7にすることで layer2[1] ≈ ▼0.84 程度に抑え、
-  //   展開補正を「方向性の差別化」に留める（絶対量の過剰引き下げを防ぐ）。
-  //   Stage2（2〜6号艇の条件付き配分）は CONDITIONAL_BOOST_SCALE で別管理するため
-  //   BOOST_SCALE の変更は1号艇のみに実質的な影響を与える。
-  const BOOST_SCALE = 0.7;
+  // 【2026-06-25 変更】0.7 → 0.0
+  // 理由: BOOST_SCALE=0.7 のとき totalBoost≈0.20〜0.35 と合わさって
+  //   rawNige = prob × (1 - 0.25×0.7) ≈ prob × 0.825 が全レース固定的に発生し、
+  //   1号艇 final_prob が最高50%前後に張り付く問題があった。
+  //   強いメンバー構成のレース（prob=0.70超）でも確率が潰れており、
+  //   キャリブレーション実測（1号艇: 推定55.9%→実績58.9%）とも乖離していた。
+  //   0.0にすることで rawNige = prob がそのまま通り、
+  //   メンバー構成が強いレースで自然に70〜80%が出るようになる。
+  //   Stage2（2〜6号艇）側の展開差別化は CONDITIONAL_BOOST_SCALE で維持する。
+  const BOOST_SCALE = 0.0;
   // VULN_TRUST_MAX: 1号艇の被決まり手個人実績を何走で最大信頼とするか
   const VULN_TRUST_MAX = 100;
   // ATTACK_TRUST_MAX: 他艇の攻撃力個人実績を何走で最大信頼とするか
@@ -936,12 +937,11 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   //   NIGE_CLIP_MIN/MAX … 逃げ確率の下限・上限。ここを絞れば
   //   キャリブレーションパネルの「60%+帯」を直接抑え込める。
   //   NIGE_BOOST_SCALE  … 被決まり手プレッシャーの効き具合。
-  const NIGE_CLIP_MIN   = 0.25;  // 1号艇がどれだけ弱くても下限25%
-  // 【2026-06-23 変更】0.85 → 0.80
-  // BOOST_SCALE を 1.5→0.7 に下げたことで rawNige が上昇するため、
-  // クリップ上限も合わせて引き下げ（996件実測の最高帯実績≈58%に対して余裕を持たせる）。
-  // calibrateCourse1Prob が上から整形するため、ここは粗い上限として機能すれば十分。
-  const NIGE_CLIP_MAX   = 0.80;
+  const NIGE_CLIP_MIN   = 0.25;
+  // 【2026-06-25 変更】0.80 → 0.90
+  // BOOST_SCALE=0.0 により rawNige = prob がそのまま通るため、
+  // 強いメンバー構成（prob=0.80超）のレースで天井に当たらないよう上限を緩和。
+  const NIGE_CLIP_MAX   = 0.90;
   const NIGE_BOOST_SCALE = BOOST_SCALE; // 被決まり手プレッシャーの効き（既存値を踏襲）
 
   const rawNige = (boat1 ? boat1.prob : 0)
@@ -1150,15 +1150,25 @@ function calcPlace2Probs(boats, ranked){
               place2Score[self.boat] += winnerProb * p2;
               usedRemaining = true;
             } else {
-              place2Score[self.boat] += winnerProb * (tpMap[self.boat] / othersTotal);
+              // [2026-06-25] wsum=0フォールバックを平滑化（25%均等 + 75%tenkai_prob按分）
+              const SMOOTH_TR = 0.25;
+              const othersCountTR = ranked.filter(b => b.boat !== winner.boat).length || 1;
+              const tpShareTR = tpMap[self.boat] / othersTotal;
+              const eqShareTR = 1.0 / othersCountTR;
+              place2Score[self.boat] += winnerProb * (SMOOTH_TR * eqShareTR + (1 - SMOOTH_TR) * tpShareTR);
             }
           }
         }
       }
       if(!usedRemaining){
+        // [2026-06-25] 平滑化: 25%均等 + 75%tenkai_prob按分（過剰集中抑制）
+        const SMOOTH_FB = 0.25;
+        const othersCountFB = ranked.filter(b => b.boat !== winner.boat).length || 1;
         for(const self of ranked){
           if(self.boat === winner.boat) continue;
-          place2Score[self.boat] += winnerProb * (tpMap[self.boat] / othersTotal);
+          const tpShare = tpMap[self.boat] / othersTotal;
+          const eqShare = 1.0 / othersCountFB;
+          place2Score[self.boat] += winnerProb * (SMOOTH_FB * eqShare + (1 - SMOOTH_FB) * tpShare);
         }
       }
     }
@@ -1369,8 +1379,11 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
               p2 = baseP2;
             }
             if(p2 == null){
+              // [2026-06-25] finalProb按分を平滑化（25%均等 + 75%prob按分）
               const bt = ranked2.find(r => r.boat === b.boat);
-              p2 = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+              const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+              const eqShare = 1.0 / (rawBoats.length - 1 || 1);
+              p2 = 0.25 * eqShare + 0.75 * fpShare;
             }
           } else if(remForThis){
             const remEntry  = remForThis[sc];
@@ -1388,18 +1401,25 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             } else if(baseTR != null){
               p2 = baseTR;
             } else {
+              // [2026-06-25] finalProb按分を平滑化
               const bt = ranked2.find(r => r.boat === b.boat);
-              p2 = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+              const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+              const eqShare = 1.0 / (rawBoats.length - 1 || 1);
+              p2 = 0.25 * eqShare + 0.75 * fpShare;
             }
           } else {
+            // [2026-06-25] finalProb按分を平滑化（tenkai_remainingデータなし）
             const bt = ranked2.find(r => r.boat === b.boat);
-            p2 = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+            const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+            const eqShare = 1.0 / (rawBoats.length - 1 || 1);
+            p2 = 0.25 * eqShare + 0.75 * fpShare;
           }
 
           // avg_rank補正を適用（3.5を中央値とし、平均着順が良いほど上方修正）
           // 3着側[0.5,1.5]より分散が大きい指標のため[0.7,1.3]とやや狭いクリップ。
+          // [2026-06-25] 上限1.3→1.15, 下限0.7→0.8に抑制（2着確率過大評価対策）
           const rankCoef2 = _avgRank2 != null
-            ? Math.max(0.7, Math.min(1.3, (3.5 - _avgRank2) / 1.5 + 0.85))
+            ? Math.max(0.8, Math.min(1.15, (3.5 - _avgRank2) / 1.5 + 0.85))
             : 1.0;
           p2 *= rankCoef2;
 
@@ -1416,13 +1436,15 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
       //   3〜5枠（差し・まくり主体）は展示の影響を強く効かせるため範囲を広げる。
       //   1〜2枠はイン優位が支配的なため狭く抑える。
       //
+      // [2026-06-25] 上限値引き下げ（2着確率過大評価対策: 40-60%帯 -17%誤差改善）
+      // 旧: 3枠1.40, 4枠1.45 → 展示補正が過剰に2着確率を押し上げていた
       const TENJI_P2_CLIP_BY_COURSE = {
-        1: [0.85, 1.20],  // イン有利、展示で大きく変動しない
-        2: [0.80, 1.25],
-        3: [0.70, 1.40],  // 差し・まくり差し主体、展示が効く
-        4: [0.65, 1.45],  // まくり最多、展示差が2着にも直結
-        5: [0.70, 1.40],
-        6: [0.75, 1.35],
+        1: [0.88, 1.15],  // イン有利、展示で大きく変動しない
+        2: [0.83, 1.20],
+        3: [0.75, 1.28],  // 差し・まくり差し主体（旧1.40→1.28）
+        4: [0.70, 1.30],  // まくり最多（旧1.45→1.30）
+        5: [0.75, 1.28],  // （旧1.40→1.28）
+        6: [0.78, 1.25],  // （旧1.35→1.25）
       };
       if(tenjiScoreMap){
         place2List.forEach(x => {
