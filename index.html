@@ -261,14 +261,14 @@
 
 <header class="site-header">
   <div class="nav-inner">
-    <div class="logo" onclick="goTopAndRefresh()" title="トップページへ（更新）">
+    <div class="logo" onclick="goTop()" title="トップページへ">
       <div class="logo-icon">⛵</div>
       <span>Boat Research Club</span>
     </div>
     <div class="header-right">
       <div class="header-meta-area">
         <div id="paid-badge">👑 プレミアム</div>
-        <div id="admin-badge">🔑 管理者</div>
+        <div id="admin-badge" onclick="forceRecalcTopStats()" title="クリックでバックテストを再計算" style="cursor:pointer">🔑 管理者</div>
         <div class="header-meta" id="header-meta"></div>
         <div class="date-nav" id="date-nav" style="display:none">
           <button class="date-nav-btn" id="date-prev" onclick="shiftDate(-1)" title="前日">‹</button>
