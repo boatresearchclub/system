@@ -85,7 +85,7 @@
   // 崩壊済みテーブルが保存されている可能性が高いため、キーをバージョンアップして
   // クリーンな状態から再構築する（v1 の汚染データはこのファイルの読み込み時に破棄する）。
   const _CALIB_LS_KEY_LEGACY = 'scen_calib_points_v1';
-  const _CALIB_LS_KEY        = 'scen_calib_points_v3';
+  const _CALIB_LS_KEY        = 'scen_calib_points_v4';
 
   // ── 汚染データの強制クレンジング（使い捨てリセット）──
   // 旧バージョンのキーが残っていた場合は問答無用で削除する。
@@ -100,6 +100,14 @@
       if (localStorage.getItem('scen_calib_points_v2') != null) {
         localStorage.removeItem('scen_calib_points_v2');
         console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_points_v2)を破棄しました（60日再学習のため）。');
+      }
+      // [2026-06-25] v3キーも旧キー扱いで破棄
+      // （analyzer.jsのcalcTenkaiProbs刷新後も旧ロジック時代の補正テーブルが
+      //   そのまま新ロジックの生値を上書きしてしまっていたため、v4へ移行し
+      //   デフォルトを補正なし(y=x)にリセットして再学習させる）
+      if (localStorage.getItem('scen_calib_points_v3') != null) {
+        localStorage.removeItem('scen_calib_points_v3');
+        console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_points_v3)を破棄しました（新ロジック移行に伴う再学習のため）。');
       }
       const rawV2 = localStorage.getItem(_CALIB_LS_KEY);
       if (rawV2) {
@@ -127,17 +135,13 @@
   }
 
   const CALIB_POINTS = _loadCalibFromLS() || [
-    // [推定値(中心), 実績的中率]  ← calibration.js パネルの実測値（2026-06-25更新）
-    // ※ localStorage(v3)に実測値が蓄積されれば自動的にこちらは使われなくなる
-    [0.00,  0.00],   // 0–10% ビン: 外挿基準点
-    [0.05,  0.05],   // 0–10% ビン: 実測 推定2%→実績5%（過小評価を補正）
-    [0.15,  0.12],   // 10–20% ビン: 推定15% → 実績12%
-    [0.25,  0.16],   // 20–30% ビン: 推定25% → 実績16%（過大評価を補正）
-    [0.35,  0.18],   // 30–40% ビン: 推定35% → 実績18%（最大の過大評価を補正）
-    [0.50,  0.57],   // 40–60% ビン: 推定55% → 実績57%（ほぼ正確）
-    [0.63,  0.40],   // 60%+  ビン: 推定63% → 実績40%（過大評価を補正）
-    // 右端フラット外挿（60%+帯の実績水準で頭打ち。100%への収束を仮定しない）
-    [1.00,  0.40],
+    // [2026-06-25] 新ロジック(calcTenkaiProbs刷新)への移行に伴い、
+    // 旧ロジック時代の実測値(推定35%→実績18%等)で生値を潰していた問題を解消するため、
+    // デフォルトを「補正なし(y=x)」にリセット。
+    // calibration.js パネルに新ロジックの実測値が十分蓄積された時点で、
+    // localStorage(v4)側に学習結果が自動的に保存され、以後はそちらが使われる。
+    [0.00, 0.00],
+    [1.00, 1.00],
   ];
 
   /**
@@ -396,6 +400,22 @@
       Object.keys(weighted).forEach(k => { weighted[k] /= totalScenWeight; });
     }
 
+    // [修正] 2着確率の系統的過大評価を補正（実測: 推定47%→実績30%, 推定65%→実績42%）
+    // 区分線形補間で推定値を実績ベースにスケールダウンする。
+    // 補正テーブルは calibration.js スクショ4の実測値から導出。
+    const P2_CALIB = [
+      [0.00, 0.00], [0.20, 0.18], [0.30, 0.24],
+      [0.40, 0.30], [0.50, 0.33], [0.65, 0.40], [1.00, 0.60],
+    ];
+    Object.keys(weighted).forEach(k => {
+      const raw = weighted[k];
+      const idx = P2_CALIB.findIndex(pt => raw <= pt[0]);
+      if (idx <= 0) return; // 0以下 or テーブル外はそのまま
+      const [x0, y0] = P2_CALIB[idx - 1];
+      const [x1, y1] = P2_CALIB[idx];
+      weighted[k] = y0 + (raw - x0) / (x1 - x0) * (y1 - y0);
+    });
+
     const ranked = Object.entries(weighted)
       .sort((a, b) => b[1] - a[1])
       .map(([boat]) => parseInt(boat));
@@ -569,19 +589,28 @@
                     // が実質機能していなかった。fp1st（予測1着艇）を再現し、
                     // 非キャッシュ経路と同一の calcWeighted2nd/3rd を適用する。
                     try {
-                      let _cFp1st = null, _cBest = -Infinity;
-                      _ranked.forEach(b => {
-                        if (b.boat != null && b.final_prob != null && b.final_prob > _cBest) {
-                          _cBest = b.final_prob; _cFp1st = b.boat;
-                        }
-                      });
+                      // fp1st / fp2nd を final_prob 順で特定
+                      const _cSorted = [..._ranked].filter(b => b.boat != null && b.final_prob != null)
+                        .sort((a, b) => b.final_prob - a.final_prob);
+                      const _cFp1st = _cSorted[0]?.boat ?? null;
+                      const _cFp2nd = _cSorted[1]?.boat ?? null;
                       if (_cFp1st != null) {
                         const _w2 = calcWeighted2nd(_sd, _cFp1st);
-                        const _w3 = calcWeighted3rd(_sd, _cFp1st);
-                        _cacheWeighted2nd     = _w2.weighted;
-                        _cacheRanked2ndList   = _w2.ranked;
-                        _cacheWeighted3rd     = _w3.weighted;
-                        _cacheRanked3rdList   = _w3.ranked;
+                        _cacheWeighted2nd   = _w2.weighted;
+                        _cacheRanked2ndList = _w2.ranked;
+
+                        // [修正] キャッシュ経路も fp1st+fp2nd 加重平均（非キャッシュ経路と統一）
+                        const _cw3fp1 = calcWeighted3rd(_sd, _cFp1st);
+                        const _cw3fp2 = _cFp2nd != null ? calcWeighted3rd(_sd, _cFp2nd) : { weighted: {}, ranked: [] };
+                        const _cp1w = _cSorted[0]?.final_prob ?? 0.7;
+                        const _cp2w = _cFp2nd != null ? (_cSorted[1]?.final_prob ?? 0.3) : 0;
+                        const _cpwTotal = _cp1w + _cp2w || 1;
+                        const _cW3 = {};
+                        new Set([...Object.keys(_cw3fp1.weighted), ...Object.keys(_cw3fp2.weighted)]).forEach(k => {
+                          _cW3[k] = (((_cw3fp1.weighted[k] ?? 0) * _cp1w) + ((_cw3fp2.weighted[k] ?? 0) * _cp2w)) / _cpwTotal;
+                        });
+                        _cacheWeighted3rd   = _cW3;
+                        _cacheRanked3rdList = Object.entries(_cW3).sort((a, b) => b[1] - a[1]).map(([k]) => parseInt(k));
                       }
                     } catch (_we) { /* 計算失敗時は空のまま（後段でフォールバック） */ }
                   }
@@ -1099,7 +1128,24 @@
       // ため、ここでは ranked 配列のみを返す。actual との照合は呼び出し側が行う。
 
       const { weighted: weighted2nd, ranked: ranked2ndList } = calcWeighted2nd(sd, fp1st);
-      const { weighted: weighted3rd, ranked: ranked3rdList } = calcWeighted3rd(sd, fp1st);
+
+      // [修正] 3着予測を fp1st 固定から fp1st + fp2nd の加重平均に変更。
+      // 旧実装は winnerBoat = fp1st 固定のため、fp2nd が実際に1着になったレースで
+      // 3着予測が全く機能せず識別力2%という結果になっていた。
+      // fp1st / fp2nd それぞれの final_prob を重みとして加重平均することで
+      // 実際の1着分布に近い3着確率を推定する。
+      const _w3fp1 = calcWeighted3rd(sd, fp1st);
+      const _w3fp2 = fp2nd != null ? calcWeighted3rd(sd, fp2nd) : { weighted: {}, ranked: [] };
+      const _p1w = ranked2.find(b => b.boat === fp1st)?.final_prob ?? 0.7;
+      const _p2w = fp2nd != null ? (ranked2.find(b => b.boat === fp2nd)?.final_prob ?? 0.3) : 0;
+      const _pw_total = _p1w + _p2w || 1;
+      const weighted3rd = {};
+      new Set([...Object.keys(_w3fp1.weighted), ...Object.keys(_w3fp2.weighted)]).forEach(k => {
+        weighted3rd[k] = (((_w3fp1.weighted[k] ?? 0) * _p1w) + ((_w3fp2.weighted[k] ?? 0) * _p2w)) / _pw_total;
+      });
+      const ranked3rdList = Object.entries(weighted3rd)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k]) => parseInt(k));
 
       // ── 各艇の予測勝率マップ（コース別キャリブレーション用）──
       // ranked2 の final_prob を { 枠番: 予測勝率 } 形式で返す。

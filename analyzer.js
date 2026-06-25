@@ -1339,6 +1339,45 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
   })();
   const winnerCO = MASTER_EXT?.winner_course_order || {};
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-06-25 新規追加] kimariタイプ別 2着コース出現バイアステーブル
+  //
+  // 【設計思想】
+  //   tenkai_remaining はあくまで「全体平均」の2着率。
+  //   しかし「差し」が決まった場合は1コース1着が多い → 2着に2〜3コースが来やすい、
+  //   「まくり」が決まった場合は外コースが攻撃側 → 1コースが残りやすい、など
+  //   kimariタイプによって2着コース分布に強い傾向がある。
+  //
+  //   この補正係数（bias）を p2 に乗算した後、再正規化することで
+  //   「kimariが確定した条件のもとでの2着コース確率」に近づける。
+  //   合計が1.0になる制約はp2Sum正規化後も満たされるため絶対値は問題なし。
+  //
+  // 【係数の根拠】競艇一般統計（全国平均）ベースの傾向値
+  //   逃げ  : 1コースが1着 → 2〜3コースがそのまま残存しやすい
+  //   差し  : 2〜3コースが差して1着 → 1コースが残りやすく、内コース優位
+  //   まくり: 4〜6コースが捲って1着 → 1コースの逃げ残り or 隣接コースが2着
+  //   まくり差し: 外コース → 1〜2コースが2着に来やすい（内を抜き返せず）
+  //   抜き  : 平均的な分布（バイアスなし）
+  //
+  // 各コース（1〜6）の係数: 1.0が「バイアスなし」、>1.0が「このkimariで出やすい」
+  // ══════════════════════════════════════════════════════════════════
+  const KIMARI_PLACE2_BIAS = {
+    // コース: [1,  2,    3,    4,    5,    6  ]
+    '逃げ':       [0.0, 1.25, 1.20, 1.00, 0.90, 0.80],  // 1コース除外、内コース有利
+    '差し':       [1.40, 0.0, 1.20, 0.90, 0.85, 0.75],  // 1コース残りやすい（差された後）
+    'まくり':     [1.30, 1.20, 0.85, 0.0, 0.90, 0.85],  // 1/2コースが残りやすい
+    'まくり差し': [1.35, 1.25, 0.80, 0.85, 0.0, 0.80],  // 1/2コースが残りやすい
+    '抜き':       [1.00, 1.00, 1.00, 1.00, 1.00, 1.00], // バイアスなし
+  };
+  // bias係数の適用強度（0=無効, 1=フル適用）
+  // [2026-06-25] 0.4 → 0.55 に引き上げ
+  // 理由: キャリブレーション診断で2着予測の1位-2位的中率差が6%のみ（目標10%+）
+  //   であり、kimariタイプ別コースバイアスが十分に効いていなかった。
+  //   0.55 は tenkai_remaining の実データを尊重しつつバイアスを効かせる実用的な中間値。
+  //   2着確率の40-60%帯過大評価（+15%）は当日修正済みの展示クリップ引き下げで対応済み
+  //   のため、この引き上げは2着識別力改善のみを目的とする。
+  const KIMARI_BIAS_STRENGTH = 0.55;
+
   const scenarioPlace2 = {};
   for(const winner of ranked2){
     scenarioPlace2[winner.boat] = {};
@@ -1353,6 +1392,9 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
 
       const useInn2 = (kimari === '逃げ' && winner.boat === 1 && Object.keys(inn2Place).length > 0);
       const remForThis = tenkaiRem[kimari]?.[wc] || null;
+
+      // kimari別バイアス配列（コース1〜6に対応。インデックス=boat-1）
+      const biasByKimari = KIMARI_PLACE2_BIAS[kimari] ?? KIMARI_PLACE2_BIAS['抜き'];
 
       const place2List = rawBoats
         .filter(b => b.boat !== winner.boat)
@@ -1418,10 +1460,27 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
           // avg_rank補正を適用（3.5を中央値とし、平均着順が良いほど上方修正）
           // 3着側[0.5,1.5]より分散が大きい指標のため[0.7,1.3]とやや狭いクリップ。
           // [2026-06-25] 上限1.3→1.15, 下限0.7→0.8に抑制（2着確率過大評価対策）
+          // [2026-06-25 追記] 識別力向上のため下限を0.8→0.75に緩和。
+          //   上限は2着過大評価対策のため1.15で据え置き。
           const rankCoef2 = _avgRank2 != null
-            ? Math.max(0.8, Math.min(1.15, (3.5 - _avgRank2) / 1.5 + 0.85))
+            ? Math.max(0.75, Math.min(1.15, (3.5 - _avgRank2) / 1.5 + 0.85))
             : 1.0;
           p2 *= rankCoef2;
+
+          // ── [2026-06-25 新規] kimariタイプ別 2着コースバイアス補正 ──
+          // biasByKimari[boat-1] が各コースの「このkimariで出やすさ」係数。
+          // KIMARI_BIAS_STRENGTH でブレンド強度を制御し、過補正を防ぐ。
+          // 1コース1着の逃げシナリオでは1コースを除外済み（biasByKimari[0]=0.0）のため
+          // winner.boat===1 かつ kimari==='逃げ' の場合の自然な除外は useInn2 経路で行われる。
+          const rawBias = biasByKimari[b.boat - 1] ?? 1.0;
+          // 勝者コースが bias 配列で 0.0 になっているコース（=物理的に不可能）は
+          // この winner では 0 のまま（正規化で除外される）。
+          if(rawBias <= 0){
+            p2 = 0;  // このシナリオでは2着に来得ないコース
+          } else {
+            const blendedBias = 1.0 * (1 - KIMARI_BIAS_STRENGTH) + rawBias * KIMARI_BIAS_STRENGTH;
+            p2 *= blendedBias;
+          }
 
           return { boat: b.boat, name: b.name, p2 };
         });
@@ -1569,8 +1628,16 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         // ③個人のみ（ベースなし）
         r3 = personR3;
       } else {
-        // ④フォールバック: final_prob 相対比
-        r3 = null;
+        // ④フォールバック: コース別全国平均3着率テーブルを優先使用
+        // [2026-06-25] 旧実装は final_prob 相対比を使っていたが、これは
+        // 1着確率の高い艇を3着にも引き上げる傾向があり、3着予測が
+        // 「機能していない」（1位23%・5位以下17%でほぼ均等）の原因の一つ。
+        // 会場の3着残存率テーブルがあれば優先し、なければ全国平均を使う。
+        // 全国平均もなければ final_prob 相対比（旧動作）に落ちる。
+        const avgR3 = MASTER_EXT?.venue_stats?.[_venueForCalc3rd]?.avg_3rd_rate?.[String(b.boat)]
+                   ?? MASTER_EXT?.avg_3rd_rate?.[String(b.boat)]
+                   ?? null;
+        r3 = avgR3;  // null の場合は baseScore で final_prob 比を使う（下記）
       }
 
       const baseScore = r3 ?? ((b.final_prob ?? b.tenkai_prob ?? 0) / candidateTotal);
@@ -1578,9 +1645,9 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
       const CLIP3_BY_COURSE = {
         1: [0.85, 1.20],
         2: [0.80, 1.25],
-        3: [0.70, 1.40],
-        4: [0.65, 1.45],
-        5: [0.70, 1.40],
+        3: [0.70, 1.42],  // [2026-06-25] 1.40→1.42: 3着識別力向上のため微拡大
+        4: [0.65, 1.48],  // [2026-06-25] 1.45→1.48: 同上
+        5: [0.70, 1.42],  // [2026-06-25] 1.40→1.42
       };
       const tenjiCoef = tenjiScoreMap ? (tenjiScoreMap[`__coef3_${b.boat}`] ?? tenjiScoreMap[`__coef_${b.boat}`] ?? 1.0) : 1.0;
       const [c3lo, c3hi] = CLIP3_BY_COURSE[b.boat] ?? [0.75, 1.35];
