@@ -3276,18 +3276,23 @@ function renderOdds(rno) {
     const boatBadge = (n, size, fontSize) =>
       `<span style="width:${size}px;height:${size}px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;flex-shrink:0;background:${BOAT_BG[n]};color:${BOAT_FG[n]};${BOAT_BORDER(n)}">${n}</span>`;
 
-    // ── ヘッダー行: 艇番バッジ(グレー系)＋選手名 ──
+    // ── ヘッダー行: 艇番カラー背景＋艇番バッジ＋選手名 ──
     // tbody側は各1着列につき「2着バッジ用td + 3着セル用td」の2セル構成のため、
     // theadのthもcolspan="2"にして列数を一致させる（不一致だとレイアウトが右にずれる）。
+    // 艇番バッジの背景は「背景色に対して視認性が保たれる半透明」を艇番ごとに調整
+    // （1号艇=白背景には黒系半透明、それ以外の濃色背景には白系半透明）
+    const headBadgeBg = n => n === 1 ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.30)';
     const headHtml = boatNums.map(first => {
       const nm = _nameByBoat[first] || '';
-      return `<th colspan="2" style="min-width:${COL_W}px;padding:0;border:1px solid var(--border);background:var(--bg2)">
+      return `<th colspan="2" style="min-width:${COL_W}px;padding:0;border:1px solid var(--border);background:${BOAT_BG[first]}">
         <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;white-space:nowrap;overflow:hidden">
-          <span style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;background:var(--bg3);color:var(--text2)">${first}</span>
-          <span style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis">${nm}</span>
+          <span style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;background:${headBadgeBg(first)};color:${BOAT_FG[first]};${BOAT_BORDER(first)}">${first}</span>
+          <span style="font-size:13px;font-weight:700;color:${BOAT_FG[first]};overflow:hidden;text-overflow:ellipsis">${nm}</span>
         </div>
       </th>`;
     }).join('');
+
+
 
     // 各列に対して [{second, cells:[{third,odds}, x4]}, x5] を作る
     const perColumnGroups = boatNums.map(first => {
