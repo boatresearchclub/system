@@ -911,12 +911,29 @@ function renderBuy(rno){
   ranked.forEach(b => {
     const baseNorm    = b.prob / probTotal;  // 基準確率（正規化済み）
 
-    // ── 展開補正係数 ──
-    let tenkaiCoef = 1.0;
+    // ── 展開補正（差分ベース）──
+    // [2026-06-27 修正] 旧実装: tenkaiCoef = tenkaiNorm/baseNorm を[0.3,3.0]にクランプ
+    //   → baseNormが極端に大きい艇(例: 1号艇91.8%)はわずかな展開上の不利でも比率が
+    //     一気に下振れし、逆にbaseNormが極端に小さい艇(数%の艇)はわずかな展開上の
+    //     有利でも比率が爆発し、複数艇が上限3.0に張り付いて「差」が消える、という
+    //     基準確率の偏りに応じた感度の暴走が発生していた。
+    //     （実例: 1号艇 基準91.8%→展開補正▼0.64、他5艇 基準2%前後→展開補正▲3.00全員一致
+    //       → 最終的に1号艇が91.8%→38.4%まで落ちる異常値の原因。
+    //       computeScenCombosWithEV.js にあった同種のバグと同一原因。
+    //       renderer.js の buildScenarioBuyPanel がこちらの値を実際に画面表示していたため、
+    //       computeScenCombosWithEV.js 側だけの修正では画面の数値は変わらなかった）
+    //   新実装: tenkaiDiff = tenkaiNorm - baseNorm（展開スコアの絶対的なズレ）を
+    //     そのままボーナス量の元にする。比率を経由しないため baseNorm の大小によらず、
+    //     展開要因がもたらす補正の絶対量が艇ごとの実際の強弱に比例する。
+    let tenkaiDiff = 0.0;
     if(useMaster && baseNorm > 0){
       const tenkaiNorm = (b.tenkai_score ?? b.tenkai_prob) / tenkaiOnlyTotal;
-      tenkaiCoef = Math.min(3.0, Math.max(0.3, tenkaiNorm / baseNorm));
+      tenkaiDiff = tenkaiNorm - baseNorm;
     }
+    // 旧tenkaiCoef互換値（表示・デバッグ用にのみ保持。ボーナス計算には使わない）
+    const tenkaiCoef = baseNorm > 0
+      ? Math.min(3.0, Math.max(0.3, (baseNorm + tenkaiDiff) / baseNorm))
+      : 1.0;
 
     // ── 展示補正係数 ──
     let tenjiCoef = 1.0;
@@ -928,7 +945,8 @@ function renderBuy(rno){
 
     // 1パス目: 各係数と baseNorm を保存
     b._baseNorm     = baseNorm;
-    b._tenkaiCoef   = tenkaiCoef;
+    b._tenkaiCoef   = tenkaiCoef;   // 互換値（表示用のみ）
+    b._tenkaiDiff   = tenkaiDiff;   // ボーナス計算で実際に使う値（差分ベース）
     b._tenjiCoef    = tenjiCoef;
     b._wTenjiCourse = wTenjiCourse;
     b.display_base   = baseNorm;
@@ -954,7 +972,7 @@ function renderBuy(rno){
   //      → クリップ付きで過補正防止（上限±SLIT_REL_CLIP）
   //
   // ══════════════════════════════════════════════════════════════════
-  const BONUS_BASE_TENKAI = 0.15;  // 展開補正の加算強度
+  const BONUS_BASE_TENKAI = 0.15;  // [2026-06-27] 旧・比率方式専用の定数。差分方式(TENKAI_DIFF_GAIN)に移行したため現在は未使用（_tenkaiCoef表示用の互換計算にのみ間接的に名残あり）。
   const BONUS_BASE_TENJI  = 0.15;  // 展示補正の加算強度
   const SLIT_BONUS_BASE   = 0.15;  // スリット補正の加算強度
   const SLIT_REL_CLIP     = 0.08;  // スリット乖離ボーナスの上下限（±8%ポイント）
@@ -1049,7 +1067,11 @@ function renderBuy(rno){
 
   // 2パス目: 加算ボーナス方式で final_prob を確定
   ranked.forEach(b => {
-    const tenkaiBonus = BONUS_BASE_TENKAI * (b._tenkaiCoef - 1.0) * wTenkai;
+    // [2026-06-27 修正] tenkaiBonus は旧 (tenkaiCoef-1)*BONUS_BASE_TENKAI 方式から
+    // 差分(_tenkaiDiff)を直接使う方式に変更。TENKAI_DIFF_GAIN は旧方式との
+    // スケール整合用の感応度係数（実測データで再チューニング可能な値として分離）。
+    const TENKAI_DIFF_GAIN = 1.0;
+    const tenkaiBonus = TENKAI_DIFF_GAIN * b._tenkaiDiff * wTenkai;
     const tenjiBonus  = BONUS_BASE_TENJI  * (b._tenjiCoef  - 1.0) * b._wTenjiCourse;
 
     // スリットボーナス: 6艇相対乖離率 × 重み（クリップ付き）

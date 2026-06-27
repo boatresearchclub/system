@@ -754,29 +754,47 @@
           const { wBase: _wBase, wTenkai: _wTenkai, wTenji: _wTenji, wSlit: _wSlit } =
             (typeof calcDynamicWeights === 'function') ? calcDynamicWeights(_arek) : { wBase:1, wTenkai:1, wTenji:1, wSlit:0 };
 
-          const BONUS_BASE_TENKAI = 0.15;
+          const BONUS_BASE_TENKAI = 0.15; // [2026-06-27] 旧・比率方式専用の定数。差分方式(TENKAI_DIFF_GAIN)に移行したため現在は未使用（_tenkaiCoef表示用の互換計算にのみ間接的に名残あり）。削除は影響範囲確認後に行う。
           const BONUS_BASE_TENJI  = 0.15;
           const SLIT_BONUS_BASE   = 0.15;
           const MAKURI_ALERT_BONUS = 0.20;
           const hasTenji_ = Object.keys(_tenjiRawMap).length > 0;
 
+          // [2026-06-27 修正] 展開補正の「比率(÷)→係数」方式を「差分(-)→ボーナス」方式に変更。
+          //   旧実装: tenkaiCoef = tenkaiNorm / baseNorm を [0.3, 3.0] にクランプ
+          //     → baseNorm が極端に大きい艇(例: 1号艇91.8%)はわずかな展開上の不利でも
+          //       比率が一気に下振れし、逆に baseNorm が極端に小さい艇(数%の艇)は
+          //       わずかな展開上の有利でも比率が爆発し、5艇全員が上限3.0に張り付いて
+          //       「差」が消える、という基準確率の偏りに応じた感度の暴走が発生していた。
+          //     （実例: 1号艇 基準91.8%→展開補正▼0.64、他5艇 基準2%前後→展開補正▲3.00全員一致
+          //       → 最終的に1号艇が91.8%→38.4%まで落ちる異常値の原因）
+          //   新実装: tenkaiDiff = tenkaiNorm - baseNorm（展開スコアの絶対的なズレ）を
+          //     そのままボーナス量の元にする。比率を経由しないため、baseNorm の大小に
+          //     よらず「展開要因がもたらす補正の絶対量」が艇ごとの実際の強弱に比例する。
           // 1パス目: 係数計算
           ranked2.forEach(b => {
             const baseNorm = b.prob / _probTotal;
             const prevBoat = _boatByNo[b.boat - 1] || null;
 
-            let tenkaiCoef = 1.0;
+            // ── 展開差分（比率ではなく絶対差）──
+            let tenkaiDiff = 0.0;
             if (_useMaster && baseNorm > 0) {
               const tenkaiNorm = (b.tenkai_score ?? b.tenkai_prob) / _tenkaiOnlyTotal;
-              tenkaiCoef = Math.min(3.0, Math.max(0.3, tenkaiNorm / baseNorm));
+              tenkaiDiff = tenkaiNorm - baseNorm;
             }
+            // ST差分（隣艇との相対比較）。旧コードは係数(1.0前後)に直接加算していたが、
+            // 差分ベースに統一するため baseNorm スケールに合わせて縮小して加算する。
             if (prevBoat) {
               const myStRank   = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[b.name]?.[String(b.boat)]?.st_rank : null;
               const prevStRank = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[prevBoat.name]?.[String(prevBoat.boat)]?.st_rank : null;
               if (myStRank != null && prevStRank != null) {
-                tenkaiCoef = Math.min(3.0, Math.max(0.3, tenkaiCoef + (prevStRank - myStRank) * 0.10));
+                tenkaiDiff += (prevStRank - myStRank) * 0.10 * Math.max(baseNorm, 0.02);
               }
             }
+            // 旧 tenkaiCoef 互換値（UI表示・ログ用にのみ保持。スコア計算には使わない）
+            const tenkaiCoef = baseNorm > 0
+              ? Math.min(3.0, Math.max(0.3, (baseNorm + tenkaiDiff) / baseNorm))
+              : 1.0;
 
             let tenjiCoef = 1.0;
             if (tenjiScoreMap && typeof tenjiScoreMap === 'object') tenjiCoef = tenjiScoreMap[`__coef_${b.boat}`] ?? 1.0;
@@ -817,7 +835,8 @@
             }
 
             b._baseNorm   = baseNorm;
-            b._tenkaiCoef = tenkaiCoef;
+            b._tenkaiCoef = tenkaiCoef;   // 互換値（表示・デバッグ用のみ）
+            b._tenkaiDiff = tenkaiDiff;   // ボーナス計算で実際に使う値（差分ベース）
             b._tenjiCoef  = tenjiCoef;
             b._slitCoef   = slitCoef;
             b._wTenjiCourse = _wTenji;
@@ -826,7 +845,12 @@
           // 2パス目: 加算ボーナス方式 + 後艇スリットペナルティ
           ranked2.forEach(b => {
             const nextBoat = _boatByNo[b.boat + 1] || null;
-            const tenkaiBonus = BONUS_BASE_TENKAI * (b._tenkaiCoef - 1.0) * _wTenkai;
+            // [2026-06-27 修正] tenkaiBonus は旧 (coef-1)*BONUS_BASE 方式から
+            // 差分(_tenkaiDiff)を直接使う方式に変更。
+            // TENKAI_DIFF_GAIN は旧方式とのスケール整合用の係数（BONUS_BASE_TENKAIに相当する
+            // 感応度として導入。実測データで再チューニング可能な値として分離している）。
+            const TENKAI_DIFF_GAIN = 1.0;
+            const tenkaiBonus = TENKAI_DIFF_GAIN * b._tenkaiDiff * _wTenkai;
             const tenjiBonus  = BONUS_BASE_TENJI  * (b._tenjiCoef  - 1.0) * b._wTenjiCourse;
             const slitBonus   = SLIT_BONUS_BASE   * (b._slitCoef   - 1.0) * _wSlit;
 
