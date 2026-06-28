@@ -559,9 +559,9 @@ function renderDetail(rno){
   const tenjiHtml = buildTenjiSection(rno, boats);
 
 
-  // グリッド列: 枠28px 選手名58px 登番28px 級28px F列20px 基準1着率44px 3連対率44px ST順42px
-  // [バランス調整] 列ごとのガップを統一し、ヘッダー文字幅とデータ幅の差を縮めて間隔を均等化
-  const colStyle = 'grid-template-columns: 28px 58px 28px 28px 20px 44px 44px 42px; column-gap:4px';
+  // グリッド列: 枠26px 選手名80px(7文字対応・折り返し防止) 登番24px 級26px F列18px 基準1着率42px 3連対率44px ST順40px
+  // [選手名折り返し対応] 7文字まで1行に収まるよう選手名列を拡張し、他列を詰めて吸収
+  const colStyle = 'grid-template-columns: 26px 80px 24px 26px 18px 42px 44px 40px; column-gap:3px';
   const headFont = 'font-size:10px;white-space:nowrap;letter-spacing:0';
 
   // バナーをタブ外の常時表示エリアに更新
@@ -594,7 +594,7 @@ function renderDetail(rno){
         return `
         <div class="bt-row${i===0?' top1':''}" style="${colStyle}">
           <span class="boat-circle b${bt.boat}" style="justify-self:center;width:22px;height:22px;font-size:11px;line-height:22px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span>
-          <div style="text-align:center">${bt.name}</div>
+          <div style="text-align:center;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${bt.name}</div>
           <div>${tobanCell}</div>
           <div style="text-align:center" class="bt-grade">${bt.grade ?? '-'}</div>
           <div>${fCell}</div>
