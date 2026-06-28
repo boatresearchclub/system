@@ -227,6 +227,79 @@ code { background: var(--bg3); border: 1px solid var(--border); border-radius: 4
 .ttime-row-overall { background: rgba(74,158,255,0.06); }
 .ttime-row-overall td:first-child { color: var(--blue); }
 
+/* ===== Mobile responsive ===== */
+@media (max-width: 600px) {
+  /* Layout: サイドバーを非表示にしてモバイルタブバーへ */
+  #app { flex-direction: column; }
+  #sidebar {
+    width: 100%; border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0; max-height: 60vh;
+  }
+  #main { flex: 1; min-height: 0; }
+
+  /* テーブルを横スクロールなしのカード形式に変換 */
+  .ttime-table, .ttime-table thead, .ttime-table tbody,
+  .ttime-table th, .ttime-table td, .ttime-table tr {
+    display: block;
+  }
+  .ttime-table thead { display: none; } /* ヘッダー非表示 */
+  .ttime-table tr {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    padding: 8px 10px;
+  }
+  .ttime-table tr.ttime-row-overall {
+    background: rgba(74,158,255,0.06);
+    border-color: rgba(74,158,255,0.3);
+  }
+  .ttime-table td {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+  }
+  .ttime-table td:last-child { border-bottom: none; }
+  .ttime-table td:first-child {
+    font-size: 13px; font-weight: 700; color: var(--blue);
+    border-bottom: 1px solid var(--border2);
+    padding-bottom: 6px; margin-bottom: 2px;
+    text-align: left; display: block;
+  }
+  /* data-label でラベル付与 */
+  .ttime-table td::before {
+    content: attr(data-label);
+    font-size: 10px; color: var(--text3); font-weight: 600;
+    flex-shrink: 0; margin-right: 8px; text-align: left;
+  }
+  .ttime-table td:first-child::before { display: none; }
+
+  /* entry-card の entry-header をラップ可能に */
+  .entry-header { gap: 6px; }
+  .tenji-block { margin-left: 0; width: 100%; justify-content: flex-end; }
+
+  /* data-grid を1列に */
+  .data-grid { grid-template-columns: 1fr; }
+
+  /* diff-cols を2×2 に */
+  .diff-cols { grid-template-columns: repeat(2, 1fr); }
+
+  /* toolbar を折り返し */
+  #toolbar { gap: 6px; }
+  #summary-row { margin-left: 0; width: 100%; }
+
+  /* cell-diff の幅を少し小さく */
+  .cell-diff { min-width: 38px; font-size: 10px; padding: 1px 4px; }
+  /* コンテンツが画面内に収まるよう */
+  #content { overflow-x: hidden; }
+  .entry-card { padding: 10px 12px; }
+
+  /* テーブルラッパーもはみ出さない */
+  .ttime-table { width: 100%; }
+}
+
 /* Player search result */
 .player-item {
   display: flex; align-items: center; gap: 8px;
@@ -1925,11 +1998,11 @@ function renderPlayerProfile() {
       </tr></thead>
       <tbody>
       <tr class="ttime-row-overall">
-        <td>全体</td><td>${overall.n}</td>
-        ${rateCell(overall.r1, overallBase?.r1??null)}
-        ${rateCell(overall.r2, overallBase?.r2??null)}
-        ${rateCell(overall.r3, overallBase?.r3??null)}
-        ${rateCell(overall.r123, overallBase?.r123??null)}
+        <td>全体</td><td data-label="n">${overall.n}</td>
+        ${rateCell(overall.r1, overallBase?.r1??null, '1着率')}
+        ${rateCell(overall.r2, overallBase?.r2??null, '2着率')}
+        ${rateCell(overall.r3, overallBase?.r3??null, '3着率')}
+        ${rateCell(overall.r123, overallBase?.r123??null, '3連対率')}
       </tr>`;
     for (const tbin of tbins) {
       const tbinKey = tbin.toFixed(2);
@@ -1937,11 +2010,11 @@ function renderPlayerProfile() {
       const pr = calcRates(places);
       html += `<tr>
         <td>${tbin.toFixed(2)}〜${(tbin+0.05).toFixed(2)}</td>
-        <td>${pr.n}</td>
-        ${rateCell(pr.r1,   overall?.r1??null)}
-        ${rateCell(pr.r2,   overall?.r2??null)}
-        ${rateCell(pr.r3,   overall?.r3??null)}
-        ${rateCell(pr.r123, overall?.r123??null)}
+        <td data-label="n">${pr.n}</td>
+        ${rateCell(pr.r1,   overall?.r1??null, '1着率')}
+        ${rateCell(pr.r2,   overall?.r2??null, '2着率')}
+        ${rateCell(pr.r3,   overall?.r3??null, '3着率')}
+        ${rateCell(pr.r123, overall?.r123??null, '3連対率')}
       </tr>`;
     }
     html += `</tbody></table></div>`;
@@ -1960,11 +2033,11 @@ function renderPlayerProfile() {
       <tbody>
       <tr class="ttime-row-overall">
         <td>全体 ${avgTime !== null ? '（平均'+avgTime.toFixed(2)+'）' : ''}</td>
-        <td>${overall.n}</td>
-        ${rateCell(overall.r1, overallBase?.r1??null)}
-        ${rateCell(overall.r2, overallBase?.r2??null)}
-        ${rateCell(overall.r3, overallBase?.r3??null)}
-        ${rateCell(overall.r123, overallBase?.r123??null)}
+        <td data-label="n">${overall.n}</td>
+        ${rateCell(overall.r1, overallBase?.r1??null, '1着率')}
+        ${rateCell(overall.r2, overallBase?.r2??null, '2着率')}
+        ${rateCell(overall.r3, overallBase?.r3??null, '3着率')}
+        ${rateCell(overall.r123, overallBase?.r123??null, '3連対率')}
       </tr>`;
     for (const db of DIFF_BINS) {
       const places = pcdCourse[db.key] || [];
@@ -1972,11 +2045,11 @@ function renderPlayerProfile() {
       const pr = calcRates(places);
       html += `<tr>
         <td>${db.range}</td>
-        <td>${pr.n}</td>
-        ${rateCell(pr.r1,   overall?.r1??null)}
-        ${rateCell(pr.r2,   overall?.r2??null)}
-        ${rateCell(pr.r3,   overall?.r3??null)}
-        ${rateCell(pr.r123, overall?.r123??null)}
+        <td data-label="n">${pr.n}</td>
+        ${rateCell(pr.r1,   overall?.r1??null, '1着率')}
+        ${rateCell(pr.r2,   overall?.r2??null, '2着率')}
+        ${rateCell(pr.r3,   overall?.r3??null, '3着率')}
+        ${rateCell(pr.r123, overall?.r123??null, '3連対率')}
       </tr>`;
     }
     html += `</tbody></table></div>`;
@@ -1994,11 +2067,12 @@ function renderPlayerProfile() {
   content.innerHTML = html;
 }
 
-function rateCell(val, baseVal) {
+function rateCell(val, baseVal, label) {
   const diff = (val != null && baseVal != null) ? +(val - baseVal).toFixed(1) : null;
   const diffCls = diff == null ? "na" : diff > 0 ? "pos" : diff < 0 ? "neg" : "neu";
   const diffStr = diff == null ? "−" : (diff > 0 ? "+" : "") + diff.toFixed(1) + "%";
-  return `<td>
+  const dataLabel = label ? ` data-label="${label}"` : "";
+  return `<td${dataLabel}>
     <span class="cell-val">${val != null ? val.toFixed(1) + "%" : "−"}</span><br>
     <span class="cell-diff ${diffCls}">${diffStr}</span>
   </td>`;
