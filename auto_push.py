@@ -72,7 +72,7 @@ COMPUTE_SCEN_JS_OBF   = SCRIPTS_DIR / "computeScenCombosWithEV_obf.js"
 DYNAMIC_INN2PLACE_JS  = SCRIPTS_DIR / "dynamic_inn2place.js"
 DYNAMIC_INN2PLACE_JS_OBF = SCRIPTS_DIR / "dynamic_inn2place_obf.js"
 DATA_JS           = SCRIPTS_DIR / "data.js"
-PLAYER_ID_MAP     = SCRIPTS_DIR / "player_id_map.json"
+PLAYER_ID_MAP     = DATA_COLLECT_DIR / "player_id_map.json"
 VIEWER_HTML           = SCRIPTS_DIR / "展開別残存ビューア.html"
 FETCH_TENJI_PY        = SCRIPTS_DIR / "fetch_tenji.py"
 FETCH_RESULT_PY       = DATA_COLLECT_DIR / "fetch_result.py"
@@ -1020,6 +1020,32 @@ def write_master_ext_json():
     return True
 
 
+def write_player_id_map_json():
+    """
+    scripts/player_id_map.json（登番→選手名マップ）を data/player_id_map.json にコピーする。
+    出走表の「登番」列表示用（loader.js の fetchAndMergeJsonData が data/player_id_map.json を
+    fetchして PLAYER_ID_MAP に逆引き格納する）。
+    内容はそのままコピーするだけ（読み込み→書き出しでJSON妥当性だけ確認）。
+    """
+    if not PLAYER_ID_MAP.exists():
+        log("  [JSON] player_id_map.json なし → data/player_id_map.json スキップ")
+        return False
+
+    DATA_DIR.mkdir(exist_ok=True)
+    try:
+        with open(PLAYER_ID_MAP, 'r', encoding='utf-8') as _rf:
+            id_map = json.load(_rf)
+    except Exception as _e:
+        log(f"  ⚠ player_id_map.json 読み込み失敗 → スキップ: {_e}")
+        return False
+
+    out_path = DATA_DIR / "player_id_map.json"
+    with open(out_path, 'w', encoding='utf-8') as _wf:
+        _wf.write(json.dumps(id_map, ensure_ascii=False, separators=(",", ":")))
+    log("  [JSON] data/player_id_map.json 書き出し完了")
+    return True
+
+
 # ── CSVパースキャッシュ ─────────────────────────────────────────────────────
 # write_all_json_files() の呼び出し内で同じCSVを複数回 parse_csv() するのを防ぐ。
 # write_all_json_files() の先頭でクリアされる。
@@ -1192,6 +1218,10 @@ def write_all_json_files():
         write_master_ext_json()
     except Exception as _e:
         log(f"  ⚠ write_master_ext_json 失敗（スキップして続行）: {_e}")
+    try:
+        write_player_id_map_json()
+    except Exception as _e:
+        log(f"  ⚠ write_player_id_map_json 失敗（スキップして続行）: {_e}")
     write_tenji_json_file()  # data/tenji_YYYYMMDD.json を出力（sample.js の fetch 対象）
     write_data_index()       # 最後にインデックスを更新
 

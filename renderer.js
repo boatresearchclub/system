@@ -559,9 +559,10 @@ function renderDetail(rno){
   const tenjiHtml = buildTenjiSection(rno, boats);
 
 
-  // グリッド列: 枠30px 選手名68px 登番28px 級36px F列26px 基準1着率56px 3連対率50px ST順50px
-  // [登番列追加] スマホ幅に収めるため選手名/F/1着率/3連対率/STを少し詰めて登番分(28px)を確保
-  const colStyle = 'grid-template-columns: 30px 68px 28px 36px 26px 56px 50px 50px';
+  // グリッド列: 枠28px 選手名60px 登番26px 級30px F列22px 基準1着率48px 3連対率46px ST順46px
+  // [調整] 平均ST順の折り返し防止のため列幅を再配分し、見出しフォントサイズ/間隔を統一
+  const colStyle = 'grid-template-columns: 28px 60px 26px 30px 22px 48px 46px 46px; column-gap:2px';
+  const headFont = 'font-size:10px;white-space:nowrap;letter-spacing:0';
 
   // バナーをタブ外の常時表示エリアに更新
   updatePersistentBanners(rno);
@@ -569,7 +570,7 @@ function renderDetail(rno){
   const html = `
     <div class="detail-panel">
       <div class="bt-head-simple" style="${colStyle}">
-        <span>枠</span><span style="text-align:center">選手名</span><span style="text-align:center;font-size:9px">登番</span><span>級</span><span style="text-align:center">F</span><span style="text-align:center">1着率</span><span style="text-align:center">3連対率</span><span style="text-align:center">平均ST順</span>
+        <span style="${headFont}">枠</span><span style="text-align:center;${headFont}">選手名</span><span style="text-align:center;${headFont}">登番</span><span style="${headFont}">級</span><span style="text-align:center;${headFont}">F</span><span style="text-align:center;${headFont}">1着率</span><span style="text-align:center;${headFont}">3連対率</span><span style="text-align:center;${headFont}">平均ST順</span>
       </div>
       ${boats.map((bt,i)=>{
         const fTotal = getFTotal(bt.boat, rno);
