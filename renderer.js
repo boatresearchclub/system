@@ -559,9 +559,9 @@ function renderDetail(rno){
   const tenjiHtml = buildTenjiSection(rno, boats);
 
 
-  // グリッド列: 枠28px 選手名60px 登番26px 級30px F列22px 基準1着率48px 3連対率46px ST順46px
-  // [調整] 平均ST順の折り返し防止のため列幅を再配分し、見出しフォントサイズ/間隔を統一
-  const colStyle = 'grid-template-columns: 28px 60px 26px 30px 22px 48px 46px 46px; column-gap:2px';
+  // グリッド列: 枠28px 選手名58px 登番28px 級28px F列20px 基準1着率44px 3連対率44px ST順42px
+  // [バランス調整] 列ごとのガップを統一し、ヘッダー文字幅とデータ幅の差を縮めて間隔を均等化
+  const colStyle = 'grid-template-columns: 28px 58px 28px 28px 20px 44px 44px 42px; column-gap:4px';
   const headFont = 'font-size:10px;white-space:nowrap;letter-spacing:0';
 
   // バナーをタブ外の常時表示エリアに更新
@@ -593,10 +593,10 @@ function renderDetail(rno){
           : `<span style="color:var(--text3);font-size:9px;display:block;text-align:center">—</span>`;
         return `
         <div class="bt-row${i===0?' top1':''}" style="${colStyle}">
-          <span class="boat-circle b${bt.boat}" style="width:22px;height:22px;font-size:11px;line-height:22px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span>
+          <span class="boat-circle b${bt.boat}" style="justify-self:center;width:22px;height:22px;font-size:11px;line-height:22px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span>
           <div style="text-align:center">${bt.name}</div>
           <div>${tobanCell}</div>
-          <div class="bt-grade">${bt.grade ?? '-'}</div>
+          <div style="text-align:center" class="bt-grade">${bt.grade ?? '-'}</div>
           <div>${fCell}</div>
           <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
             <span>${(()=>{ const wr = getCourseMaster(bt.name, String(bt.boat))?.win_rate; return wr != null ? (wr*100).toFixed(1)+'%' : '<span style="color:var(--text3);font-size:11px">—</span>'; })()}</span>
