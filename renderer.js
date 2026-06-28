@@ -559,8 +559,9 @@ function renderDetail(rno){
   const tenjiHtml = buildTenjiSection(rno, boats);
 
 
-  // グリッド列: 枠32px 選手名82px 級40px F列28px 基準1着率60px 3連対率52px ST順52px
-  const colStyle = 'grid-template-columns: 32px 82px 40px 28px 60px 52px 52px';
+  // グリッド列: 枠30px 選手名68px 登番28px 級36px F列26px 基準1着率56px 3連対率50px ST順50px
+  // [登番列追加] スマホ幅に収めるため選手名/F/1着率/3連対率/STを少し詰めて登番分(28px)を確保
+  const colStyle = 'grid-template-columns: 30px 68px 28px 36px 26px 56px 50px 50px';
 
   // バナーをタブ外の常時表示エリアに更新
   updatePersistentBanners(rno);
@@ -568,7 +569,7 @@ function renderDetail(rno){
   const html = `
     <div class="detail-panel">
       <div class="bt-head-simple" style="${colStyle}">
-        <span>枠</span><span style="text-align:center">選手名</span><span>級</span><span style="text-align:center">F</span><span style="text-align:center">1着率</span><span style="text-align:center">3連対率</span><span style="text-align:center">平均ST順</span>
+        <span>枠</span><span style="text-align:center">選手名</span><span style="text-align:center;font-size:9px">登番</span><span>級</span><span style="text-align:center">F</span><span style="text-align:center">1着率</span><span style="text-align:center">3連対率</span><span style="text-align:center">平均ST順</span>
       </div>
       ${boats.map((bt,i)=>{
         const fTotal = getFTotal(bt.boat, rno);
@@ -584,10 +585,16 @@ function renderDetail(rno){
         const place3Cell = ap3 != null
           ? `<span style="display:block;text-align:center;font-size:12px;color:var(--text)">${(ap3*100).toFixed(1)}%</span>`
           : `<span style="color:var(--text3);font-size:11px;display:block;text-align:center">—</span>`;
+        // 登番（PLAYER_ID_MAP: 選手名→登番 の逆引き / player_id_map.json から構築）
+        const toban = (typeof PLAYER_ID_MAP !== 'undefined' && PLAYER_ID_MAP[bt.name]) || '';
+        const tobanCell = toban
+          ? `<span style="display:block;text-align:center;font-size:9px;color:var(--text3)">${toban}</span>`
+          : `<span style="color:var(--text3);font-size:9px;display:block;text-align:center">—</span>`;
         return `
         <div class="bt-row${i===0?' top1':''}" style="${colStyle}">
           <span class="boat-circle b${bt.boat}" style="width:22px;height:22px;font-size:11px;line-height:22px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span>
           <div style="text-align:center">${bt.name}</div>
+          <div>${tobanCell}</div>
           <div class="bt-grade">${bt.grade ?? '-'}</div>
           <div>${fCell}</div>
           <div style="display:flex;flex-direction:column;align-items:center;gap:1px">

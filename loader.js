@@ -99,8 +99,20 @@ async function fetchAndMergeJsonData() {
     if (data && !MASTER_EXT) MASTER_EXT = data;
   });
 
+  // ⑤ player_id_map.json（登番→選手名 のマップ）
+  // → 出走表で「選手名→登番」を逆引きできるように PLAYER_ID_MAP に格納する。
+  // 同名の選手が複数いる場合は最初に見つかった登番を優先する（上書きしない）。
+  const playerIdMapFetch = safeFetch(`${DATA_BASE_URL}/player_id_map.json`).then(data => {
+    if (!data) return;
+    for (const [toban, name] of Object.entries(data)) {
+      if (!Object.prototype.hasOwnProperty.call(PLAYER_ID_MAP, name)) {
+        PLAYER_ID_MAP[name] = toban;
+      }
+    }
+  });
+
   // 全fetch並列実行（失敗しても続行）
-  await Promise.allSettled([...resultFetches, ...historyFetches, masterFetch]);
+  await Promise.allSettled([...resultFetches, ...historyFetches, masterFetch, playerIdMapFetch]);
 }
 
 
