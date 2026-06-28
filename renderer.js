@@ -1499,20 +1499,26 @@ function renderBuy(rno){
     // 基準列: probを6艇で正規化した相対確率（合計100%）
     const basePct = (bt.display_base * 100).toFixed(1);
 
-    // 展開補正列: 差分ベース表示（▲3.2% / ▼5.1% 形式）
-    // [2026-06-29 修正] 旧: tenkaiCoef（比率）を表示 → baseNormが極小の艇で3.00に張り付く問題
-    //   新: tenkaiDiff（展開スコア - 基準スコアの差分）をパーセント表示に変換。
-    //   これにより「この艇は展開補正で+3.2%有利」という直感的な読み方ができる。
+    // 展開補正列: boost値（純粋な展開噛み合いスコア）表示
+    // [2026-06-29 再修正] tenkaiDiff はキャリブレーション補正込みの差分のため
+    //   「展開要因」として誤解を招く。
+    //   kimari_coef = boost[b.boat]（1号艇弱点 × 他艇攻撃力の積）を使用することで
+    //   「この艇の攻め手が1号艇にどれだけ刺さるか」の純粋な展開噛み合いを表示する。
+    //   1号艇は -(totalBoost) で被圧力合計を表示（負値=攻められている）。
+    //   脅威が低ければ全艇フラット（±0）、攻め手が強い艇のみ上がる。
+    //
+    //   スケール: boost値はそのままでは小数（0〜0.3程度）のため
+    //   ×100でパーセント換算して表示。閾値0.5%未満はフラット扱い。
     let relCorrCell;
-    if(useMaster && bt._tenkaiDiff != null){
-      const diff    = bt._tenkaiDiff;  // 差分（−0.1〜+0.1 程度の小数）
-      const diffPct = diff * 100;      // %換算
-      if(Math.abs(diffPct) < 0.5){
+    if(useMaster && bt.kimari_coef != null){
+      const raw     = bt.kimari_coef;   // 1号艇: -(totalBoost)、他艇: boost[b]
+      const dispPct = raw * 100;
+      if(Math.abs(dispPct) < 0.5){
         relCorrCell = `<span style="font-size:10px;color:var(--text3)">±0.0%</span>`;
       } else {
-        const color = diffPct >= 0 ? 'var(--green)' : 'var(--red)';
-        const mark  = diffPct >= 0 ? '▲' : '▼';
-        relCorrCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${Math.abs(diffPct).toFixed(1)}%</span>`;
+        const color = dispPct >= 0 ? 'var(--green)' : 'var(--red)';
+        const mark  = dispPct >= 0 ? '▲' : '▼';
+        relCorrCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${Math.abs(dispPct).toFixed(1)}%</span>`;
       }
     } else {
       relCorrCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
@@ -1655,7 +1661,7 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">枠</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobを正規化した相対1着率（合計100%）">基準</th>
-          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展開適性による確率の増減（差分%表示: +なら有利 -なら不利。全艇合計はゼロサム）">展開補正</th>
+          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展開噛み合いスコア: 1号艇の弱点×各艇の攻撃力の積。脅威が低ければフラット(±0%)、攻め手が強い艇のみ上昇。1号艇は被圧力合計(負値)">展開補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
