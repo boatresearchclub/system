@@ -955,8 +955,9 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   // computeScenCombosWithEV.js 側で実測ベースに自動更新される）を通して
   // 実績水準に引き寄せる。関数が未ロードの場合は従来通りクリップ後の値を使う
   // （フォールバック。下流の二重補正にはならない）。
+  // [2026-06-29 修正] boat1?.name を渡して個人逃げ率ブレンドを有効化
   const nigeProb = (typeof calibrateCourse1Prob === 'function')
-    ? calibrateCourse1Prob(nigeProbClipped)
+    ? calibrateCourse1Prob(nigeProbClipped, boat1?.name ?? null)
     : nigeProbClipped;
 
   // ══════════════════════════════════════════════════════

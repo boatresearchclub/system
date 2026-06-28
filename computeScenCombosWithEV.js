@@ -227,21 +227,77 @@
    * @param {number} rawNigeProb  analyzer.js の Stage1 クリップ後の値
    * @returns {number}            補正後の値（0〜1）
    */
-  window.calibrateCourse1Prob = function (rawNigeProb) {
+  window.calibrateCourse1Prob = function (rawNigeProb, boat1Name) {
+    // ── [2026-06-29 修正] 個人逃げ率ブレンド方式 ──────────────────────
+    //
+    // 【旧実装の問題】
+    //   全会場一律の区分線形補間（推定74.7%→実績60.8%）を適用していたため、
+    //   逃げ82%の鉄板選手も逃げ40%の弱い選手も同じ引き下げを受けていた。
+    //   個人能力を計算している意味がなかった。
+    //
+    // 【新実装の設計思想】
+    //   1. まず全会場平均テーブルで「市場ベースの期待値」を計算（従来通り）
+    //   2. 個人の実績逃げ率が取得できる場合、その値を「個人実績」として
+    //      PERSONAL_BLEND（40%）でブレンドする
+    //   3. 個人実績が信頼できる（runs≧20）場合のみブレンドを適用
+    //      データ不足の場合は従来の全体補正のみ（フォールバック）
+    //
+    // PERSONAL_BLEND: 個人逃げ率の混ぜ込み強度
+    //   0.0 = 完全に全体補正のみ（旧実装と同じ）
+    //   1.0 = 完全に個人実績のみ
+    //   0.4 = 個人40% + 全体60%（実績と市場の折衷）
+    //
+    // 例: 新田泰章（逃げ82%、runs=68）
+    //   全体補正: 69.6% → 約60%
+    //   個人逃げ率: 82%
+    //   ブレンド: 60% × 0.6 + 82% × 0.4 = 68.8% ← 個人実力が反映される
+    //
+    // 例: データ不足選手（runs=5）
+    //   全体補正: 60%（フォールバック）← 個人実績を信頼しない
+    // ─────────────────────────────────────────────────────────────────────
+    const PERSONAL_BLEND = 0.4;  // 個人逃げ率の混ぜ込み強度（0〜1）
+    const PERSONAL_MIN_RUNS = 20; // 個人実績を信頼する最低出走数
+
     if (rawNigeProb == null || isNaN(rawNigeProb)) return rawNigeProb;
     const p = Math.max(0, Math.min(1, rawNigeProb));
+
+    // ── Step1: 全体補正テーブルで市場ベースの期待値を計算 ──
     const pts = COURSE1_CALIB_POINTS;
-    if (p <= pts[0][0]) return pts[0][1];
-    if (p >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
-    for (let i = 1; i < pts.length; i++) {
-      const [x0, y0] = pts[i - 1];
-      const [x1, y1] = pts[i];
-      if (p <= x1) {
-        const t = (p - x0) / (x1 - x0);
-        return y0 + t * (y1 - y0);
+    let globalCalib = p;
+    if (p <= pts[0][0]) {
+      globalCalib = pts[0][1];
+    } else if (p >= pts[pts.length - 1][0]) {
+      globalCalib = pts[pts.length - 1][1];
+    } else {
+      for (let i = 1; i < pts.length; i++) {
+        const [x0, y0] = pts[i - 1];
+        const [x1, y1] = pts[i];
+        if (p <= x1) {
+          const t = (p - x0) / (x1 - x0);
+          globalCalib = y0 + t * (y1 - y0);
+          break;
+        }
       }
     }
-    return p;
+
+    // ── Step2: 個人逃げ率ブレンド ──
+    // boat1Name が渡されていて MASTER_EXT が利用可能な場合のみ適用
+    if (boat1Name && typeof MASTER_EXT !== 'undefined' && MASTER_EXT?.course_master) {
+      const cm1   = MASTER_EXT.course_master[boat1Name]?.['1'];
+      const runs  = cm1?.runs ?? 0;
+      const nigeR = cm1?.kimari?.['逃げ'] ?? null;
+
+      if (nigeR != null && runs >= PERSONAL_MIN_RUNS) {
+        // 信頼度: 20走で最小（PERSONAL_BLEND×0.5）、100走で最大（PERSONAL_BLEND）
+        const trust  = Math.min(runs / 100, 1.0);
+        const blend  = PERSONAL_BLEND * (0.5 + 0.5 * trust); // 0.5×blend〜1.0×blend
+        const result = globalCalib * (1 - blend) + nigeR * blend;
+        return Math.max(0, Math.min(1, result));
+      }
+    }
+
+    // フォールバック: 個人データなし → 全体補正のみ
+    return globalCalib;
   };
 
   /**
