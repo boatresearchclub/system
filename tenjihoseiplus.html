@@ -230,14 +230,24 @@ code { background: var(--bg3); border: 1px solid var(--border); border-radius: 4
 
 /* ===== Mobile responsive ===== */
 @media (max-width: 600px) {
-  /* レイアウト: 縦積み */
-  #app { flex-direction: column; }
+  /* レイアウト: 縦積み、サイドバーは高さ固定しない */
+  #app { flex-direction: column; overflow-y: auto; height: auto; min-height: 100vh; }
   #sidebar {
     width: 100%; border-right: none;
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0; max-height: 60vh;
+    flex-shrink: 0;
+    /* max-height なし → スクロール追従しない */
   }
-  #main { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  #main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  /* 入力ペイン折りたたみ */
+  #input-toggle-row { display: flex !important; }
+  #input-pane-inner {
+    overflow: hidden;
+    transition: max-height 0.2s ease;
+    max-height: 0;
+  }
+  #input-pane-inner.open { max-height: 2000px; }
 
   /* ツールバー: 折りたたみ式 */
   #toolbar {
@@ -429,8 +439,15 @@ code { background: var(--bg3); border: 1px solid var(--border); border-radius: 4
       </div>
       <!-- レース入力 -->
       <div id="pane-input" style="display:none;flex:1;overflow-y:auto;min-height:0;">
-        <div class="sidebar-label">コース別入力</div>
-        <div id="race-input-form"></div>
+        <!-- 折りたたみヘッダー（モバイルのみ） -->
+        <div id="input-toggle-row" onclick="toggleInputPane()"
+          style="display:none;cursor:pointer;padding:6px 0;margin-bottom:6px;
+          border-bottom:1px solid var(--border);align-items:center;">
+          <span id="input-toggle-label" style="font-size:11px;color:var(--text3);font-weight:600;">入力 ▼</span>
+        </div>
+        <div id="input-pane-inner">
+          <div id="race-input-form"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1222,16 +1239,34 @@ function toggleToolbar() {
     if (label) label.textContent = "設定 ▲";
   }
 }
+function toggleInputPane() {
+  const inner = document.getElementById("input-pane-inner");
+  const label = document.getElementById("input-toggle-label");
+  if (!inner) return;
+  const isOpen = inner.classList.contains("open");
+  if (isOpen) {
+    inner.classList.remove("open");
+    if (label) label.textContent = "入力 ▼";
+  } else {
+    inner.classList.add("open");
+    if (label) label.textContent = "入力 ▲";
+  }
+}
+
 function initMobileToolbar() {
   if (window.innerWidth <= 600) {
+    // ツールバー折りたたみ
     const row = document.getElementById("toolbar-toggle-row");
     if (row) row.style.display = "flex";
-    // 初期状態は折りたたみ
     const inner = document.getElementById("toolbar-inner");
     const label = document.getElementById("toolbar-toggle-label");
     if (inner) inner.classList.add("collapsed");
     if (label) label.textContent = "設定 ▼";
     toolbarCollapsed = true;
+    // 入力ペイントグル表示（初期は折りたたみ）
+    const inputRow = document.getElementById("input-toggle-row");
+    if (inputRow) inputRow.style.display = "flex";
+    // input-pane-inner は CSS で max-height:0 なのでそのまま
   }
 }
 window.addEventListener("DOMContentLoaded", initMobileToolbar);
@@ -1564,6 +1599,12 @@ function renderRaceInput() {
     <img id="ocr-preview" style="display:none;width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border);">
   </div>`;
   form.innerHTML = html;
+
+  // モバイルでは入力ペイントグルを再表示
+  if (window.innerWidth <= 600) {
+    const inputRow = document.getElementById("input-toggle-row");
+    if (inputRow) inputRow.style.display = "flex";
+  }
 
   setupOcrPaste();
 }
