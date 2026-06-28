@@ -1,0 +1,1122 @@
+{
+  "1号[まくられ型] | 筆頭[2号:まくり] | 連動有": {
+    "n": 1929,
+    "boat1_rate": 0.4069,
+    "force1_rate": 0.2447,
+    "force2_rate": 0.1628,
+    "chain_rate": 0.1449,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[2号:まくり] | 連動無": {
+    "n": 173,
+    "boat1_rate": 0.5029,
+    "force1_rate": 0.2081,
+    "force2_rate": 0.1387,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[2号:差し] | 連動有": {
+    "n": 8540,
+    "boat1_rate": 0.394,
+    "force1_rate": 0.28,
+    "force2_rate": 0.1499,
+    "chain_rate": 0.1303,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[2号:差し] | 連動無": {
+    "n": 911,
+    "boat1_rate": 0.4523,
+    "force1_rate": 0.2503,
+    "force2_rate": 0.1295,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[3号:まくり] | 連動有": {
+    "n": 6093,
+    "boat1_rate": 0.3959,
+    "force1_rate": 0.236,
+    "force2_rate": 0.1687,
+    "chain_rate": 0.1983,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[3号:まくり] | 連動無": {
+    "n": 450,
+    "boat1_rate": 0.4933,
+    "force1_rate": 0.1978,
+    "force2_rate": 0.1356,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[3号:まくり差し] | 連動有": {
+    "n": 3095,
+    "boat1_rate": 0.3835,
+    "force1_rate": 0.3027,
+    "force2_rate": 0.1422,
+    "chain_rate": 0.2371,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[3号:まくり差し] | 連動無": {
+    "n": 177,
+    "boat1_rate": 0.4859,
+    "force1_rate": 0.1977,
+    "force2_rate": 0.1412,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[3号:差し] | 連動有": {
+    "n": 430,
+    "boat1_rate": 0.4674,
+    "force1_rate": 0.1884,
+    "force2_rate": 0.1721,
+    "chain_rate": 0.1253,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[3号:差し] | 連動無": {
+    "n": 123,
+    "boat1_rate": 0.5122,
+    "force1_rate": 0.187,
+    "force2_rate": 0.1301,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[4号:まくり] | 連動有": {
+    "n": 5874,
+    "boat1_rate": 0.3892,
+    "force1_rate": 0.2203,
+    "force2_rate": 0.1759,
+    "chain_rate": 0.1796,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[4号:まくり] | 連動無": {
+    "n": 345,
+    "boat1_rate": 0.4203,
+    "force1_rate": 0.2261,
+    "force2_rate": 0.1623,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[4号:まくり差し] | 連動有": {
+    "n": 726,
+    "boat1_rate": 0.4008,
+    "force1_rate": 0.2452,
+    "force2_rate": 0.1625,
+    "chain_rate": 0.2176,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[4号:まくり差し] | 連動無": {
+    "n": 62,
+    "boat1_rate": 0.4516,
+    "force1_rate": 0.2097,
+    "force2_rate": 0.1774,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[4号:差し] | 連動有": {
+    "n": 734,
+    "boat1_rate": 0.455,
+    "force1_rate": 0.1921,
+    "force2_rate": 0.1608,
+    "chain_rate": 0.1452,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[4号:差し] | 連動無": {
+    "n": 114,
+    "boat1_rate": 0.4912,
+    "force1_rate": 0.2193,
+    "force2_rate": 0.1667,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[5号:まくり] | 連動有": {
+    "n": 522,
+    "boat1_rate": 0.4272,
+    "force1_rate": 0.1743,
+    "force2_rate": 0.1552,
+    "chain_rate": 0.1679,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[5号:まくり] | 連動無": {
+    "n": 79,
+    "boat1_rate": 0.3924,
+    "force1_rate": 0.1139,
+    "force2_rate": 0.2785,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[5号:まくり差し] | 連動有": {
+    "n": 761,
+    "boat1_rate": 0.4402,
+    "force1_rate": 0.184,
+    "force2_rate": 0.159,
+    "chain_rate": 0.1625,
+    "reliable": true
+  },
+  "1号[まくられ型] | 筆頭[5号:まくり差し] | 連動無": {
+    "n": 114,
+    "boat1_rate": 0.5175,
+    "force1_rate": 0.1053,
+    "force2_rate": 0.1754,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[5号:差し] | 連動有": {
+    "n": 19,
+    "boat1_rate": 0.7895,
+    "force1_rate": 0.0526,
+    "force2_rate": 0.1053,
+    "chain_rate": 0.0526,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[5号:差し] | 連動無": {
+    "n": 11,
+    "boat1_rate": 0.4545,
+    "force1_rate": 0.3636,
+    "force2_rate": 0.1818,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[6号:まくり] | 連動有": {
+    "n": 177,
+    "boat1_rate": 0.4124,
+    "force1_rate": 0.1412,
+    "force2_rate": 0.1356,
+    "chain_rate": 0.1356,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[6号:まくり] | 連動無": {
+    "n": 19,
+    "boat1_rate": 0.4737,
+    "force1_rate": 0.0526,
+    "force2_rate": 0.1053,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[6号:まくり差し] | 連動有": {
+    "n": 26,
+    "boat1_rate": 0.6923,
+    "force1_rate": 0.1154,
+    "force2_rate": 0.0385,
+    "chain_rate": 0.0385,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[6号:まくり差し] | 連動無": {
+    "n": 17,
+    "boat1_rate": 0.4706,
+    "force1_rate": 0.0588,
+    "force2_rate": 0.1765,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[6号:差し] | 連動有": {
+    "n": 11,
+    "boat1_rate": 0.7273,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": 0.1818,
+    "reliable": false
+  },
+  "1号[まくられ型] | 筆頭[6号:差し] | 連動無": {
+    "n": 9,
+    "boat1_rate": 0.6667,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[2号:まくり] | 連動有": {
+    "n": 214,
+    "boat1_rate": 0.4439,
+    "force1_rate": 0.2664,
+    "force2_rate": 0.1215,
+    "chain_rate": 0.1121,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[2号:まくり] | 連動無": {
+    "n": 25,
+    "boat1_rate": 0.52,
+    "force1_rate": 0.36,
+    "force2_rate": 0.08,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[2号:差し] | 連動有": {
+    "n": 1617,
+    "boat1_rate": 0.4552,
+    "force1_rate": 0.2653,
+    "force2_rate": 0.1218,
+    "chain_rate": 0.1037,
+    "reliable": true
+  },
+  "1号[まくり差され型] | 筆頭[2号:差し] | 連動無": {
+    "n": 237,
+    "boat1_rate": 0.5232,
+    "force1_rate": 0.1857,
+    "force2_rate": 0.1519,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[3号:まくり] | 連動有": {
+    "n": 1117,
+    "boat1_rate": 0.4521,
+    "force1_rate": 0.2113,
+    "force2_rate": 0.1468,
+    "chain_rate": 0.1912,
+    "reliable": true
+  },
+  "1号[まくり差され型] | 筆頭[3号:まくり] | 連動無": {
+    "n": 108,
+    "boat1_rate": 0.5278,
+    "force1_rate": 0.1574,
+    "force2_rate": 0.1111,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[3号:まくり差し] | 連動有": {
+    "n": 1051,
+    "boat1_rate": 0.4225,
+    "force1_rate": 0.2388,
+    "force2_rate": 0.1675,
+    "chain_rate": 0.1985,
+    "reliable": true
+  },
+  "1号[まくり差され型] | 筆頭[3号:まくり差し] | 連動無": {
+    "n": 66,
+    "boat1_rate": 0.5303,
+    "force1_rate": 0.2273,
+    "force2_rate": 0.0758,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[3号:差し] | 連動有": {
+    "n": 92,
+    "boat1_rate": 0.4457,
+    "force1_rate": 0.1739,
+    "force2_rate": 0.2065,
+    "chain_rate": 0.1739,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[3号:差し] | 連動無": {
+    "n": 36,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.3056,
+    "force2_rate": 0.1389,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[4号:まくり] | 連動有": {
+    "n": 982,
+    "boat1_rate": 0.4236,
+    "force1_rate": 0.221,
+    "force2_rate": 0.1599,
+    "chain_rate": 0.168,
+    "reliable": true
+  },
+  "1号[まくり差され型] | 筆頭[4号:まくり] | 連動無": {
+    "n": 64,
+    "boat1_rate": 0.5781,
+    "force1_rate": 0.1875,
+    "force2_rate": 0.0781,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[4号:まくり差し] | 連動有": {
+    "n": 312,
+    "boat1_rate": 0.4455,
+    "force1_rate": 0.2147,
+    "force2_rate": 0.1891,
+    "chain_rate": 0.1955,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[4号:まくり差し] | 連動無": {
+    "n": 29,
+    "boat1_rate": 0.4828,
+    "force1_rate": 0.2069,
+    "force2_rate": 0.1379,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[4号:差し] | 連動有": {
+    "n": 197,
+    "boat1_rate": 0.5635,
+    "force1_rate": 0.1523,
+    "force2_rate": 0.1218,
+    "chain_rate": 0.1371,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[4号:差し] | 連動無": {
+    "n": 31,
+    "boat1_rate": 0.6452,
+    "force1_rate": 0.1613,
+    "force2_rate": 0.0645,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[5号:まくり] | 連動有": {
+    "n": 93,
+    "boat1_rate": 0.4409,
+    "force1_rate": 0.0968,
+    "force2_rate": 0.1505,
+    "chain_rate": 0.1505,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[5号:まくり] | 連動無": {
+    "n": 15,
+    "boat1_rate": 0.3333,
+    "force1_rate": 0.2667,
+    "force2_rate": 0.2667,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[5号:まくり差し] | 連動有": {
+    "n": 537,
+    "boat1_rate": 0.4413,
+    "force1_rate": 0.1583,
+    "force2_rate": 0.1825,
+    "chain_rate": 0.1076,
+    "reliable": true
+  },
+  "1号[まくり差され型] | 筆頭[5号:まくり差し] | 連動無": {
+    "n": 46,
+    "boat1_rate": 0.587,
+    "force1_rate": 0.0435,
+    "force2_rate": 0.087,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[5号:差し] | 連動有": {
+    "n": 14,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.0714,
+    "force2_rate": 0.2857,
+    "chain_rate": 0.0,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[5号:差し] | 連動無": {
+    "n": 7,
+    "boat1_rate": 0.5714,
+    "force1_rate": 0.1429,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[6号:まくり] | 連動有": {
+    "n": 20,
+    "boat1_rate": 0.35,
+    "force1_rate": 0.1,
+    "force2_rate": 0.25,
+    "chain_rate": 0.2,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[6号:まくり] | 連動無": {
+    "n": 3,
+    "boat1_rate": 0.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.6667,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[6号:まくり差し] | 連動有": {
+    "n": 26,
+    "boat1_rate": 0.5769,
+    "force1_rate": 0.1154,
+    "force2_rate": 0.1538,
+    "chain_rate": 0.1538,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[6号:まくり差し] | 連動無": {
+    "n": 10,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.1,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[6号:差し] | 連動有": {
+    "n": 5,
+    "boat1_rate": 0.6,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": 0.0,
+    "reliable": false
+  },
+  "1号[まくり差され型] | 筆頭[6号:差し] | 連動無": {
+    "n": 4,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.0,
+    "force2_rate": 0.25,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[2号:まくり] | 連動有": {
+    "n": 1217,
+    "boat1_rate": 0.3854,
+    "force1_rate": 0.2375,
+    "force2_rate": 0.1594,
+    "chain_rate": 0.1689,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[2号:まくり] | 連動無": {
+    "n": 136,
+    "boat1_rate": 0.4779,
+    "force1_rate": 0.2059,
+    "force2_rate": 0.1176,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[2号:差し] | 連動有": {
+    "n": 9560,
+    "boat1_rate": 0.3818,
+    "force1_rate": 0.2661,
+    "force2_rate": 0.1622,
+    "chain_rate": 0.1454,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[2号:差し] | 連動無": {
+    "n": 1112,
+    "boat1_rate": 0.4245,
+    "force1_rate": 0.2536,
+    "force2_rate": 0.1268,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[3号:まくり] | 連動有": {
+    "n": 2698,
+    "boat1_rate": 0.3903,
+    "force1_rate": 0.2576,
+    "force2_rate": 0.1527,
+    "chain_rate": 0.2021,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[3号:まくり] | 連動無": {
+    "n": 218,
+    "boat1_rate": 0.4817,
+    "force1_rate": 0.2202,
+    "force2_rate": 0.1743,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[3号:まくり差し] | 連動有": {
+    "n": 1923,
+    "boat1_rate": 0.3729,
+    "force1_rate": 0.3047,
+    "force2_rate": 0.1555,
+    "chain_rate": 0.2352,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[3号:まくり差し] | 連動無": {
+    "n": 120,
+    "boat1_rate": 0.4667,
+    "force1_rate": 0.2,
+    "force2_rate": 0.1417,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[3号:差し] | 連動有": {
+    "n": 350,
+    "boat1_rate": 0.4743,
+    "force1_rate": 0.1657,
+    "force2_rate": 0.18,
+    "chain_rate": 0.1619,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[3号:差し] | 連動無": {
+    "n": 108,
+    "boat1_rate": 0.4907,
+    "force1_rate": 0.25,
+    "force2_rate": 0.1574,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[4号:まくり] | 連動有": {
+    "n": 2653,
+    "boat1_rate": 0.3879,
+    "force1_rate": 0.2503,
+    "force2_rate": 0.1625,
+    "chain_rate": 0.1902,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[4号:まくり] | 連動無": {
+    "n": 149,
+    "boat1_rate": 0.4228,
+    "force1_rate": 0.2148,
+    "force2_rate": 0.1879,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[4号:まくり差し] | 連動有": {
+    "n": 513,
+    "boat1_rate": 0.3684,
+    "force1_rate": 0.2417,
+    "force2_rate": 0.1423,
+    "chain_rate": 0.2144,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[4号:まくり差し] | 連動無": {
+    "n": 37,
+    "boat1_rate": 0.5135,
+    "force1_rate": 0.1622,
+    "force2_rate": 0.1081,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[4号:差し] | 連動有": {
+    "n": 754,
+    "boat1_rate": 0.3939,
+    "force1_rate": 0.191,
+    "force2_rate": 0.191,
+    "chain_rate": 0.1658,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[4号:差し] | 連動無": {
+    "n": 141,
+    "boat1_rate": 0.4894,
+    "force1_rate": 0.1773,
+    "force2_rate": 0.1773,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[5号:まくり] | 連動有": {
+    "n": 156,
+    "boat1_rate": 0.3974,
+    "force1_rate": 0.2308,
+    "force2_rate": 0.1218,
+    "chain_rate": 0.1282,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[5号:まくり] | 連動無": {
+    "n": 19,
+    "boat1_rate": 0.4211,
+    "force1_rate": 0.1579,
+    "force2_rate": 0.1579,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[5号:まくり差し] | 連動有": {
+    "n": 530,
+    "boat1_rate": 0.4057,
+    "force1_rate": 0.2038,
+    "force2_rate": 0.1792,
+    "chain_rate": 0.1679,
+    "reliable": true
+  },
+  "1号[差され型] | 筆頭[5号:まくり差し] | 連動無": {
+    "n": 48,
+    "boat1_rate": 0.4375,
+    "force1_rate": 0.1458,
+    "force2_rate": 0.2083,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[5号:差し] | 連動有": {
+    "n": 38,
+    "boat1_rate": 0.3421,
+    "force1_rate": 0.1053,
+    "force2_rate": 0.2105,
+    "chain_rate": 0.0526,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[5号:差し] | 連動無": {
+    "n": 16,
+    "boat1_rate": 0.625,
+    "force1_rate": 0.0,
+    "force2_rate": 0.125,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[6号:まくり] | 連動有": {
+    "n": 32,
+    "boat1_rate": 0.4375,
+    "force1_rate": 0.1562,
+    "force2_rate": 0.1562,
+    "chain_rate": 0.1875,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[6号:まくり] | 連動無": {
+    "n": 3,
+    "boat1_rate": 0.3333,
+    "force1_rate": 0.3333,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[6号:まくり差し] | 連動有": {
+    "n": 24,
+    "boat1_rate": 0.5833,
+    "force1_rate": 0.0417,
+    "force2_rate": 0.0833,
+    "chain_rate": 0.0833,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[6号:まくり差し] | 連動無": {
+    "n": 2,
+    "boat1_rate": 0.0,
+    "force1_rate": 1.0,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[6号:差し] | 連動有": {
+    "n": 25,
+    "boat1_rate": 0.4,
+    "force1_rate": 0.04,
+    "force2_rate": 0.16,
+    "chain_rate": 0.08,
+    "reliable": false
+  },
+  "1号[差され型] | 筆頭[6号:差し] | 連動無": {
+    "n": 11,
+    "boat1_rate": 0.4545,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0909,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[2号:まくり] | 連動有": {
+    "n": 30,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.2667,
+    "force2_rate": 0.0,
+    "chain_rate": 0.1,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[2号:まくり] | 連動無": {
+    "n": 4,
+    "boat1_rate": 0.25,
+    "force1_rate": 0.25,
+    "force2_rate": 0.25,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[2号:差し] | 連動有": {
+    "n": 140,
+    "boat1_rate": 0.4429,
+    "force1_rate": 0.2214,
+    "force2_rate": 0.1357,
+    "chain_rate": 0.1571,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[2号:差し] | 連動無": {
+    "n": 71,
+    "boat1_rate": 0.4085,
+    "force1_rate": 0.2676,
+    "force2_rate": 0.1127,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[3号:まくり] | 連動有": {
+    "n": 58,
+    "boat1_rate": 0.4828,
+    "force1_rate": 0.2759,
+    "force2_rate": 0.1207,
+    "chain_rate": 0.1379,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[3号:まくり] | 連動無": {
+    "n": 23,
+    "boat1_rate": 0.4783,
+    "force1_rate": 0.3043,
+    "force2_rate": 0.1304,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[3号:まくり差し] | 連動有": {
+    "n": 45,
+    "boat1_rate": 0.4444,
+    "force1_rate": 0.2889,
+    "force2_rate": 0.1333,
+    "chain_rate": 0.2222,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[3号:まくり差し] | 連動無": {
+    "n": 10,
+    "boat1_rate": 0.3,
+    "force1_rate": 0.2,
+    "force2_rate": 0.3,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[3号:差し] | 連動有": {
+    "n": 13,
+    "boat1_rate": 0.5385,
+    "force1_rate": 0.0769,
+    "force2_rate": 0.2308,
+    "chain_rate": 0.1538,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[3号:差し] | 連動無": {
+    "n": 5,
+    "boat1_rate": 0.6,
+    "force1_rate": 0.0,
+    "force2_rate": 0.2,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[4号:まくり] | 連動有": {
+    "n": 70,
+    "boat1_rate": 0.4143,
+    "force1_rate": 0.2571,
+    "force2_rate": 0.1571,
+    "chain_rate": 0.1429,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[4号:まくり] | 連動無": {
+    "n": 17,
+    "boat1_rate": 0.4118,
+    "force1_rate": 0.1765,
+    "force2_rate": 0.1176,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[4号:まくり差し] | 連動有": {
+    "n": 14,
+    "boat1_rate": 0.3571,
+    "force1_rate": 0.4286,
+    "force2_rate": 0.1429,
+    "chain_rate": 0.2857,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[4号:まくり差し] | 連動無": {
+    "n": 5,
+    "boat1_rate": 0.6,
+    "force1_rate": 0.2,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[4号:差し] | 連動有": {
+    "n": 13,
+    "boat1_rate": 0.2308,
+    "force1_rate": 0.4615,
+    "force2_rate": 0.1538,
+    "chain_rate": 0.0,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[4号:差し] | 連動無": {
+    "n": 6,
+    "boat1_rate": 0.3333,
+    "force1_rate": 0.1667,
+    "force2_rate": 0.1667,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[5号:まくり] | 連動有": {
+    "n": 14,
+    "boat1_rate": 0.4286,
+    "force1_rate": 0.0714,
+    "force2_rate": 0.2857,
+    "chain_rate": 0.1429,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[5号:まくり] | 連動無": {
+    "n": 1,
+    "boat1_rate": 0.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[5号:まくり差し] | 連動有": {
+    "n": 20,
+    "boat1_rate": 0.45,
+    "force1_rate": 0.15,
+    "force2_rate": 0.1,
+    "chain_rate": 0.15,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[5号:まくり差し] | 連動無": {
+    "n": 11,
+    "boat1_rate": 0.6364,
+    "force1_rate": 0.1818,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[5号:差し] | 連動有": {
+    "n": 1,
+    "boat1_rate": 0.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": 1.0,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[5号:差し] | 連動無": {
+    "n": 4,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.0,
+    "force2_rate": 0.25,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[6号:まくり] | 連動有": {
+    "n": 2,
+    "boat1_rate": 0.5,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": 0.0,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[6号:まくり] | 連動無": {
+    "n": 1,
+    "boat1_rate": 0.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[6号:まくり差し] | 連動有": {
+    "n": 1,
+    "boat1_rate": 1.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": 0.0,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[6号:まくり差し] | 連動無": {
+    "n": 3,
+    "boat1_rate": 1.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[6号:差し] | 連動有": {
+    "n": 1,
+    "boat1_rate": 1.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": 0.0,
+    "reliable": false
+  },
+  "1号[抜かれ型] | 筆頭[6号:差し] | 連動無": {
+    "n": 1,
+    "boat1_rate": 0.0,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[2号:まくり] | 連動有": {
+    "n": 4481,
+    "boat1_rate": 0.6481,
+    "force1_rate": 0.131,
+    "force2_rate": 0.0969,
+    "chain_rate": 0.0905,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[2号:まくり] | 連動無": {
+    "n": 509,
+    "boat1_rate": 0.6974,
+    "force1_rate": 0.112,
+    "force2_rate": 0.0963,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[2号:差し] | 連動有": {
+    "n": 26888,
+    "boat1_rate": 0.6597,
+    "force1_rate": 0.1269,
+    "force2_rate": 0.0943,
+    "chain_rate": 0.0868,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[2号:差し] | 連動無": {
+    "n": 3616,
+    "boat1_rate": 0.7027,
+    "force1_rate": 0.1117,
+    "force2_rate": 0.0808,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[3号:まくり] | 連動有": {
+    "n": 16340,
+    "boat1_rate": 0.6622,
+    "force1_rate": 0.1324,
+    "force2_rate": 0.0862,
+    "chain_rate": 0.118,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[3号:まくり] | 連動無": {
+    "n": 1125,
+    "boat1_rate": 0.6969,
+    "force1_rate": 0.1209,
+    "force2_rate": 0.0782,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[3号:まくり差し] | 連動有": {
+    "n": 14015,
+    "boat1_rate": 0.6644,
+    "force1_rate": 0.1446,
+    "force2_rate": 0.0816,
+    "chain_rate": 0.123,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[3号:まくり差し] | 連動無": {
+    "n": 611,
+    "boat1_rate": 0.6907,
+    "force1_rate": 0.1506,
+    "force2_rate": 0.0736,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[3号:差し] | 連動有": {
+    "n": 1321,
+    "boat1_rate": 0.6805,
+    "force1_rate": 0.1105,
+    "force2_rate": 0.0704,
+    "chain_rate": 0.1014,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[3号:差し] | 連動無": {
+    "n": 407,
+    "boat1_rate": 0.7346,
+    "force1_rate": 0.0983,
+    "force2_rate": 0.0737,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[4号:まくり] | 連動有": {
+    "n": 16132,
+    "boat1_rate": 0.6338,
+    "force1_rate": 0.1498,
+    "force2_rate": 0.0932,
+    "chain_rate": 0.1109,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[4号:まくり] | 連動無": {
+    "n": 877,
+    "boat1_rate": 0.6956,
+    "force1_rate": 0.1254,
+    "force2_rate": 0.0775,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[4号:まくり差し] | 連動有": {
+    "n": 3226,
+    "boat1_rate": 0.651,
+    "force1_rate": 0.1463,
+    "force2_rate": 0.0821,
+    "chain_rate": 0.119,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[4号:まくり差し] | 連動無": {
+    "n": 254,
+    "boat1_rate": 0.6535,
+    "force1_rate": 0.1575,
+    "force2_rate": 0.0866,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[4号:差し] | 連動有": {
+    "n": 2671,
+    "boat1_rate": 0.6799,
+    "force1_rate": 0.1164,
+    "force2_rate": 0.0801,
+    "chain_rate": 0.0919,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[4号:差し] | 連動無": {
+    "n": 502,
+    "boat1_rate": 0.7331,
+    "force1_rate": 0.1235,
+    "force2_rate": 0.0418,
+    "chain_rate": null,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[5号:まくり] | 連動有": {
+    "n": 1329,
+    "boat1_rate": 0.6328,
+    "force1_rate": 0.1211,
+    "force2_rate": 0.1016,
+    "chain_rate": 0.0976,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[5号:まくり] | 連動無": {
+    "n": 202,
+    "boat1_rate": 0.6832,
+    "force1_rate": 0.1188,
+    "force2_rate": 0.0941,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[5号:まくり差し] | 連動有": {
+    "n": 4333,
+    "boat1_rate": 0.6605,
+    "force1_rate": 0.1066,
+    "force2_rate": 0.0893,
+    "chain_rate": 0.0888,
+    "reliable": true
+  },
+  "1号[粘り型] | 筆頭[5号:まくり差し] | 連動無": {
+    "n": 402,
+    "boat1_rate": 0.7139,
+    "force1_rate": 0.0771,
+    "force2_rate": 0.0945,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[5号:差し] | 連動有": {
+    "n": 115,
+    "boat1_rate": 0.6696,
+    "force1_rate": 0.0957,
+    "force2_rate": 0.1043,
+    "chain_rate": 0.1043,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[5号:差し] | 連動無": {
+    "n": 51,
+    "boat1_rate": 0.7843,
+    "force1_rate": 0.098,
+    "force2_rate": 0.098,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[6号:まくり] | 連動有": {
+    "n": 391,
+    "boat1_rate": 0.6471,
+    "force1_rate": 0.087,
+    "force2_rate": 0.0997,
+    "chain_rate": 0.0964,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[6号:まくり] | 連動無": {
+    "n": 41,
+    "boat1_rate": 0.7073,
+    "force1_rate": 0.0732,
+    "force2_rate": 0.0,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[6号:まくり差し] | 連動有": {
+    "n": 227,
+    "boat1_rate": 0.7048,
+    "force1_rate": 0.0352,
+    "force2_rate": 0.0661,
+    "chain_rate": 0.0482,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[6号:まくり差し] | 連動無": {
+    "n": 75,
+    "boat1_rate": 0.76,
+    "force1_rate": 0.0,
+    "force2_rate": 0.0533,
+    "chain_rate": null,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[6号:差し] | 連動有": {
+    "n": 51,
+    "boat1_rate": 0.7255,
+    "force1_rate": 0.0196,
+    "force2_rate": 0.0392,
+    "chain_rate": 0.0784,
+    "reliable": false
+  },
+  "1号[粘り型] | 筆頭[6号:差し] | 連動無": {
+    "n": 47,
+    "boat1_rate": 0.6596,
+    "force1_rate": 0.0426,
+    "force2_rate": 0.1277,
+    "chain_rate": null,
+    "reliable": false
+  }
+}

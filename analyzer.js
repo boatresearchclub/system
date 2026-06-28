@@ -969,14 +969,135 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
 
   const others = boats.filter(b => b.boat !== 1);
   const othersProbTotal = others.reduce((s, b) => s + b.prob, 0) || 1;
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-06-29 追加] 連動ペア（まくり→まくり差し）ボーナス
+  //
+  // pipeline_prototype.py 実績:
+  //   連動先(まくり差し型)が3着以内に来た割合: 86.3%（ランダム比 +26%pt）
+  // → まくり型艇が存在するとき、まくり差し実績を持つ艇に boost を上乗せする。
+  //
+  // CHAIN_BONUS_JS: 1着率換算ボーナス（Python側と同値）
+  // ══════════════════════════════════════════════════════════════════
+  const CHAIN_BONUS_JS = 0.08;
+
+  // まくり実績がある艇（非1号艇）
+  const hasMakuriBt = others.filter(b => {
+    const k = getCourseMaster(b.name, String(b.boat))?.kimari;
+    return k && (k['まくり'] ?? 0) > 0;
+  });
+  // まくり差し実績がある艇（非1号艇）
+  const hasMakuriSashiBt = others.filter(b => {
+    const k = getCourseMaster(b.name, String(b.boat))?.kimari;
+    return k && (k['まくり差し'] ?? 0) > 0;
+  });
+  const hasChainPair = hasMakuriBt.length > 0 && hasMakuriSashiBt.length > 0;
+
+  // 連動ボーナス係数マップ（デフォルト1.0）
+  const chainBoostMap = {};
+  others.forEach(b => { chainBoostMap[b.boat] = 1.0; });
+  if (hasChainPair) {
+    for (const b of hasMakuriSashiBt) {
+      const cm  = getCourseMaster(b.name, String(b.boat));
+      const runs = cm?.runs ?? 0;
+      const msRate = cm?.kimari?.['まくり差し'] ?? 0;
+      if (runs < 10 || msRate <= 0) continue;
+      const trust = Math.min(runs / 80, 1.0);
+      chainBoostMap[b.boat] = 1.0 + CHAIN_BONUS_JS * trust * Math.min(msRate * 3, 1.0);
+    }
+  }
+
   const condRaw = {};
   others.forEach(b => {
     const baseShare = b.prob / othersProbTotal; // 1号艇を除いた相対能力
-    condRaw[b.boat] = Math.max(0, baseShare * (1.0 + boost[b.boat] * CONDITIONAL_BOOST_SCALE) * layer3[b.boat]);
+    condRaw[b.boat] = Math.max(0,
+      baseShare
+      * (1.0 + boost[b.boat] * CONDITIONAL_BOOST_SCALE)
+      * layer3[b.boat]
+      * chainBoostMap[b.boat]  // ★連動ボーナス
+    );
   });
   const condTotal = Object.values(condRaw).reduce((s, v) => s + v, 0) || 1;
   const conditionalShare = {};
   others.forEach(b => { conditionalShare[b.boat] = condRaw[b.boat] / condTotal; });
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-06-29 追加] v2パターンテーブル ルックアップ補正（JS版）
+  //
+  // MASTER_EXT.v2_pattern_table が存在する場合に
+  // 「1号艇ラベル × 筆頭威力 × 連動有無」でルックアップし、
+  // 1号艇の nigeProb と筆頭威力艇の conditionalShare を実績値にブレンドする。
+  //
+  // ブレンド強度:
+  //   reliable=true (n≧500) → 0.35
+  //   reliable=false (n<500) → 0.15
+  // パターン未一致・テーブルなし → 何もしない（既存ロジックのまま）
+  // ══════════════════════════════════════════════════════════════════
+  const v2Table = MASTER_EXT?.v2_pattern_table;
+  let v2NigeOverride       = null;  // null = 補正なし
+  let v2ForceBoat          = null;
+  let v2ForceShareOverride = null;
+
+  if (v2Table && boat1) {
+    // 1号艇ラベルを推定
+    const cm1   = getCourseMaster(boat1.name, '1');
+    const runs1 = cm1?.runs ?? 0;
+    if (runs1 >= 8) {
+      const k1      = cm1?.kimari ?? {};
+      const tot1    = Object.values(k1).reduce((s, v) => s + v, 0) || 1;
+      const nigeR1  = (k1['逃げ'] ?? 0) / tot1;
+      let b1Label;
+      if (nigeR1 >= 0.5) {
+        b1Label = '粘り型';
+      } else {
+        const betaMap = {'差し': '差され型', 'まくり': 'まくられ型', 'まくり差し': 'まくり差され型', '抜き': '抜かれ型'};
+        const topK = ['差し', 'まくり', 'まくり差し', '抜き'].reduce((mx, k) => (k1[k] ?? 0) > (k1[mx] ?? 0) ? k : mx, '差し');
+        b1Label = betaMap[topK] ?? 'その他';
+      }
+
+      // 筆頭威力艇（boost が最大の艇）
+      const boostEntries = Object.entries(boost).filter(([bn]) => Number(bn) !== 1);
+      if (boostEntries.length > 0) {
+        const [topBoatStr] = boostEntries.reduce((mx, e) => e[1] > mx[1] ? e : mx, boostEntries[0]);
+        const topBoat = Number(topBoatStr);
+        const tdBt    = boats.find(b => b.boat === topBoat);
+        if (tdBt) {
+          const tdCm     = getCourseMaster(tdBt.name, topBoatStr);
+          const tdK      = tdCm?.kimari ?? {};
+          const tdTopK   = ['差し', 'まくり', 'まくり差し'].reduce((mx, k) => (tdK[k] ?? 0) > (tdK[mx] ?? 0) ? k : mx, '差し');
+          const chainFlag = hasChainPair ? '連動有' : '連動無';
+          const pk = `1号[${b1Label}] | 筆頭[${topBoat}号:${tdTopK}] | ${chainFlag}`;
+          const entry = v2Table[pk];
+          if (entry) {
+            const V2_BLEND = entry.reliable ? 0.35 : 0.15;
+            // 1号艇 nigeProb への実績ブレンド
+            v2NigeOverride = nigeProb * (1 - V2_BLEND) + entry.boat1_rate * V2_BLEND;
+            // 筆頭威力艇 conditionalShare への実績ブレンド
+            v2ForceBoat         = topBoat;
+            v2ForceShareOverride = conditionalShare[topBoat] * (1 - V2_BLEND) + entry.force1_rate * V2_BLEND;
+          }
+        }
+      }
+    }
+  }
+
+  // v2補正を適用（補正がある場合のみ）
+  const finalNigeProb = v2NigeOverride !== null ? Math.min(NIGE_CLIP_MAX, Math.max(NIGE_CLIP_MIN, v2NigeOverride)) : nigeProb;
+  if (v2ForceBoat !== null && v2ForceShareOverride !== null) {
+    // conditionalShare を再正規化しながら筆頭威力艇を補正
+    const oldShare    = conditionalShare[v2ForceBoat];
+    const delta       = v2ForceShareOverride - oldShare;
+    const otherBoats  = others.filter(b => b.boat !== v2ForceBoat);
+    const otherTotal  = otherBoats.reduce((s, b) => s + conditionalShare[b.boat], 0) || 1;
+    // delta 分を他艇から按分で引く（ゼロサム保証）
+    otherBoats.forEach(b => {
+      conditionalShare[b.boat] = Math.max(0, conditionalShare[b.boat] - delta * (conditionalShare[b.boat] / otherTotal));
+    });
+    conditionalShare[v2ForceBoat] = v2ForceShareOverride;
+    // 合計が1.0になるよう再正規化
+    const csTotal = others.reduce((s, b) => s + conditionalShare[b.boat], 0) || 1;
+    others.forEach(b => { conditionalShare[b.boat] /= csTotal; });
+  }
 
   // ── 表示・デバッグ用に layer2_modifier 相当値を逆算 ──
   // （UIの「展開補正」列が参照する値。実際の final_prob 計算には使わない＝
@@ -987,12 +1108,12 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
 
 
   // ══════════════════════════════════════════════════════
-  // 【最終合成】二段階モデル: final_prob[1]=nigeProb, final_prob[k]=(1−nigeProb)×conditionalShare[k]
+  // 【最終合成】二段階モデル: final_prob[1]=finalNigeProb（v2補正後）, final_prob[k]=(1−finalNigeProb)×conditionalShare[k]
   // ══════════════════════════════════════════════════════
   const scores = {};
-  scores[1] = Math.max(FLOOR_PROB, nigeProb);
+  scores[1] = Math.max(FLOOR_PROB, finalNigeProb);
   others.forEach(b => {
-    scores[b.boat] = Math.max(FLOOR_PROB, (1 - nigeProb) * (conditionalShare[b.boat] ?? 0));
+    scores[b.boat] = Math.max(FLOOR_PROB, (1 - finalNigeProb) * (conditionalShare[b.boat] ?? 0));
   });
   const total = Object.values(scores).reduce((s, v) => s + v, 0) || 1;
 
@@ -1016,6 +1137,8 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
       _wind_type:          weatherCtxPre.windType,
       _tenji_dev:          tenjiDevMapPre[b.boat] ?? 0,
       _nige_prob:          b.boat === 1 ? nigeProb : null, // デバッグ用: Stage1の独立逃げ確率
+      _v2_nige_override:   b.boat === 1 ? v2NigeOverride : null, // デバッグ用: v2補正後
+      _chain_boost:        chainBoostMap[b.boat] ?? null, // デバッグ用: 連動ボーナス係数
     }))
     .sort((a, b) => b.tenkai_prob - a.tenkai_prob);
 }

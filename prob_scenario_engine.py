@@ -60,11 +60,28 @@ def _log(msg: str) -> None:
 # マスタ読み込み・ホットリロード
 # ══════════════════════════════════════════════════════════════════
 
+V2_PATTERN_TABLE_JSON = DATA_COLLECT_DIR / "v2_pattern_table.json"
+
+
 def load_master() -> dict:
     if MASTER_JSON.exists():
         with open(MASTER_JSON, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+            master = json.load(f)
+    else:
+        master = {}
+
+    # [2026-06-29 追加] pipeline_prototype.py が生成した v2パターンテーブルをロード
+    # master_data.json とは別ファイルで管理し、pipeline再実行時のみ上書きされる。
+    if V2_PATTERN_TABLE_JSON.exists():
+        try:
+            with open(V2_PATTERN_TABLE_JSON, encoding="utf-8") as f:
+                master["v2_pattern_table"] = json.load(f)
+            _log(f"✓ v2_pattern_table.json ロード: {len(master['v2_pattern_table'])}パターン")
+        except Exception as e:
+            _log(f"⚠ v2_pattern_table.json 読み込みエラー: {e} → スキップ")
+
+    return master
+
 
 
 def apply_kimari_tuning(master: dict) -> dict:
@@ -575,6 +592,105 @@ def _calc_tenkai_scores(boats: list, venue: str) -> list:
 
     raw_scores = {bt["boat"]: bt["prob"] * (kimari_coef_sum[bt["boat"]] or RELATIVE_MIN)
                   for bt in boats}
+
+    # ══════════════════════════════════════════════════════════════════
+    # [2026-06-29 追加] 連動ペア（まくり→まくり差し）ボーナス
+    #
+    # pipeline_prototype.py の実績分析結果:
+    #   連動先(まくり差し型)が3着以内に来た割合: 86.3%（ランダム60%比 +26%pt）
+    # → まくり型艇が存在するレースでまくり差し型艇に確率ボーナスを付与する。
+    #
+    # ボーナス強度 CHAIN_BONUS:
+    #   3着以内 +26%pt のシグナルを1着率に換算するため保守的に 0.08 に設定。
+    #   (86.3%−60%) ÷ 3着枠数 ≒ 8.7% → 0.08 にクリップ。
+    # ゼロサム保証:
+    #   ボーナス付与後に全艇を再正規化するため合計は常に変わらない。
+    # ══════════════════════════════════════════════════════════════════
+    CHAIN_BONUS = 0.08  # まくり差し連動艇への1着率ボーナス（0.05〜0.12 が実用範囲）
+
+    # まくり実績がある艇（攻め型 = まくり率>0）を検出
+    has_makuri_boats = [
+        bt for bt in boats
+        if bt["boat"] != 1
+        and course_master.get(bt["name"], {}).get(str(bt["boat"]), {}).get("kimari", {}).get("まくり", 0) > 0
+    ]
+    # まくり差し実績がある艇（連動先候補）を検出
+    has_makurisashi_boats = [
+        bt for bt in boats
+        if bt["boat"] != 1
+        and course_master.get(bt["name"], {}).get(str(bt["boat"]), {}).get("kimari", {}).get("まくり差し", 0) > 0
+    ]
+
+    if has_makuri_boats and has_makurisashi_boats:
+        # 連動するペアが存在するレース → まくり差し型艇のスコアにボーナスを乗算
+        for bt in has_makurisashi_boats:
+            # まくり差し個人実績を信頼度スケールに変換（30走以上で有効）
+            ms_runs = course_master.get(bt["name"], {}).get(str(bt["boat"]), {}).get("runs", 0) or 0
+            ms_rate = course_master.get(bt["name"], {}).get(str(bt["boat"]), {}).get("kimari", {}).get("まくり差し", 0)
+            if ms_runs < 10 or ms_rate <= 0:
+                continue  # データ不足はスキップ
+            trust = min(ms_runs / 80, 1.0)  # 80走で最大信頼
+            effective_bonus = 1.0 + CHAIN_BONUS * trust * min(ms_rate * 3, 1.0)
+            raw_scores[bt["boat"]] = raw_scores[bt["boat"]] * effective_bonus
+
+    # ══════════════════════════════════════════════════════════════════
+    # [2026-06-29 追加] v2パターンテーブル ルックアップ補正
+    #
+    # pipeline_prototype.py が生成した out/v2_pattern_table.json を
+    # MASTER に格納した場合に、1号艇タイプ × 筆頭威力艇 × 連動有無に応じて
+    # 1号艇・筆頭威力艇の raw_scores を実績1着率に寄せるブレンドを行う。
+    #
+    # ブレンド強度 V2_BLEND:
+    #   reliable=True（n≧500）なら 0.35（実績35%混ぜ込み）
+    #   reliable=False（n<500）  なら 0.15（保守的）
+    # テーブルなし/パターン未一致の場合は何もしない（既存ロジックのまま）。
+    # ══════════════════════════════════════════════════════════════════
+    v2_table = MASTER.get("v2_pattern_table")
+    if v2_table and boat1:
+        # 1号艇ラベルを特定
+        snap1 = {"n": course_master.get(boat1["name"], {}).get("1", {}).get("runs", 0),
+                 "rates": None}
+        runs1 = course_master.get(boat1["name"], {}).get("1", {}).get("runs", 0) or 0
+        if runs1 >= 8:
+            kimari1 = course_master.get(boat1["name"], {}).get("1", {}).get("kimari", {})
+            total1  = sum(kimari1.values()) or 1
+            nige_r  = kimari1.get("逃げ", 0) / total1 if total1 > 0 else 0
+            if nige_r >= 0.5:
+                b1_label = "粘り型"
+            else:
+                beta_map  = {"差し": "差され型", "まくり": "まくられ型",
+                             "まくり差し": "まくり差され型", "抜き": "抜かれ型"}
+                top_k = max(beta_map.keys(), key=lambda k: kimari1.get(k, 0))
+                b1_label = beta_map.get(top_k, "その他")
+
+            # 筆頭威力艇（boostsが既に計算済み）
+            if boosts:
+                top_direct = max(boosts, key=boosts.get)
+                td_bt      = next((b for b in boats if b["boat"] == top_direct), None)
+                if td_bt:
+                    td_course  = str(top_direct)
+                    td_kimari_map = course_master.get(td_bt["name"], {}).get(td_course, {}).get("kimari", {})
+                    td_top_k   = max(["差し", "まくり", "まくり差し"],
+                                     key=lambda k: td_kimari_map.get(k, 0))
+                    chain_flag = "連動有" if (has_makuri_boats and has_makurisashi_boats) else "連動無"
+                    pk = f"1号[{b1_label}] | 筆頭[{top_direct}号:{td_top_k}] | {chain_flag}"
+
+                    entry = v2_table.get(pk)
+                    if entry:
+                        V2_BLEND = 0.35 if entry.get("reliable") else 0.15
+                        # 1号艇: 実績boat1_rateに向けてブレンド
+                        target1   = entry["boat1_rate"]
+                        cur_total = sum(raw_scores.values()) or 1.0
+                        cur1_share = raw_scores.get(1, 0) / cur_total
+                        blended1   = cur1_share * (1 - V2_BLEND) + target1 * V2_BLEND
+                        raw_scores[1] = blended1  # 再正規化前なのでscaleは後で揃う
+
+                        # 筆頭威力艇: 実績force1_rateに向けてブレンド
+                        target_f1   = entry["force1_rate"]
+                        cur_f1_share = raw_scores.get(top_direct, 0) / cur_total
+                        blended_f1  = cur_f1_share * (1 - V2_BLEND) + target_f1 * V2_BLEND
+                        raw_scores[top_direct] = blended_f1
+
     total_ts   = sum(raw_scores.values()) or 1.0
     for bt in boats:
         bt["tenkai_score"] = round(raw_scores[bt["boat"]] / total_ts, 6)
