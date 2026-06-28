@@ -229,75 +229,56 @@ code { background: var(--bg3); border: 1px solid var(--border); border-radius: 4
 
 /* ===== Mobile responsive ===== */
 @media (max-width: 600px) {
-  /* Layout: サイドバーを非表示にしてモバイルタブバーへ */
+  /* レイアウト: 縦積み */
   #app { flex-direction: column; }
   #sidebar {
     width: 100%; border-right: none;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0; max-height: 60vh;
   }
-  #main { flex: 1; min-height: 0; }
+  #main { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
-  /* テーブルを横スクロールなしのカード形式に変換 */
-  .ttime-table, .ttime-table thead, .ttime-table tbody,
-  .ttime-table th, .ttime-table td, .ttime-table tr {
-    display: block;
+  /* ツールバー: 2行レイアウト */
+  #toolbar {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 8px 12px;
+    align-items: center;
   }
-  .ttime-table thead { display: none; } /* ヘッダー非表示 */
-  .ttime-table tr {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 6px;
-    padding: 8px 10px;
+  #toolbar > .tb-label { font-size: 11px; }
+  #toolbar > select { font-size: 12px; padding: 4px 22px 4px 8px; }
+  /* summary-row を2行目に */
+  #summary-row {
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 4px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
   }
-  .ttime-table tr.ttime-row-overall {
-    background: rgba(74,158,255,0.06);
-    border-color: rgba(74,158,255,0.3);
-  }
-  .ttime-table td {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--border);
-    text-align: right;
-  }
-  .ttime-table td:last-child { border-bottom: none; }
-  .ttime-table td:first-child {
-    font-size: 13px; font-weight: 700; color: var(--blue);
-    border-bottom: 1px solid var(--border2);
-    padding-bottom: 6px; margin-bottom: 2px;
-    text-align: left; display: block;
-  }
-  /* data-label でラベル付与 */
-  .ttime-table td::before {
-    content: attr(data-label);
-    font-size: 10px; color: var(--text3); font-weight: 600;
-    flex-shrink: 0; margin-right: 8px; text-align: left;
-  }
-  .ttime-table td:first-child::before { display: none; }
+  .stat-pill { font-size: 11px; padding: 3px 8px; }
 
-  /* entry-card の entry-header をラップ可能に */
+  /* コンテンツ */
+  #content { overflow-x: hidden; padding: 10px; }
+
+  /* テーブル: 元のスタイル維持、フォントを小さくして収める */
+  .ttime-table { width: 100%; font-size: 11px; }
+  .ttime-table th { padding: 3px 4px; font-size: 9px; }
+  .ttime-table td { padding: 4px 4px; }
+  .ttime-table td:first-child { padding-left: 0; }
+  .cell-val { font-size: 11px; }
+  .cell-diff { min-width: 34px; font-size: 9px; padding: 1px 3px; }
+
+  /* entry-card */
   .entry-header { gap: 6px; }
   .tenji-block { margin-left: 0; width: 100%; justify-content: flex-end; }
+  .entry-card { padding: 10px 12px; }
 
   /* data-grid を1列に */
   .data-grid { grid-template-columns: 1fr; }
 
-  /* diff-cols を2×2 に */
+  /* diff-cols を2x2に */
   .diff-cols { grid-template-columns: repeat(2, 1fr); }
-
-  /* toolbar を折り返し */
-  #toolbar { gap: 6px; }
-  #summary-row { margin-left: 0; width: 100%; }
-
-  /* cell-diff の幅を少し小さく */
-  .cell-diff { min-width: 38px; font-size: 10px; padding: 1px 4px; }
-  /* コンテンツが画面内に収まるよう */
-  #content { overflow-x: hidden; }
-  .entry-card { padding: 10px 12px; }
-
-  /* テーブルラッパーもはみ出さない */
-  .ttime-table { width: 100%; }
 }
 
 /* Player search result */
@@ -1987,6 +1968,7 @@ function renderPlayerProfile() {
 
     // === 絶対タイムビンテーブル ===
     html += `<div id="${tabId}-abs-tbl">
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
     <table class="ttime-table">
       <thead><tr>
         <th style="text-align:left;">展示タイム</th>
@@ -2017,10 +1999,9 @@ function renderPlayerProfile() {
         ${rateCell(pr.r123, overall?.r123??null, '3連対率')}
       </tr>`;
     }
-    html += `</tbody></table></div>`;
-
-    // === 平均差ビンテーブル ===
+    html += `</tbody></table></div></div>`;
     html += `<div id="${tabId}-diff-tbl" style="display:none;">
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
     <table class="ttime-table">
       <thead><tr>
         <th style="text-align:left;">平均との差</th>
@@ -2052,7 +2033,7 @@ function renderPlayerProfile() {
         ${rateCell(pr.r123, overall?.r123??null, '3連対率')}
       </tr>`;
     }
-    html += `</tbody></table></div>`;
+    html += `</tbody></table></div></div>`;
 
     html += `</div>`; // course-section
   }
