@@ -1499,16 +1499,20 @@ function renderBuy(rno){
     // 基準列: probを6艇で正規化した相対確率（合計100%）
     const basePct = (bt.display_base * 100).toFixed(1);
 
-    // 展開補正列: 係数表示（▲1.08 / ▼0.82 形式）
+    // 展開補正列: 差分ベース表示（▲3.2% / ▼5.1% 形式）
+    // [2026-06-29 修正] 旧: tenkaiCoef（比率）を表示 → baseNormが極小の艇で3.00に張り付く問題
+    //   新: tenkaiDiff（展開スコア - 基準スコアの差分）をパーセント表示に変換。
+    //   これにより「この艇は展開補正で+3.2%有利」という直感的な読み方ができる。
     let relCorrCell;
-    if(useMaster && bt.display_tenkai != null){
-      const coef  = bt.display_tenkai;
-      if(Math.abs(coef - 1.0) < 0.02){
-        relCorrCell = `<span style="font-size:10px;color:var(--text3)">±1.00</span>`;
+    if(useMaster && bt._tenkaiDiff != null){
+      const diff    = bt._tenkaiDiff;  // 差分（−0.1〜+0.1 程度の小数）
+      const diffPct = diff * 100;      // %換算
+      if(Math.abs(diffPct) < 0.5){
+        relCorrCell = `<span style="font-size:10px;color:var(--text3)">±0.0%</span>`;
       } else {
-        const color = coef >= 1.0 ? 'var(--green)' : 'var(--red)';
-        const mark  = coef >= 1.0 ? '▲' : '▼';
-        relCorrCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${coef.toFixed(2)}</span>`;
+        const color = diffPct >= 0 ? 'var(--green)' : 'var(--red)';
+        const mark  = diffPct >= 0 ? '▲' : '▼';
+        relCorrCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${Math.abs(diffPct).toFixed(1)}%</span>`;
       }
     } else {
       relCorrCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
@@ -1651,7 +1655,7 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">枠</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobを正規化した相対1着率（合計100%）">基準</th>
-          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展開適性の係数（1.0基準: ▲=有利 ▼=不利）">展開補正</th>
+          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展開適性による確率の増減（差分%表示: +なら有利 -なら不利。全艇合計はゼロサム）">展開補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
