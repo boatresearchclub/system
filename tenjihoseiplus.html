@@ -1445,6 +1445,7 @@ function parseTextPaste() {
   if (filled > 0) {
     status.textContent = `✓ ${filled}コース分を読み込みました`;
     status.style.color = "var(--blue)";
+    calcRaceInput();
   } else {
     status.textContent = "読み取れませんでした。タブ区切りのテキストを貼り付けてください";
     status.style.color = "#e33";
@@ -1517,6 +1518,7 @@ async function ocrScreenshot(imageSource) {
       status.textContent = `✓ ${msg.join(" / ")} 読み取りました`;
       status.style.color = "var(--blue)";
     }
+    calcRaceInput();
   } catch(e) {
     if (status) { status.textContent = "OCRエラー: " + e.message; status.style.color = "#e33"; }
     console.error("[OCR error]", e);
@@ -1618,7 +1620,7 @@ async function handleOcrFile(input) {
 }
 
 function updateRaceInputToggle() {
-  // 入力値を退避
+  // 入力値を退避（hidden フィールド）
   const saved = {};
   for (let c = 1; c <= 6; c++) {
     const n = document.getElementById(`ri-name-${c}`);
@@ -1626,9 +1628,15 @@ function updateRaceInputToggle() {
     const t = document.getElementById(`ri-tenji-${c}`);
     saved[c] = { name: n?.value||"", lap1: l?.value||"", tenji: t?.value||"" };
   }
+  // テキストエリアの値を退避
+  const textPaste = document.getElementById("text-paste-area")?.value || "";
+  // input-pane-inner の open 状態を記憶
+  const innerWasOpen = document.getElementById("input-pane-inner")?.classList.contains("open");
+
   // 再描画（ボタン色を反映）
   renderRaceInput();
-  // 値を復元
+
+  // hidden フィールド値を復元
   for (let c = 1; c <= 6; c++) {
     const n = document.getElementById(`ri-name-${c}`);
     const l = document.getElementById(`ri-lap1-${c}`);
@@ -1637,6 +1645,19 @@ function updateRaceInputToggle() {
     if (l) l.value = saved[c].lap1;
     if (t) t.value = saved[c].tenji;
   }
+  // テキストエリアを復元
+  const ta = document.getElementById("text-paste-area");
+  if (ta) ta.value = textPaste;
+  // open 状態を復元
+  if (innerWasOpen) {
+    const inner = document.getElementById("input-pane-inner");
+    const label = document.getElementById("input-toggle-label");
+    if (inner) inner.classList.add("open");
+    if (label) label.textContent = "入力 ▲";
+  }
+  // 値が入っていれば自動で再分析
+  const hasData = Object.values(saved).some(v => v.tenji || v.lap1);
+  if (hasData) calcRaceInput();
 }
 
 function binDiff(diff) {
