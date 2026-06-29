@@ -1786,37 +1786,38 @@ function calcRaceInput() {
 
   // 共通ヘッダー列（コース・選手・タイム）
   const commonTh = `
-    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border2);white-space:nowrap;">コース</th>
-    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border2);">選手</th>
-    <th style="padding:6px 8px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">${isL?"1周+展示":"展示T"}<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vs平均差</span></th>`;
+    <th style="padding:6px 4px;text-align:left;border-bottom:1px solid var(--border2);white-space:nowrap;">C</th>
+    <th style="padding:6px 4px;text-align:left;border-bottom:1px solid var(--border2);white-space:nowrap;">選手</th>
+    <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">${isL?"1周+展示":"展示T"}<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vs平均差</span></th>`;
 
   const commonTd = (r) => {
     const cbg = COURSE_BG_LOCAL[r.c] || "#333";
     const ctc = COURSE_TC_LOCAL[r.c] || "#fff";
     const inputTimeVal = isL ? (!isNaN(r.lap1V) && !isNaN(r.tenjiV) ? Math.round((r.lap1V + r.tenjiV) * 100) / 100 : NaN) : r.tenjiV;
     const timeLabel = !isNaN(inputTimeVal) ? inputTimeVal.toFixed(2) : "−";
-    return `<td style="padding:6px 8px;">
+    return `<td style="padding:6px 4px;white-space:nowrap;">
         <div style="width:22px;height:22px;border-radius:50%;background:${cbg};color:${ctc};
           display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">${r.c}</div>
       </td>
-      <td style="padding:6px 8px;">
+      <td style="padding:6px 4px;white-space:nowrap;max-width:7em;overflow:hidden;text-overflow:ellipsis;">
         <div style="font-weight:600;font-size:12px;">${r.name || "−"}</div>
         ${r.rAll ? `<div style="font-size:10px;color:var(--text3);">通算 ${r.rAll.n}回</div>` : '<div style="font-size:10px;color:var(--text3);">データなし</div>'}
       </td>
-      <td style="padding:6px 8px;text-align:center;">
+      <td style="padding:6px 4px;text-align:center;white-space:nowrap;">
         <span style="font-size:12px;font-weight:600;color:var(--text);">${timeLabel}</span><br>
         ${timeDiffSpan(inputTimeVal, r.avgTime)}
       </td>`;
   };
 
   // ===== 絶対タイムビン テーブル =====
-  let absTbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+  let absTbl = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+  <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px;">
     <thead><tr style="background:var(--bg2);">
       ${commonTh}
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">1着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">2着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">3着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">3連対率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">1着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">2着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">3着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">3連対率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
     </tr></thead>
     <tbody>`;
 
@@ -1841,18 +1842,18 @@ function calcRaceInput() {
       </tr>`;
     }
   }
-  absTbl += `</tbody></table>`;
+  absTbl += `</tbody></table></div>`;
 
   // ===== 平均差ビン テーブル =====
-  // 各コースの現在ビンを強調するため diffBin を使う
-  let diffTbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+  // 絶対タイムビンと同じ表示構造：各選手を1行で並べ、該当ビンを強調
+  let diffTbl = `<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+  <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px;">
     <thead><tr style="background:var(--bg2);">
       ${commonTh}
-      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">ビン<br>n</th>
-      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">1着差</th>
-      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">2着差</th>
-      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">3着差</th>
-      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">連対差</th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">1着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">2着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">3着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);white-space:nowrap;">3連対率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
     </tr></thead>
     <tbody>`;
 
@@ -1861,41 +1862,47 @@ function calcRaceInput() {
     const pcdCourse = r.reg ? ((pcd[r.reg] || {})[String(r.c)] || {}) : {};
     const hasPcd = Object.values(pcdCourse).some(a => a.length > 0);
 
-    // 全体行（選手コース通算）
-    diffTbl += `<tr style="border-bottom:1px solid var(--border);background:rgba(74,158,255,0.06);">
-      ${commonTd(r)}
-      <td style="padding:4px 3px;text-align:center;font-size:11px;color:var(--blue);font-weight:600;">全体<br><span style="font-size:10px;color:var(--text3);font-weight:400;">n=${r.rAll ? r.rAll.n : "−"}</span></td>
-      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
-      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
-      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
-      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
-    </tr>`;
-
-    if (!hasPcd || !r.diffBin) {
-      // データなし or 該当ビンなし
+    if (!hasPcd) {
+      // データなし行
       diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
-        <td colspan="2" style="padding:4px 8px;font-size:10px;color:var(--text3);">${!hasPcd ? "平均差ビンデータなし" : "タイム未入力"}</td>
-        <td colspan="4"></td>
+        ${commonTd(r)}
+        <td colspan="4" style="text-align:center;padding:6px 4px;font-size:10px;color:var(--text3);">平均差ビンデータなし</td>
       </tr>`;
     } else {
-      // 該当ビン1行のみ
-      const db = DIFF_BINS_INPUT.find(b => b.key === r.diffBin);
-      const places = db ? (pcdCourse[db.key] || []) : [];
-      const pr = calcRates(places);
-      const binLabel = db
-        ? `<span style="font-size:11px;font-weight:600;color:var(--text2);">${db.key}</span><br><span style="font-size:9px;color:var(--text3);">${db.range}</span>`
-        : "−";
-      diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
-        <td></td><td></td><td></td>
-        <td style="padding:4px 3px;text-align:center;">${binLabel}<br><span style="font-size:10px;color:var(--text3);">n=${pr.n}</span></td>
-        ${valCell(pr, "r1",   r.rAll)}
-        ${valCell(pr, "r2",   r.rAll)}
-        ${valCell(pr, "r3",   r.rAll)}
-        ${valCell(pr, "r123", r.rAll)}
+      // 全体行（基準）
+      diffTbl += `<tr style="border-bottom:1px solid var(--border);background:rgba(74,158,255,0.06);">
+        ${commonTd(r)}
+        <td style="text-align:center;padding:6px 4px;font-size:10px;color:var(--text3);">基準</td>
+        <td style="text-align:center;padding:6px 4px;font-size:10px;color:var(--text3);">基準</td>
+        <td style="text-align:center;padding:6px 4px;font-size:10px;color:var(--text3);">基準</td>
+        <td style="text-align:center;padding:6px 4px;font-size:10px;color:var(--text3);">基準</td>
       </tr>`;
+
+      // 各ビン行
+      for (const db of DIFF_BINS_INPUT) {
+        const places = pcdCourse[db.key] || [];
+        if (places.length === 0) continue;
+        const pr = calcRates(places);
+        const isCurrentBin = r.diffBin === db.key;
+        const rowBg = isCurrentBin ? "background:rgba(255,179,0,0.15);" : "";
+        const binLabel = isCurrentBin
+          ? `<span style="font-size:11px;font-weight:700;color:var(--orange);">${db.key}</span>`
+          : `<span style="font-size:11px;color:var(--text3);">${db.key}</span>`;
+        diffTbl += `<tr style="border-bottom:1px solid var(--border);${rowBg}">
+          <td></td><td colspan="2" style="padding:3px 4px;font-size:10px;color:var(--text3);">
+            ${binLabel}
+            <span style="font-size:9px;color:var(--text3);"> ${db.range}</span>
+            <span style="font-size:9px;color:var(--text3);"> n=${pr.n}</span>
+          </td>
+          ${valCell(pr, "r1",   r.rAll)}
+          ${valCell(pr, "r2",   r.rAll)}
+          ${valCell(pr, "r3",   r.rAll)}
+          ${valCell(pr, "r123", r.rAll)}
+        </tr>`;
+      }
     }
   }
-  diffTbl += `</tbody></table>`;
+  diffTbl += `</tbody></table></div>`;
 
   // ===== タブUI組み立て =====
   let html = `<div style="padding:16px;">
