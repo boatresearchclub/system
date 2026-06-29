@@ -1196,22 +1196,11 @@ function selectRace(key) {
   state.selKey = key;
   loadRaceIntoInputData(key);
   renderSidebar();
-  renderContent();
-  // 入力タブが開いているなら即更新
-  if (state.mode === "input") {
-    renderRaceInput();
-    // hidden フィールドに state.raceInputData の値をセット
-    for (let c = 1; c <= 6; c++) {
-      const d = state.raceInputData[c] || {};
-      const n = document.getElementById(`ri-name-${c}`);
-      const l = document.getElementById(`ri-lap1-${c}`);
-      const t = document.getElementById(`ri-tenji-${c}`);
-      if (n && d.name)  n.value = d.name;
-      if (l && d.lap1)  l.value = d.lap1;
-      if (t && d.tenji) t.value = d.tenji;
-    }
-    const hasData = Object.values(state.raceInputData).some(v => v && (v.tenji || v.lap1));
-    if (hasData) calcRaceInput();
+  // "all" 以外のレース選択時は入力タブへ自動遷移
+  if (key && key !== "all") {
+    switchTab("input");
+  } else {
+    renderContent();
   }
 }
 
