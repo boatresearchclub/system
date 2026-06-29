@@ -1149,10 +1149,52 @@ function renderSidebar() {
   list.innerHTML = html;
 }
 
+function loadRaceIntoInputData(key) {
+  // "all" や null の場合はクリアしない（何もしない）
+  if (!key || key === "all") return;
+
+  const lastUnderscore = key.lastIndexOf("_");
+  const venue = key.slice(0, lastUnderscore);
+  const race  = parseInt(key.slice(lastUnderscore + 1), 10);
+
+  // 選択レースのエントリーを course 順に取得
+  const raceEntries = state.entries.filter(e => e.venue === venue && e.race === race);
+  if (raceEntries.length === 0) return;
+
+  // raceInputData をリセットしてレースデータで上書き
+  state.raceInputData = {};
+  for (const e of raceEntries) {
+    const c = e.course;
+    if (!c || c < 1 || c > 6) continue;
+    state.raceInputData[c] = {
+      name:  e.reg || e.racer || "",
+      tenji: e.tenji != null ? parseFloat(e.tenji).toFixed(2) : "",
+      lap1:  e.lap1  != null ? parseFloat(e.lap1).toFixed(2)  : "",
+    };
+  }
+}
+
 function selectRace(key) {
   state.selKey = key;
+  loadRaceIntoInputData(key);
   renderSidebar();
   renderContent();
+  // 入力タブが開いているなら即更新
+  if (state.mode === "input") {
+    renderRaceInput();
+    // hidden フィールドに state.raceInputData の値をセット
+    for (let c = 1; c <= 6; c++) {
+      const d = state.raceInputData[c] || {};
+      const n = document.getElementById(`ri-name-${c}`);
+      const l = document.getElementById(`ri-lap1-${c}`);
+      const t = document.getElementById(`ri-tenji-${c}`);
+      if (n && d.name)  n.value = d.name;
+      if (l && d.lap1)  l.value = d.lap1;
+      if (t && d.tenji) t.value = d.tenji;
+    }
+    const hasData = Object.values(state.raceInputData).some(v => v && (v.tenji || v.lap1));
+    if (hasData) calcRaceInput();
+  }
 }
 
 function renderContent() {
@@ -1301,7 +1343,22 @@ function switchTab(tab) {
     renderPlayerProfile();
   } else if (tab === "input") {
     content.innerHTML = "";
+    // レースが選択されており raceInputData が空なら自動ロード
+    if (state.selKey && state.selKey !== "all") {
+      const hasManual = Object.values(state.raceInputData).some(v => v && (v.tenji || v.lap1));
+      if (!hasManual) loadRaceIntoInputData(state.selKey);
+    }
     renderRaceInput();
+    // hidden フィールドに state.raceInputData の値をセット
+    for (let c = 1; c <= 6; c++) {
+      const d = state.raceInputData[c] || {};
+      const n = document.getElementById(`ri-name-${c}`);
+      const l = document.getElementById(`ri-lap1-${c}`);
+      const t = document.getElementById(`ri-tenji-${c}`);
+      if (n && d.name)  n.value = d.name;
+      if (l && d.lap1)  l.value = d.lap1;
+      if (t && d.tenji) t.value = d.tenji;
+    }
     const hasData = Object.values(state.raceInputData).some(v => v && (v.tenji || v.lap1));
     if (hasData) calcRaceInput();
   }
@@ -1853,11 +1910,41 @@ function calcRaceInput() {
   absTbl += `</tbody></table>`;
 
   // ===== 平均差ビン テーブル =====
-  // 該当ビンのみ表示（タイム入力がある場合）
+  // 絶対タイムビンと同じ1行コンパクト構造
+  // 選手セル内に「ビン記号 + 範囲 + n数」をサブテキストとして表示
+  const commonTdDiff = (r) => {
+    const cbg = COURSE_BG_LOCAL[r.c] || "#333";
+    const ctc = COURSE_TC_LOCAL[r.c] || "#fff";
+    const inputTimeVal = isL ? (!isNaN(r.lap1V) && !isNaN(r.tenjiV) ? Math.round((r.lap1V + r.tenjiV) * 100) / 100 : NaN) : r.tenjiV;
+    const timeLabel = !isNaN(inputTimeVal) ? inputTimeVal.toFixed(2) : "−";
+
+    // ビン情報サブテキスト
+    const pcd = state.pcd || {};
+    const pcdCourse = r.reg ? ((pcd[r.reg] || {})[String(r.c)] || {}) : {};
+    const db = r.diffBin ? DIFF_BINS_INPUT.find(b => b.key === r.diffBin) : null;
+    const places = db ? (pcdCourse[db.key] || []) : [];
+    const pr = db ? calcRates(places) : null;
+    const binSub = db && pr
+      ? `<div style="font-size:9px;color:var(--orange);font-weight:700;">${db.key} ${db.range} <span style="color:var(--text3);font-weight:400;">n=${pr.n}</span></div>`
+      : `<div style="font-size:9px;color:var(--text3);">${r.reg ? "ビンなし" : "データなし"}</div>`;
+
+    return `<td style="padding:4px 3px;">
+        <div style="width:20px;height:20px;border-radius:50%;background:${cbg};color:${ctc};
+          display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">${r.c}</div>
+      </td>
+      <td style="padding:4px 3px;max-width:5.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        <div style="font-weight:600;font-size:11px;">${r.name || "−"}</div>
+        ${r.rAll ? `<div style="font-size:9px;color:var(--text3);">通算${r.rAll.n}回</div>` : '<div style="font-size:9px;color:var(--text3);">データなし</div>'}
+      </td>
+      <td style="padding:4px 3px;text-align:center;">
+        <span style="font-size:11px;font-weight:600;color:var(--text);">${timeLabel}</span><br>
+        ${binSub}
+      </td>`;
+  };
+
   let diffTbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="background:var(--bg2);">
       ${commonTh}
-      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);">ビン</th>
       <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);">1着率</th>
       <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);">2着率</th>
       <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);">3着率</th>
@@ -1868,47 +1955,18 @@ function calcRaceInput() {
   for (const r of results) {
     const pcd = state.pcd || {};
     const pcdCourse = r.reg ? ((pcd[r.reg] || {})[String(r.c)] || {}) : {};
-    const hasPcd = Object.values(pcdCourse).some(a => a.length > 0);
+    const db = r.diffBin ? DIFF_BINS_INPUT.find(b => b.key === r.diffBin) : null;
+    const places = db ? (pcdCourse[db.key] || []) : [];
+    const pr = db ? calcRates(places) : null;
+    const hasData = pr && pr.n > 0;
 
-    if (!hasPcd || !r.diffBin) {
-      // データなし or タイム未入力：通算実績数値のみ
-      const ra = r.rAll;
-      diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
-        ${commonTd(r)}
-        <td style="text-align:center;padding:4px 3px;font-size:9px;color:var(--text3);">${!hasPcd ? "データなし" : "−"}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r1.toFixed(1)}%</span>` : '<span style="font-size:10px;color:var(--text3);">−</span>'}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r2.toFixed(1)}%</span>` : '<span style="font-size:10px;color:var(--text3);">−</span>'}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r3.toFixed(1)}%</span>` : '<span style="font-size:10px;color:var(--text3);">−</span>'}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r123.toFixed(1)}%</span>` : '<span style="font-size:10px;color:var(--text3);">−</span>'}</td>
-      </tr>`;
-    } else {
-      // 全体行：通算実績の実数値を表示（基準）
-      const ra = r.rAll;
-      diffTbl += `<tr style="border-bottom:1px solid var(--border);background:rgba(74,158,255,0.05);">
-        ${commonTd(r)}
-        <td style="text-align:center;padding:4px 3px;font-size:9px;color:var(--text3);">通算</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r1.toFixed(1)}%</span>` : '−'}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r2.toFixed(1)}%</span>` : '−'}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r3.toFixed(1)}%</span>` : '−'}</td>
-        <td style="text-align:center;padding:4px 3px;">${ra ? `<span style="font-size:11px;font-weight:600;">${ra.r123.toFixed(1)}%</span>` : '−'}</td>
-      </tr>`;
-      // 該当ビン：差分を表示
-      const db = DIFF_BINS_INPUT.find(b => b.key === r.diffBin);
-      const places = db ? (pcdCourse[db.key] || []) : [];
-      const pr = calcRates(places);
-      if (pr) {
-        diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
-          <td></td><td colspan="2" style="padding:3px 4px;">
-            <span style="font-size:11px;font-weight:700;color:var(--orange);">${db.key}</span>
-            <span style="font-size:9px;color:var(--text3);"> ${db.range} n=${pr.n}</span>
-          </td>
-          ${valCell(pr, "r1",   r.rAll)}
-          ${valCell(pr, "r2",   r.rAll)}
-          ${valCell(pr, "r3",   r.rAll)}
-          ${valCell(pr, "r123", r.rAll)}
-        </tr>`;
-      }
-    }
+    diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
+      ${commonTdDiff(r)}
+      ${hasData ? valCell(pr, "r1",   r.rAll) : (r.rAll ? `<td style="text-align:center;padding:4px 3px;"><span style="font-size:11px;font-weight:600;color:var(--text3);">${r.rAll.r1.toFixed(1)}%</span></td>` : '<td style="text-align:center;color:var(--text3);font-size:11px;padding:4px 3px;">−</td>')}
+      ${hasData ? valCell(pr, "r2",   r.rAll) : (r.rAll ? `<td style="text-align:center;padding:4px 3px;"><span style="font-size:11px;font-weight:600;color:var(--text3);">${r.rAll.r2.toFixed(1)}%</span></td>` : '<td style="text-align:center;color:var(--text3);font-size:11px;padding:4px 3px;">−</td>')}
+      ${hasData ? valCell(pr, "r3",   r.rAll) : (r.rAll ? `<td style="text-align:center;padding:4px 3px;"><span style="font-size:11px;font-weight:600;color:var(--text3);">${r.rAll.r3.toFixed(1)}%</span></td>` : '<td style="text-align:center;color:var(--text3);font-size:11px;padding:4px 3px;">−</td>')}
+      ${hasData ? valCell(pr, "r123", r.rAll) : (r.rAll ? `<td style="text-align:center;padding:4px 3px;"><span style="font-size:11px;font-weight:600;color:var(--text3);">${r.rAll.r123.toFixed(1)}%</span></td>` : '<td style="text-align:center;color:var(--text3);font-size:11px;padding:4px 3px;">−</td>')}
+    </tr>`;
   }
   diffTbl += `</tbody></table>`;
 
