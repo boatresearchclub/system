@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>BOAT RESEARCH CLUB - 展示タイム分析</title>
 <style>
 :root {
@@ -1770,12 +1770,8 @@ function calcRaceInput() {
   };
 
   const valCell = (r, key, base) => {
-    const val = r ? r[key] : null;
     const dv = d(r, base, key);
-    return `<td style="text-align:center;padding:6px 4px;">
-      <span class="cell-val">${val != null ? val.toFixed(1) + "%" : "−"}</span><br>
-      ${diffSpan(dv)}
-    </td>`;
+    return `<td style="text-align:center;padding:4px 3px;">${diffSpan(dv)}</td>`;
   };
 
   // タイム差の表示（入力タイム − 選手コース平均）
@@ -1838,10 +1834,10 @@ function calcRaceInput() {
       absTbl += `<tr style="border-bottom:1px solid var(--border);background:var(--bg2);">
         <td></td>
         <td colspan="2" style="padding:4px 8px;font-size:10px;color:var(--text3);">タイム帯データなし / コース通算</td>
-        <td style="text-align:center;padding:4px;"><span class="cell-val">${r.rAll.r1.toFixed(1)}%</span></td>
-        <td style="text-align:center;padding:4px;"><span class="cell-val">${r.rAll.r2.toFixed(1)}%</span></td>
-        <td style="text-align:center;padding:4px;"><span class="cell-val">${r.rAll.r3.toFixed(1)}%</span></td>
-        <td style="text-align:center;padding:4px;"><span class="cell-val">${r.rAll.r123.toFixed(1)}%</span></td>
+        <td style="text-align:center;padding:4px;font-size:10px;color:var(--text3);">通算</td>
+        <td style="text-align:center;padding:4px;font-size:10px;color:var(--text3);">通算</td>
+        <td style="text-align:center;padding:4px;font-size:10px;color:var(--text3);">通算</td>
+        <td style="text-align:center;padding:4px;font-size:10px;color:var(--text3);">通算</td>
       </tr>`;
     }
   }
@@ -1852,12 +1848,11 @@ function calcRaceInput() {
   let diffTbl = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="background:var(--bg2);">
       ${commonTh}
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">ビン</th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">n</th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">1着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">2着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">3着率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
-      <th style="padding:6px 4px;text-align:center;border-bottom:1px solid var(--border2);">3連対率<br><span style="font-weight:400;color:var(--text3);font-size:10px;">vsコース通算</span></th>
+      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">ビン<br>n</th>
+      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">1着差</th>
+      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">2着差</th>
+      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">3着差</th>
+      <th style="padding:4px 3px;text-align:center;border-bottom:1px solid var(--border2);font-size:10px;">連対差</th>
     </tr></thead>
     <tbody>`;
 
@@ -1869,19 +1864,18 @@ function calcRaceInput() {
     // 全体行（選手コース通算）
     diffTbl += `<tr style="border-bottom:1px solid var(--border);background:rgba(74,158,255,0.06);">
       ${commonTd(r)}
-      <td style="padding:6px 4px;text-align:center;font-size:11px;color:var(--blue);font-weight:600;">全体</td>
-      <td style="padding:6px 4px;text-align:center;font-size:11px;">${r.rAll ? r.rAll.n : "−"}</td>
-      <td style="padding:6px 4px;text-align:center;"><span class="cell-val">${r.rAll ? r.rAll.r1.toFixed(1)+"%" : "−"}</span></td>
-      <td style="padding:6px 4px;text-align:center;"><span class="cell-val">${r.rAll ? r.rAll.r2.toFixed(1)+"%" : "−"}</span></td>
-      <td style="padding:6px 4px;text-align:center;"><span class="cell-val">${r.rAll ? r.rAll.r3.toFixed(1)+"%" : "−"}</span></td>
-      <td style="padding:6px 4px;text-align:center;"><span class="cell-val">${r.rAll ? r.rAll.r123.toFixed(1)+"%" : "−"}</span></td>
+      <td style="padding:4px 3px;text-align:center;font-size:11px;color:var(--blue);font-weight:600;">全体<br><span style="font-size:10px;color:var(--text3);font-weight:400;">n=${r.rAll ? r.rAll.n : "−"}</span></td>
+      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
+      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
+      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
+      <td style="padding:4px 3px;text-align:center;font-size:10px;color:var(--text3);">基準</td>
     </tr>`;
 
     if (!hasPcd || !r.diffBin) {
       // データなし or 該当ビンなし
       diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
-        <td></td><td colspan="2" style="padding:4px 8px;font-size:10px;color:var(--text3);">${!hasPcd ? "平均差ビンデータなし" : "該当ビンなし（タイム未入力）"}</td>
-        <td colspan="5"></td>
+        <td colspan="2" style="padding:4px 8px;font-size:10px;color:var(--text3);">${!hasPcd ? "平均差ビンデータなし" : "タイム未入力"}</td>
+        <td colspan="4"></td>
       </tr>`;
     } else {
       // 該当ビン1行のみ
@@ -1893,8 +1887,7 @@ function calcRaceInput() {
         : "−";
       diffTbl += `<tr style="border-bottom:2px solid var(--border2);">
         <td></td><td></td><td></td>
-        <td style="padding:5px 4px;text-align:center;">${binLabel}</td>
-        <td style="padding:5px 4px;text-align:center;font-size:11px;">${pr.n}</td>
+        <td style="padding:4px 3px;text-align:center;">${binLabel}<br><span style="font-size:10px;color:var(--text3);">n=${pr.n}</span></td>
         ${valCell(pr, "r1",   r.rAll)}
         ${valCell(pr, "r2",   r.rAll)}
         ${valCell(pr, "r3",   r.rAll)}
