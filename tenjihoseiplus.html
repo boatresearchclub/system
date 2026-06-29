@@ -536,8 +536,16 @@ const VENUE_JA = {
   kiryu:"桐生",suminoe:"住之江",
   biwako:"びわこ",marugame:"丸亀",shimonoseki:"下関",tamagawa:"多摩川",
   tokoname:"常滑",toda:"戸田",edogawa:"江戸川",hamanako:"浜名湖",
-  mikuni:"三国",washinosu:"若松"
+  mikuni:"三国",washinosu:"若松",wakamatsu:"若松"
 };
+
+// ボートレース公式サイトの会場並び順
+const VENUE_ORDER = [
+  "kiryu","toda","edogawa","heiwajima","tamagawa","hamanako",
+  "gamagori","tokoname","tsu","mikuni","biwako","suminoe",
+  "amagasaki","naruto","marugame","kojima","miyajima","tokuyama",
+  "shimonoseki","wakamatsu","washinosu","ashiya","fukuoka","karatsu","omura"
+];
 
 const GRADE_COL = {A1:"#e74c3c",A2:"#e67e22",B1:"#4a9eff",B2:"#5a6080"};
 const COURSE_BG = ["","#ffffff","#000000","#e60012","#0066cc","#ffcc00","#00a651"];
@@ -1131,14 +1139,24 @@ function renderSidebar() {
   // 会場ごとにグループ化
   const byVenue = {};
   for (const vr of state.venueRaces) {
-    if (!byVenue[vr.venue]) byVenue[vr.venue] = { ja: vr.venueJa, races: [] };
-    byVenue[vr.venue].races.push(vr);
+    const slug = vr.venue;
+    const ja = VENUE_JA[slug] || slug;
+    if (!byVenue[slug]) byVenue[slug] = { ja, races: [] };
+    byVenue[slug].races.push(vr);
   }
-  for (const [venue, info] of Object.entries(byVenue)) {
+
+  // 公式サイト順にソート（リストにない会場は末尾）
+  const sortedVenues = Object.keys(byVenue).sort((a, b) => {
+    const ia = VENUE_ORDER.indexOf(a);
+    const ib = VENUE_ORDER.indexOf(b);
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+  });
+
+  for (const slug of sortedVenues) {
+    const info = byVenue[slug];
     html += `<div class="venue-group"><div class="venue-header">${info.ja}</div>`;
     for (const vr of info.races) {
       const active = state.selKey === vr.key;
-      // この会場レースの選手数
       const cnt = state.entries.filter(e => e.venue === vr.venue && e.race === vr.race).length;
       html += `<button class="race-btn ${active?'active':''}" onclick="selectRace('${vr.key}')">
         <span class="race-num">${vr.race}R</span>${info.ja} <span style="color:var(--text3);font-size:10px;">${cnt}艇</span>
