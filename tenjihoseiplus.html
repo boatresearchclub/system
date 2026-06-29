@@ -2361,14 +2361,14 @@ function entryHTML(e) {
 </script>
 
 <script>
-// ===== GitHub Pages 自動更新 =====
+// ===== GitHub Pages 自動更新（ページ状態を維持したままデータ差し替え） =====
 (function() {
   const CHECK_INTERVAL = 20000; // 20秒ごとにチェック
   let lastEtag = null;
   let lastModified = null;
   let toastEl = null;
 
-  function showToast(msg, color) {
+  function showToast(msg, color, duration) {
     if (!toastEl) {
       toastEl = document.createElement("div");
       toastEl.style.cssText = `
@@ -2380,42 +2380,95 @@ function entryHTML(e) {
     toastEl.textContent = msg;
     toastEl.style.background = color || "#0066ff";
     toastEl.style.opacity = "1";
-    setTimeout(() => { toastEl.style.opacity = "0"; }, 3000);
+    setTimeout(() => { toastEl.style.opacity = "0"; }, duration || 3000);
+  }
+
+  // 新しいHTMLからインラインスクリプト内の window.__DATA__ を抽出して返す
+  async function fetchNewData() {
+    const res = await fetch(location.href + "?t=" + Date.now(), { cache: "no-store" });
+    const etag = res.headers.get("etag");
+    const lm   = res.headers.get("last-modified");
+
+    // 初回：基準値だけ保存
+    if (lastEtag === null && lastModified === null) {
+      lastEtag = etag;
+      lastModified = lm;
+      return null;
+    }
+
+    const changed =
+      (etag && etag !== lastEtag) ||
+      (!etag && lm && lm !== lastModified);
+
+    if (!changed) return null;
+
+    // 変化あり → ボディを取得してデータを抽出
+    lastEtag = etag;
+    lastModified = lm;
+    const html = await res.text();
+
+    // __DATA__ ブロックを正規表現で抽出
+    const m = html.match(/window\.__DATA__\s*=\s*(\{[\s\S]*?\});\s*\/\/\s*END_DATA/);
+    if (!m) return null;
+    try {
+      return JSON.parse(m[1]);
+    } catch(e) {
+      return null;
+    }
   }
 
   async function checkUpdate() {
     try {
-      const res = await fetch(location.href, {
-        method: "HEAD",
-        cache: "no-store",
-        headers: { "Cache-Control": "no-cache" }
-      });
-      const etag = res.headers.get("etag");
-      const lm   = res.headers.get("last-modified");
+      const newData = await fetchNewData();
+      if (!newData) return;
 
-      // 初回：基準値を保存するだけ
-      if (lastEtag === null && lastModified === null) {
-        lastEtag = etag;
-        lastModified = lm;
-        return;
-      }
+      showToast("🔄 データを更新しています...", "#0066ff", 2000);
 
-      const changed =
-        (etag && etag !== lastEtag) ||
-        (!etag && lm && lm !== lastModified);
+      // 現在の表示状態を保存
+      const savedSelKey    = state.selKey;
+      const savedMode      = state.mode;
+      const savedSelPlayer = state.selPlayer;
+      const savedSort      = state.sort;
+      const savedGrade     = state.grade;
+      const savedInputBin  = state.inputBin;
 
-      if (changed) {
-        showToast("🔄 データ更新中...", "#00b86b");
-        setTimeout(() => location.reload(), 800);
-      }
-    } catch (e) {
-      // ネットワークエラーは無視
+      // データだけ差し替え（UIの状態は変えない）
+      state.entries     = newData.entries     || state.entries;
+      state.venueRaces  = newData.venueRaces  || state.venueRaces;
+      state.ctp         = newData.ctp         || state.ctp;
+      state.cap         = newData.cap         || state.cap;
+      state.pcp         = newData.pcp         || state.pcp;
+      state.pca         = newData.pca         || state.pca;
+      state.ctpL        = newData.ctpL        || state.ctpL;
+      state.capL        = newData.capL        || state.capL;
+      state.pcpL        = newData.pcpL        || state.pcpL;
+      state.pcaL        = newData.pcaL        || state.pcaL;
+      state.pcd         = newData.pcd         || state.pcd;
+      state.regToName   = newData.regToName   || state.regToName;
+      state.nameToReg   = newData.nameToReg   || state.nameToReg;
+
+      // 表示状態を復元
+      state.selKey      = savedSelKey;
+      state.mode        = savedMode;
+      state.selPlayer   = savedSelPlayer;
+      state.sort        = savedSort;
+      state.grade       = savedGrade;
+      state.inputBin    = savedInputBin;
+
+      // 現在のタブを再描画（状態は維持）
+      renderSidebar();
+      if (state.mode === "race")        renderContent();
+      else if (state.mode === "player") renderPlayerProfile();
+      else if (state.mode === "input")  { renderRaceInput(); calcRaceInput && calcRaceInput(); }
+
+      showToast("✅ データ更新完了", "#00b86b", 2500);
+    } catch(e) {
+      // エラーは無視して継続
     }
   }
 
-  // ページ表示後に初回基準値を取得し、以降は定期チェック
   window.addEventListener("load", () => {
-    checkUpdate(); // 初回
+    checkUpdate(); // 初回基準値取得
     setInterval(checkUpdate, CHECK_INTERVAL);
   });
 
