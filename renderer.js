@@ -758,12 +758,16 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
       </div>`;
     }).join('');
 
-    // ── ヘッダー部分: 代表決まり手バッジ（bestKimari）のみ表示 ──
-    const bestK     = grp.bestKimari;
-    const bestKProb = grp.scenarios.find(s => s.kimari === bestK)?.prob ?? 0;
-    const kColor    = KIMARI_COLOR[bestK] || 'var(--accent2)';
-    const kBg       = KIMARI_BG[bestK]    || 'rgba(108,122,148,.1)';
-    const kimariBadges = `<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;background:${kBg};color:${kColor};flex-shrink:0">${bestK}<span style="font-weight:400;font-size:10px;margin-left:3px">${(bestKProb*100).toFixed(1)}%</span></span>`;
+    // ── ヘッダー部分: 確率上位2つの決まり手バッジを表示 ──
+    const topKimaris = grp.scenarios
+      .slice()
+      .sort((a, b) => b.prob - a.prob)
+      .slice(0, 2);
+    const kimariBadges = topKimaris.map(s => {
+      const kColor = KIMARI_COLOR[s.kimari] || 'var(--accent2)';
+      const kBg    = KIMARI_BG[s.kimari]    || 'rgba(108,122,148,.1)';
+      return `<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;background:${kBg};color:${kColor};flex-shrink:0">${s.kimari}<span style="font-weight:400;font-size:10px;margin-left:3px">${(s.prob*100).toFixed(1)}%</span></span>`;
+    }).join('');
 
     return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">

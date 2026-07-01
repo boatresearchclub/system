@@ -49,6 +49,7 @@ DATA_DIR    = SCRIPTS_DIR / "data"       # GitHubにpushする書き出し先（
 ODDS_FETCH_INTERVAL = 300   # 5分ごと
 
 CSV_DIR           = DATA_COLLECT_DIR / "csv_output"
+RESULTS_CSV_DIR    = DATA_COLLECT_DIR.parent / "data_csv"  # ← scriptsを挟まない実際の格納先に修正
 INDEX_HTML        = SCRIPTS_DIR / "index.html"
 CSS_FILE          = SCRIPTS_DIR / "sample.css"
 JS_FILE           = SCRIPTS_DIR / "sample.js"
@@ -73,6 +74,14 @@ DYNAMIC_INN2PLACE_JS  = SCRIPTS_DIR / "dynamic_inn2place.js"
 DYNAMIC_INN2PLACE_JS_OBF = SCRIPTS_DIR / "dynamic_inn2place_obf.js"
 DATA_JS           = SCRIPTS_DIR / "data.js"
 PLAYER_ID_MAP     = DATA_COLLECT_DIR / "player_id_map.json"
+TENJIHOSEIPLUS_TEMPLATE = SCRIPTS_DIR / "boatrace_analyzer.html"
+TENJIHOSEIPLUS_HTML     = SCRIPTS_DIR / "tenjihoseiplus.html"
+
+try:
+    from tenjihoseiplus import maybe_update_tenjihoseiplus
+except ImportError:
+    maybe_update_tenjihoseiplus = None
+    print("[WARN] tenjihoseiplus.py が見つかりません → tenjihoseiplus.html 更新はスキップされます")
 VIEWER_HTML           = SCRIPTS_DIR / "展開別残存ビューア.html"
 FETCH_TENJI_PY        = SCRIPTS_DIR / "fetch_tenji.py"
 FETCH_RESULT_PY       = DATA_COLLECT_DIR / "fetch_result.py"
@@ -1741,16 +1750,19 @@ def _push_queue_worker():
 
             # ── Step B: push失敗時のリトライ（_git_lock の外で実行）────────
             # _git_lock を保持したままsleepすると他スレッドが全停止するため外に出す。
-            # commitは済んでいるので「reset → pull → 再commit → push」方式を使う。
+            # このリポジトリは基本このスクリプト（＋手動pushスクリプト）のみが push する
+            # 一人運用のため、pull/rebaseは行わず fetch + force-with-lease で確実に追従させる。
+            # （pull --rebaseは他スレッドの同時ファイル書き込みでunstaged changes/コンフリクトを
+            #   起こしやすく、エラーが連鎖していた）
             MAX_RETRY = 3
             for attempt in range(1, MAX_RETRY + 1):
                 if code == 0:
                     break
-                log(f"  [PushQueue] ⚠ push失敗（{attempt}回目）→ pull してリトライ...")
+                log(f"  [PushQueue] ⚠ push失敗（{attempt}回目）→ fetch して force-with-lease で再push...")
                 time.sleep(3)
 
                 with _git_lock:
-                    # 残存rebaseを中断・削除
+                    # 残存rebaseがあれば中断・削除（過去のpull --rebase運用の残骸対策）
                     rebase_merge_dir = Path(SCRIPTS_DIR) / ".git" / "rebase-merge"
                     rebase_apply_dir = Path(SCRIPTS_DIR) / ".git" / "rebase-apply"
                     if rebase_merge_dir.exists() or rebase_apply_dir.exists():
@@ -1762,44 +1774,17 @@ def _push_queue_worker():
                         if rebase_apply_dir.exists():
                             _shutil2.rmtree(str(rebase_apply_dir), ignore_errors=True)
 
-                    # unmerged files を強制解消してからreset
-                    _, status_out = _run_nolock(["git", "status", "--porcelain"])
-                    has_unmerged = any(
-                        l[:2] in ("UU", "AA", "DD", "AU", "UA", "DU", "UD")
-                        for l in status_out.strip().splitlines()
+                    # リモートの最新を取得（作業ツリーには触れない）
+                    _run_nolock(["git", "fetch", "origin", branch])
+
+                    # force-with-lease: 自分がfetchした時点のorigin/branchから動いていなければ上書きpush。
+                    # 万一その間に別経路(手動pushスクリプト等)が割り込んでいた場合は失敗するので
+                    # その時はリトライで再fetchしてやり直す（安全）。
+                    code, push_out = _run_nolock(
+                        ["git", "push", "--force-with-lease", "origin", branch]
                     )
-                    if has_unmerged:
-                        log(f"  [PushQueue] unmerged files を検出 → checkout -- . で解消...")
-                        _run_nolock(["git", "checkout", "--", "."])
-
-                    # 直前のcommitを作業ツリーに戻す（commitは取り消し、変更は保持）
-                    _run_nolock(["git", "reset", "HEAD~1"])
-
-                    # リモートの最新を取得
-                    rc_pull, out_pull = _run_nolock(["git", "pull", "--rebase", "origin", branch])
-                    if rc_pull != 0:
-                        log(f"  [PushQueue] ✕ pull失敗（{attempt}回目）: {out_pull.strip()[:200]}")
-                        _run_nolock(["git", "rebase", "--abort"])
-                        # 最終手段: reset --hard でリモートに強制追従
-                        # （untracked files の衝突など pull --rebase では解消できない場合）
-                        if attempt == MAX_RETRY - 1:
-                            log(f"  [PushQueue] ⚠ reset --hard origin/{branch} で強制リセット...")
-                            _run_nolock(["git", "fetch", "origin", branch])
-                            _run_nolock(["git", "reset", "--hard", f"origin/{branch}"])
-                            log(f"  [PushQueue] リセット完了 → 次のリトライで再add・再commit")
-                        continue
-
-                    # 変更を再add・再commit
-                    _run_nolock(["git", "add", "-A"])
-                    rc_commit, _ = _run_nolock(["git", "commit", "-m", msg])
-                    if rc_commit != 0:
-                        # 差分なし（すでにリモートと同一）→ pushは不要
-                        log(f"  [PushQueue] commit不要（リモートと同一）→ push スキップ")
-                        code = 0
-                        break
-
-                    # 再push
-                    code, push_out = _run_nolock(["git", "push", "origin", branch])
+                    if code != 0:
+                        log(f"  [PushQueue] ✕ force-with-lease push失敗（{attempt}回目）: {push_out.strip()[:200]}")
 
             if code == 0:
                 last_push_time = time.time()
@@ -3183,6 +3168,31 @@ def main():
                             _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg3))
                             log(f"  ✓ 結果情報 pushキューに追加 [{result_summary}]")
                             result_push_done = True
+
+                # ── tenjihoseiplus.html（展示タイム分析ビュー）の再生成・push ──
+                # 展示情報 or 結果情報に変化があったときだけ呼ぶ（内部でも変化なしなら自動スキップする）
+                if maybe_update_tenjihoseiplus is not None and (tenji_changed or result_changed):
+                    try:
+                        th_updated = maybe_update_tenjihoseiplus(
+                            results_csv_dir=RESULTS_CSV_DIR,
+                            tenji_dir=TENJI_DIR,
+                            player_map_path=PLAYER_ID_MAP,
+                            template_html=TENJIHOSEIPLUS_TEMPLATE,
+                            output_html=TENJIHOSEIPLUS_HTML,
+                        )
+                    except Exception as e:
+                        th_updated = False
+                        log(f"  [tenjihoseiplus] ✕ 例外: {e}")
+                    if th_updated:
+                        with _git_lock:
+                            _run_nolock(["git", "add", str(TENJIHOSEIPLUS_HTML)])
+                            code4, out4 = _run_nolock(["git", "status", "--porcelain"])
+                            tracked4 = [l for l in out4.strip().splitlines() if not l.startswith("??")]
+                            if tracked4:
+                                msg4 = f"tenjihoseiplus update {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                                _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg4))
+                                log(f"  ✓ tenjihoseiplus.html pushキューに追加")
+
 
                 # race_index取得（CSV変更時のみ）
                 # → RACE_INDEX_DATA を埋め込んだ data.js は、tenji/odds/result の
