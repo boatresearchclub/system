@@ -2420,6 +2420,7 @@ function entryHTML(e) {
   const CHECK_INTERVAL = 20000; // 20秒ごとにチェック
   let lastEtag = null;
   let lastModified = null;
+  let hasSyncedOnce = false; // 初回の（ページを開いた直後の）サイレント同期が完了したか
   let toastEl = null;
 
   function showToast(msg, color, duration) {
@@ -2438,25 +2439,29 @@ function entryHTML(e) {
   }
 
   // 新しいHTMLからインラインスクリプト内の window.__DATA__ を抽出して返す
+  //
+  // [fix] 以前は「初回は基準値(ETag)を保存するだけ」で終わっていたため、
+  // ページを開いた直後は（ブラウザキャッシュ等で古いまま埋め込まれた）
+  // window.__DATA__ がそのまま表示され続け、実際にデータが反映されるのは
+  // 次のポーリング（最大20秒後、かつサーバー側が新たに更新されるまで）
+  // まで待つ必要があった。
+  // → 初回も no-store で必ずサーバーから最新HTMLを取得し、その場で
+  //   __DATA__ を抽出・反映することで「開いたら即最新」にする。
   async function fetchNewData() {
     const res = await fetch(location.href + "?t=" + Date.now(), { cache: "no-store" });
     const etag = res.headers.get("etag");
     const lm   = res.headers.get("last-modified");
 
-    // 初回：基準値だけ保存
-    if (lastEtag === null && lastModified === null) {
-      lastEtag = etag;
-      lastModified = lm;
-      return null;
+    const isFirst = (lastEtag === null && lastModified === null);
+
+    if (!isFirst) {
+      const changed =
+        (etag && etag !== lastEtag) ||
+        (!etag && lm && lm !== lastModified);
+      if (!changed) return null;
     }
 
-    const changed =
-      (etag && etag !== lastEtag) ||
-      (!etag && lm && lm !== lastModified);
-
-    if (!changed) return null;
-
-    // 変化あり → ボディを取得してデータを抽出
+    // 初回、または変化あり → ボディを取得してデータを抽出
     lastEtag = etag;
     lastModified = lm;
     const html = await res.text();
@@ -2474,9 +2479,17 @@ function entryHTML(e) {
   async function checkUpdate() {
     try {
       const newData = await fetchNewData();
-      if (!newData) return;
+      if (!newData) { hasSyncedOnce = true; return; }
 
-      showToast("🔄 データを更新しています...", "#0066ff", 2000);
+      // 初回（ページを開いた直後）の同期かどうか。
+      // 初回は「更新」ではなく単に最新状態を表示するだけなので、
+      // 「更新しています…」等の通知トーストは出さない（ジャマなだけなので）。
+      const isInitialSync = !hasSyncedOnce;
+      hasSyncedOnce = true;
+
+      if (!isInitialSync) {
+        showToast("🔄 データを更新しています...", "#0066ff", 2000);
+      }
 
       // auto_push がCSVを翌営業日分に切り替えたかどうかを判定
       // （カレンダー上の日付ではなく、tenjihoseiplus.py が実際に読み込んだ
@@ -2538,18 +2551,23 @@ function entryHTML(e) {
       else if (state.mode === "player") renderPlayerProfile();
       else if (state.mode === "input")  { renderRaceInput(); calcRaceInput && calcRaceInput(); }
 
-      showToast(
-        businessDayChanged ? "📅 営業日が切り替わったため画面をリセットしました" : "✅ データ更新完了",
-        businessDayChanged ? "#ff8800" : "#00b86b",
-        businessDayChanged ? 3500 : 2500
-      );
+      if (!isInitialSync) {
+        showToast(
+          businessDayChanged ? "📅 営業日が切り替わったため画面をリセットしました" : "✅ データ更新完了",
+          businessDayChanged ? "#ff8800" : "#00b86b",
+          businessDayChanged ? 3500 : 2500
+        );
+      } else if (businessDayChanged) {
+        // 初回サイレント同期でも、前回開いた時から営業日が変わっていたことだけは控えめに知らせる
+        showToast("📅 最新の営業日データを表示しています", "#00b86b", 2000);
+      }
     } catch(e) {
       // エラーは無視して継続
     }
   }
 
   window.addEventListener("load", () => {
-    checkUpdate(); // 初回基準値取得
+    checkUpdate(); // 初回：ページ読み込み直後にサーバーの最新データへ即同期
     setInterval(checkUpdate, CHECK_INTERVAL);
   });
 

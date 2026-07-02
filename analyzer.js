@@ -1533,6 +1533,10 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
           // 識別力が弱いと出ていたため、3着と同じ signal を追加して順位の
           // 分離を強める。
           let _avgRank2 = null;
+          // [2026-07-02 追加] 実測マスタデータ（tenkai_remaining / inn_2place）の
+          // 信頼度。後段のkimari別バイアス補正の強度を動的に決めるために使う。
+          // 0 = 実測データなし（全国平均バイアスをフル適用） / 1 = 実測データ十分（バイアス無効化）
+          let _dataTrust2 = 0;
           if(useInn2){
             const baseP2 = inn2Place[sc] ?? null;
             const personEntry2 = winnerCO[b.name]?.[sc]?.['1'];
@@ -1544,6 +1548,9 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             } else {
               p2 = baseP2;
             }
+            // inn_2place は会場の実測イン逃げ時2着率（board全体集計）のため
+            // 値が取れていれば信頼度は高いとみなす。
+            if(baseP2 != null) _dataTrust2 = 1.0;
             if(p2 == null){
               // [2026-06-25] finalProb按分を平滑化（25%均等 + 75%prob按分）
               const bt = ranked2.find(r => r.boat === b.boat);
@@ -1559,6 +1566,17 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             const personRate2 = personEntry?.rate2 ?? null;
             const personTrust = personEntry?.trust ?? 0;
             _avgRank2 = personEntry?.avg_rank ?? null;
+            // 実測データの信頼度＝tenkai_remaining側の trust（xlsx「信頼度」列＝レース数由来）。
+            // [2026-07-02 追記] 個人実績（winner_course_order）がブレンドされている場合は
+            // その信頼度も合成する（どちらか一方が高信頼なら十分に実測寄りとみなす＝確率的OR）。
+            // p2自体は既に personRate2 をブレンドしているため、_dataTrust2 側も
+            // 同じ情報源の信頼度を反映しないと「個人データは使っているのに
+            // バイアス抑制には個人の信頼度が効かない」という不整合になる。
+            if(baseTR != null){
+              _dataTrust2 = (personRate2 != null)
+                ? 1 - (1 - trTrust) * (1 - personTrust)
+                : trTrust;
+            }
             if(baseTR != null && personRate2 != null && personTrust > 0.3){
               const wPerson = personTrust;
               const wNat    = (1 - personTrust);  // ② 修正: trTrust二重適用を排除
@@ -1591,18 +1609,27 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             : 1.0;
           p2 *= rankCoef2;
 
-          // ── [2026-06-25 新規] kimariタイプ別 2着コースバイアス補正 ──
-          // biasByKimari[boat-1] が各コースの「このkimariで出やすさ」係数。
-          // KIMARI_BIAS_STRENGTH でブレンド強度を制御し、過補正を防ぐ。
-          // 1コース1着の逃げシナリオでは1コースを除外済み（biasByKimari[0]=0.0）のため
-          // winner.boat===1 かつ kimari==='逃げ' の場合の自然な除外は useInn2 経路で行われる。
+          // ── [2026-06-25 新規 / 2026-07-02 改修] kimariタイプ別 2着コースバイアス補正 ──
+          // biasByKimari[boat-1] が各コースの「このkimariで出やすさ」係数（全国平均ベースの決め打ち値）。
+          //
+          // [2026-07-02] 旧実装は tenkai_remaining（会場別・決まり手別の実測2着率）で
+          // ベース値 p2 を算出済みの艇に対しても、KIMARI_BIAS_STRENGTH=0.55 固定で
+          // 全国平均バイアスを一律に上乗せしていた。これは実測データを持つケースでも
+          // 全国平均の思い込みで歪める二重補正になっていた（マスタ_展開別残存_.xlsx の
+          // 会場別・決まり手別・進入コース別 実測rate2/rate3 を軽視する形）。
+          //
+          // 改修: 実測データの信頼度 _dataTrust2（tenkai_remainingのtrust列＝レース数由来、
+          // またはinn_2placeなら1.0）に応じてバイアス強度を動的に絞る。
+          //   実測データ十分（trust→1） → 全国平均バイアスはほぼ効かせない
+          //   実測データが薄い/ない（trust→0） → 従来通りKIMARI_BIAS_STRENGTH(0.55)をフル適用
           const rawBias = biasByKimari[b.boat - 1] ?? 1.0;
+          const effectiveBiasStrength = KIMARI_BIAS_STRENGTH * (1 - _dataTrust2);
           // 勝者コースが bias 配列で 0.0 になっているコース（=物理的に不可能）は
-          // この winner では 0 のまま（正規化で除外される）。
+          // この winner では 0 のまま（正規化で除外される）。実測データの有無に関わらず除外は維持。
           if(rawBias <= 0){
             p2 = 0;  // このシナリオでは2着に来得ないコース
           } else {
-            const blendedBias = 1.0 * (1 - KIMARI_BIAS_STRENGTH) + rawBias * KIMARI_BIAS_STRENGTH;
+            const blendedBias = 1.0 * (1 - effectiveBiasStrength) + rawBias * effectiveBiasStrength;
             p2 *= blendedBias;
           }
 
