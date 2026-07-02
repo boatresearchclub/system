@@ -3272,9 +3272,65 @@ function renderResult(rno){
   `;
 }
 
+// ── オッズタップ選択（色反転・永続化）──
+// タップした買い目に .odds-picked クラスを付け外しする。
+// 選択状態は _oddsPickSet に「日付__会場__レース__券種__組番」のキーで保存するため、
+// レース切替・タブ切替でHTMLが作り直されても renderOdds 側でクラスを復元できる。
+// スタイルシート側の !important ルールはインラインstyle(非!important)より優先されるため、
+// 各セル/行に既に付いているインラインの色指定があっても選択時は上書きできる。
+const _oddsPickSet = new Set();
+
+function _oddsPickKey(date, venue, rno, type, combo){
+  return `${date}__${venue}__${rno}__${type}__${combo}`;
+}
+
+function toggleOddsPick(el, key){
+  if (!el) return;
+  if (_oddsPickSet.has(key)) {
+    _oddsPickSet.delete(key);
+    el.classList.remove('odds-picked');
+  } else {
+    _oddsPickSet.add(key);
+    el.classList.add('odds-picked');
+  }
+  _updateOddsPickSummary();
+}
+
+// 現在表示中レースの選択のみクリア（他レースの選択は残す）
+function clearOddsPicksForRace(date, venue, rno){
+  const prefix = `${date}__${venue}__${rno}__`;
+  [..._oddsPickSet].forEach(k => { if (k.startsWith(prefix)) _oddsPickSet.delete(k); });
+  document.querySelectorAll('#odds-panel .odds-picked').forEach(el => el.classList.remove('odds-picked'));
+  _updateOddsPickSummary();
+}
+
+// 選択中の点数を summary バーに反映する
+function _updateOddsPickSummary(){
+  const bar = document.getElementById('odds-pick-summary');
+  if (!bar) return;
+  const count = bar.dataset.prefix
+    ? [..._oddsPickSet].filter(k => k.startsWith(bar.dataset.prefix)).length
+    : 0;
+  const countEl = bar.querySelector('[data-role="odds-pick-count"]');
+  if (countEl) countEl.textContent = count;
+  bar.style.display = count > 0 ? '' : 'none';
+}
+
+function _ensureOddsPickStyle(){
+  if (document.getElementById('odds-pick-style')) return;
+  const st = document.createElement('style');
+  st.id = 'odds-pick-style';
+  st.textContent = `
+    .odds-picked{ background:var(--accent2) !important; }
+    .odds-picked *{ color:#fff !important; }
+  `;
+  document.head.appendChild(st);
+}
+
 function renderOdds(rno) {
   const panel = document.getElementById('odds-panel');
   if (!panel) return;
+  _ensureOddsPickStyle();
   if (!DATA || !rno) {
     panel.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text3)">レースを選択してください</div>';
     return;
@@ -3282,6 +3338,8 @@ function renderOdds(rno) {
 
   const _oddsDateR = viewDate || (DATA?.date) || todayDate;
   const raceOdds = ODDS_DATA?.[_oddsDateR]?.[DATA.venue]?.[String(rno)];
+  // このレースの選択キーの接頭辞（summaryバーの集計・クリア用）
+  const _oddsPickPrefix = `${_oddsDateR}__${DATA.venue}__${rno}__`;
 
   if (!raceOdds) {
     panel.innerHTML = `
@@ -3369,13 +3427,17 @@ function renderOdds(rno) {
         const oddsLabel = odds != null ? odds.toFixed(1) : '—';
         const oddsColor = odds == null ? 'var(--text3)' : 'var(--text)';
 
+        const cellCombo = `${first}-${group.second}-${cell.third}`;
+        const cellKey   = _oddsPickKey(_oddsDateR, DATA.venue, rno, '3t', cellCombo);
+        const cellPicked = _oddsPickSet.has(cellKey) ? ' odds-picked' : '';
+
         const secondBadgeTd = isGroupStart
           ? `<td rowspan="4" style="width:34px;height:144px;padding:0;border:1px solid var(--border);vertical-align:middle;background:${BOAT_BG[group.second]}">
               <div style="display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${BOAT_FG[group.second]}">${group.second}</div>
             </td>`
           : '';
 
-        return `${secondBadgeTd}<td style="height:36px;padding:4px 8px;border:1px solid var(--border);white-space:nowrap;${stripeBg}">
+        return `${secondBadgeTd}<td class="${cellPicked.trim()}" style="height:36px;padding:4px 8px;border:1px solid var(--border);white-space:nowrap;cursor:pointer;${stripeBg}" onclick="toggleOddsPick(this, '${cellKey}')">
           <div style="display:flex;align-items:center;gap:6px">
             ${boatBadge(cell.third, 18, 11)}
             <span style="font-family:var(--mono);font-size:13px;font-weight:500;color:${oddsColor};margin-left:auto">${oddsLabel}</span>
@@ -3434,7 +3496,10 @@ function renderOdds(rno) {
       // comboToBadges は "-" 区切りで動くので combo を正規化
       const badgesHtml = comboToBadges(e.combo.replace(/-/g, '−'));
 
-      return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border)">
+      const rowKey    = _oddsPickKey(_oddsDateR, DATA.venue, rno, key, e.combo);
+      const rowPicked = _oddsPickSet.has(rowKey) ? ' odds-picked' : '';
+
+      return `<div class="${rowPicked.trim()}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="toggleOddsPick(this, '${rowKey}')">
         <span style="font-size:10px;color:${ninkiColor};font-weight:700;min-width:18px;text-align:right;flex-shrink:0">${ninki}</span>
         <span style="display:inline-flex;align-items:center;gap:0;flex:1">${badgesHtml}</span>
         <span style="font-family:var(--mono);font-size:14px;font-weight:600;color:${oddsColor};min-width:5em;text-align:right;flex-shrink:0">${e.odds.toFixed(1)}</span>
@@ -3462,9 +3527,18 @@ function renderOdds(rno) {
     ? `<div style="padding:0.5rem 1.25rem;font-size:11px;color:var(--accent2);border-bottom:1px solid var(--border);font-weight:700">🏁 確定オッズ${finalBadge}</div>`
     : '';
 
+  // このレースで現在選択中の点数
+  const _pickCount = [..._oddsPickSet].filter(k => k.startsWith(_oddsPickPrefix)).length;
+  const summaryBarHtml = `
+    <div id="odds-pick-summary" data-prefix="${_oddsPickPrefix}" style="display:${_pickCount > 0 ? '' : 'none'};align-items:center;justify-content:space-between;gap:8px;padding:0.5rem 1.25rem;font-size:12px;color:var(--text);border-bottom:1px solid var(--border);background:var(--bg3)">
+      <span>選択中: <strong data-role="odds-pick-count">${_pickCount}</strong>点</span>
+      <span style="cursor:pointer;color:var(--accent2);font-weight:600" onclick="clearOddsPicksForRace('${_oddsDateR}', '${DATA.venue}', ${rno})">クリア</span>
+    </div>`;
+
   panel.innerHTML = `
     <div class="detail-panel">
       ${updatedHtml}
+      ${summaryBarHtml}
       ${matrix3tSection ? `<div style="padding:0.875rem 1rem 0">${matrix3tSection}</div>` : ''}
       <div class="buy-grid" style="border-top:none">
         ${sectionsHtml}

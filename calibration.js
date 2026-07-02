@@ -22,6 +22,12 @@
   // ※ init()（SHA-256認証）が async のため、スクリプト読み込み時点では
   //   admin-mode クラスがまだ付与されていない場合がある。
 
+  // ── CSV保存機能用: 直近の描画に使った results 配列を保持 ──
+  // _renderCalibrationPanel が呼ばれるたびに更新される。
+  // ボタンの onclick からはこの変数経由でアクセスする（引数を持たせず
+  // 常に「今表示中のパネルの元データ」を書き出せるようにするため）。
+  let _lastAllResults = [];
+
   // ── ビン定義 ──
   // hitProbEst の値域 [0, 1] を6段階に分割
   const BINS = [
@@ -800,6 +806,210 @@
       </div>`;
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // CSV保存機能
+  // ──────────────────────────────────────────────────────────────────
+  // 5パネル（確率キャリブレーション／2着・3着予測精度／コース別勝率／
+  // 30〜40%帯過大評価内訳／2着・3着診断）の集計結果を1本のCSVにまとめて
+  // ダウンロードする。既存の calc*() 関数をそのまま再利用し、表示用HTMLとは
+  // 独立に「今パネルに表示されている数値」と同じ集計をもう一度計算する。
+  // ══════════════════════════════════════════════════════════════════
+
+  function _csvEscape(v) {
+    if (v == null) return '';
+    const s = String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function _csvRow(arr) {
+    return arr.map(_csvEscape).join(',');
+  }
+  function _pctStr(v) {
+    return v == null ? '' : (v * 100).toFixed(1) + '%';
+  }
+
+  function _buildCalibrationCSV(all) {
+    const lines = [];
+    const push = (row) => lines.push(_csvRow(row));
+    const blank = () => lines.push('');
+    const section = (title) => { blank(); push([title]); };
+
+    // ── ① 確率キャリブレーション（艇×レース、winProbBinStats）──
+    const winProbBinStats = calcWinProbCalibration(all);
+    const calError   = calcCalibrationError(winProbBinStats);
+    const violations = countMonotonicViolations(winProbBinStats);
+    section('① 確率キャリブレーション（推定勝率 vs 実績勝率・全艇×全レース）');
+    push(['加重平均誤差', calError != null ? _pctStr(calError) : '']);
+    push(['単調性逆転数', violations]);
+    push(['推定帯', '件数', '推定平均', '実績', '差']);
+    winProbBinStats.forEach(b => {
+      const diff = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      push([b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diff != null ? _pctStr(diff) : '']);
+    });
+
+    // ── ② 2着・3着 予測精度 ──
+    const p2 = calcPlace2Calibration(all);
+    const p3 = calcPlace3Calibration(all);
+    section('② 2着・3着 予測精度（買い目内での的中順位分布）');
+    push(['区分', '2着', '3着']);
+    push(['件数', p2 ? p2.total : '', p3 ? p3.total : '']);
+    push(['1位的中', p2 ? _pctStr(p2.rank1Rate) : '', p3 ? _pctStr(p3.rank1Rate) : '']);
+    push(['2位以内', p2 ? _pctStr(p2.top2Rate)  : '', p3 ? _pctStr(p3.top2Rate)  : '']);
+    push(['3位以内', p2 ? _pctStr(p2.top3Rate)  : '', p3 ? _pctStr(p3.top3Rate)  : '']);
+    push(['買い目外', p2 ? _pctStr(p2.missRate) : '', p3 ? _pctStr(p3.missRate) : '']);
+
+    // ── ③ コース別勝率キャリブレーション ──
+    const courseStats = calcCalibrationByCourse(all);
+    section('③ コース別 勝率キャリブレーション（枠番別 予測勝率 vs 実際の勝率）');
+    push(['枠', '件数', '推定', '実績', '差']);
+    courseStats.forEach(s => {
+      const diff = (s.actual != null && s.estAvg != null) ? s.actual - s.estAvg : null;
+      push([s.course, s.count, _pctStr(s.estAvg), _pctStr(s.actual), diff != null ? _pctStr(diff) : '']);
+    });
+
+    // ── ④ 30〜40%帯 過大評価 内訳調査 ──
+    const band = all.filter(r => r.hitProbEst != null && r.hitProbEst >= 0.30 && r.hitProbEst < 0.40);
+    if (band.length > 0) {
+      const totalBand = band.length;
+      const hitsBand  = band.filter(r => r.isHit).length;
+
+      const venueMap = {};
+      band.forEach(r => {
+        const v = r.venue || '不明';
+        if (!venueMap[v]) venueMap[v] = { total: 0, hits: 0 };
+        venueMap[v].total++;
+        if (r.isHit) venueMap[v].hits++;
+      });
+      const rnoMap = {};
+      band.forEach(r => {
+        const rno = r.rno != null ? `${r.rno}R` : '不明';
+        if (!rnoMap[rno]) rnoMap[rno] = { total: 0, hits: 0 };
+        rnoMap[rno].total++;
+        if (r.isHit) rnoMap[rno].hits++;
+      });
+      const evMap = { '〜0.9': { total:0,hits:0 }, '0.9〜1.0': { total:0,hits:0 }, '1.0〜1.1': { total:0,hits:0 }, '1.1〜1.3': { total:0,hits:0 }, '1.3〜': { total:0,hits:0 } };
+      band.forEach(r => {
+        if (r.ev == null) return;
+        const key = r.ev < 0.9 ? '〜0.9' : r.ev < 1.0 ? '0.9〜1.0' : r.ev < 1.1 ? '1.0〜1.1' : r.ev < 1.3 ? '1.1〜1.3' : '1.3〜';
+        evMap[key].total++;
+        if (r.isHit) evMap[key].hits++;
+      });
+
+      section('④ 30〜40%帯 過大評価 内訳調査');
+      push(['推定30〜40%の件数', totalBand, '実績的中率', _pctStr(hitsBand / totalBand), '目標', '35%']);
+      blank();
+      push(['会場別', '件数', '実績']);
+      Object.entries(venueMap)
+        .map(([v, s]) => ({ venue: v, ...s, actual: s.hits / s.total }))
+        .sort((a, b) => a.actual - b.actual)
+        .forEach(s => push([s.venue, s.total, _pctStr(s.actual)]));
+      blank();
+      push(['レース番号別', '件数', '実績']);
+      Object.entries(rnoMap)
+        .map(([rno, s]) => ({ rno, ...s, actual: s.hits / s.total }))
+        .sort((a, b) => parseInt(a.rno) - parseInt(b.rno))
+        .forEach(s => push([s.rno, s.total, _pctStr(s.actual)]));
+      blank();
+      push(['EV帯別', '件数', '実績']);
+      Object.entries(evMap).forEach(([key, s]) => {
+        push([`EV${key}`, s.total, s.total > 0 ? _pctStr(s.hits / s.total) : '—']);
+      });
+    }
+
+    // ── ⑤ 2着・3着 データvs買い目 切り分け診断 ──
+    const valid2 = all.filter(r => r.actual2nd != null && r.pred2ndRank != null);
+    const valid3 = all.filter(r => r.actual3rd != null && r.pred3rdRank != null);
+    if (valid2.length > 0 || valid3.length > 0) {
+      section('⑤ 2着・3着 データvs買い目 切り分け診断');
+
+      function rankDist(arr, rankField) {
+        const dist = {};
+        arr.forEach(r => {
+          const k = r[rankField] <= 4 ? r[rankField] : 5;
+          dist[k] = (dist[k] ?? 0) + 1;
+        });
+        return dist;
+      }
+      const dist2 = rankDist(valid2, 'pred2ndRank');
+      const dist3 = rankDist(valid3, 'pred3rdRank');
+      const total2 = valid2.length;
+      const total3 = valid3.length;
+
+      push(['予測順位分布', '順位', '2着件数', '2着割合', '3着件数', '3着割合']);
+      [1, 2, 3, 4, 5].forEach(rank => {
+        const label = rank === 5 ? '5位以下' : `${rank}位`;
+        const c2 = dist2[rank] ?? 0;
+        const c3 = dist3[rank] ?? 0;
+        push(['', label, total2 ? c2 : '', total2 ? _pctStr(c2 / total2) : '',
+                          total3 ? c3 : '', total3 ? _pctStr(c3 / total3) : '']);
+      });
+
+      // 1着コース別 2着1位的中率
+      function courseGroup(r) {
+        if (!r.actualResult) return null;
+        const first = parseInt((r.actualResult + '').split(/[-－−]/)[0]);
+        return first === 1 ? '1コース(逃げ系)' : `${first}コース`;
+      }
+      const byWinner2 = {};
+      valid2.forEach(r => {
+        const g = courseGroup(r);
+        if (!g) return;
+        if (!byWinner2[g]) byWinner2[g] = { total: 0, rank1: 0 };
+        byWinner2[g].total++;
+        if (r.pred2ndRank === 1) byWinner2[g].rank1++;
+      });
+      blank();
+      push(['1着コース別 2着1位的中率', '件数', '的中率']);
+      Object.entries(byWinner2)
+        .sort((a, b) => b[1].total - a[1].total)
+        .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
+
+      // レース番号別 2着1位的中率
+      const byRno2 = {};
+      valid2.forEach(r => {
+        const g = r.rno != null ? `${r.rno}R` : null;
+        if (!g) return;
+        if (!byRno2[g]) byRno2[g] = { total: 0, rank1: 0, rno: r.rno };
+        byRno2[g].total++;
+        if (r.pred2ndRank === 1) byRno2[g].rank1++;
+      });
+      blank();
+      push(['レース番号別 2着1位的中率', '件数', '的中率']);
+      Object.entries(byRno2)
+        .sort((a, b) => a[1].rno - b[1].rno)
+        .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
+    }
+
+    return '\uFEFF' + lines.join('\r\n'); // BOM付き（Excelで文字化けしないように）
+  }
+
+  // ── 公開: CSVダウンロードを実行 ──
+  // ボタンから window._downloadCalibrationCSV() として呼ばれる。
+  // 引数なし＝常に「直近に描画したパネルのデータ」を書き出す。
+  window._downloadCalibrationCSV = function () {
+    try {
+      if (!_lastAllResults || _lastAllResults.length === 0) {
+        alert('CSV化できるデータがありません（パネル未描画、または集計中です）');
+        return;
+      }
+      const csv  = _buildCalibrationCSV(_lastAllResults);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const now  = new Date();
+      const pad  = n => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `calibration_${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.warn('[calibration] CSV出力エラー:', e);
+      alert('CSV出力に失敗しました: ' + e.message);
+    }
+  };
+
   // ── DOM への描画 ──
   function _ensureContainer() {
     let el = document.getElementById('top-ai-calibration-panel');
@@ -842,6 +1052,7 @@
       const container = _ensureContainer();
       const all       = allResultsScenAll || [];
       const totalAll  = all.length;
+      _lastAllResults = all; // CSV保存ボタン用に保持
 
       // 修正: allResultsScenAll が [] のまま呼ばれたとき（非同期計算完了前）は
       // 「集計中」表示にしてデータ不足と区別する
@@ -906,6 +1117,11 @@
 
       container.innerHTML = `
         <div class="ai-stats-card" style="margin-bottom:0.6rem">
+          <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+            <button onclick="window._downloadCalibrationCSV()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">
+              📥 全パネルをCSV保存
+            </button>
+          </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
             ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
             ${buildPlace2CalibHTML(p2stats, p3stats)}
