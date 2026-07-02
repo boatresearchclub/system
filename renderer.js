@@ -3276,21 +3276,25 @@ function renderResult(rno){
 // タップした買い目に .odds-picked クラスを付け外しする。
 // 選択状態は _oddsPickSet に「日付__会場__レース__券種__組番」のキーで保存するため、
 // レース切替・タブ切替でHTMLが作り直されても renderOdds 側でクラスを復元できる。
+// _oddsPickOdds には同じキーに対応するオッズ数値を保持し、合成オッズの計算に使う。
 // スタイルシート側の !important ルールはインラインstyle(非!important)より優先されるため、
 // 各セル/行に既に付いているインラインの色指定があっても選択時は上書きできる。
-const _oddsPickSet = new Set();
+const _oddsPickSet  = new Set();
+const _oddsPickOdds = new Map(); // key -> odds(number)
 
 function _oddsPickKey(date, venue, rno, type, combo){
   return `${date}__${venue}__${rno}__${type}__${combo}`;
 }
 
-function toggleOddsPick(el, key){
+function toggleOddsPick(el, key, odds){
   if (!el) return;
   if (_oddsPickSet.has(key)) {
     _oddsPickSet.delete(key);
+    _oddsPickOdds.delete(key);
     el.classList.remove('odds-picked');
   } else {
     _oddsPickSet.add(key);
+    if (odds != null && !isNaN(odds)) _oddsPickOdds.set(key, odds);
     el.classList.add('odds-picked');
   }
   _updateOddsPickSummary();
@@ -3299,20 +3303,41 @@ function toggleOddsPick(el, key){
 // 現在表示中レースの選択のみクリア（他レースの選択は残す）
 function clearOddsPicksForRace(date, venue, rno){
   const prefix = `${date}__${venue}__${rno}__`;
-  [..._oddsPickSet].forEach(k => { if (k.startsWith(prefix)) _oddsPickSet.delete(k); });
+  [..._oddsPickSet].forEach(k => {
+    if (k.startsWith(prefix)) { _oddsPickSet.delete(k); _oddsPickOdds.delete(k); }
+  });
   document.querySelectorAll('#odds-panel .odds-picked').forEach(el => el.classList.remove('odds-picked'));
   _updateOddsPickSummary();
 }
 
-// 選択中の点数を summary バーに反映する
+// 合成オッズ = 1 / Σ(1/各オッズ)（選択した買い目に均等に賭けた場合、
+// どれか一つが的中すれば戻ってくる倍率）
+function _compositeOdds(keys){
+  let invSum = 0;
+  let valid  = 0;
+  keys.forEach(k => {
+    const o = _oddsPickOdds.get(k);
+    if (o != null && o > 0) { invSum += 1 / o; valid++; }
+  });
+  if (valid === 0 || invSum <= 0) return null;
+  return 1 / invSum;
+}
+
+// 選択中の点数・合成オッズを summary バーに反映する
 function _updateOddsPickSummary(){
   const bar = document.getElementById('odds-pick-summary');
   if (!bar) return;
-  const count = bar.dataset.prefix
-    ? [..._oddsPickSet].filter(k => k.startsWith(bar.dataset.prefix)).length
-    : 0;
+  const prefix = bar.dataset.prefix || '';
+  const keys   = [..._oddsPickSet].filter(k => k.startsWith(prefix));
+  const count  = keys.length;
+
   const countEl = bar.querySelector('[data-role="odds-pick-count"]');
   if (countEl) countEl.textContent = count;
+
+  const composite = _compositeOdds(keys);
+  const compEl = bar.querySelector('[data-role="odds-pick-composite"]');
+  if (compEl) compEl.textContent = composite != null ? `${composite.toFixed(2)}倍` : '—';
+
   bar.style.display = count > 0 ? '' : 'none';
 }
 
@@ -3430,6 +3455,10 @@ function renderOdds(rno) {
         const cellCombo = `${first}-${group.second}-${cell.third}`;
         const cellKey   = _oddsPickKey(_oddsDateR, DATA.venue, rno, '3t', cellCombo);
         const cellPicked = _oddsPickSet.has(cellKey) ? ' odds-picked' : '';
+        if (odds != null && cellPicked) _oddsPickOdds.set(cellKey, odds); // 復元時にオッズ値も補完
+        const cellClickable = odds != null;
+        const cellOnclick   = cellClickable ? ` onclick="toggleOddsPick(this, '${cellKey}', ${odds})"` : '';
+        const cellCursor    = cellClickable ? 'cursor:pointer;' : '';
 
         const secondBadgeTd = isGroupStart
           ? `<td rowspan="4" style="width:34px;height:144px;padding:0;border:1px solid var(--border);vertical-align:middle;background:${BOAT_BG[group.second]}">
@@ -3437,7 +3466,7 @@ function renderOdds(rno) {
             </td>`
           : '';
 
-        return `${secondBadgeTd}<td class="${cellPicked.trim()}" style="height:36px;padding:4px 8px;border:1px solid var(--border);white-space:nowrap;cursor:pointer;${stripeBg}" onclick="toggleOddsPick(this, '${cellKey}')">
+        return `${secondBadgeTd}<td class="${cellPicked.trim()}" style="height:36px;padding:4px 8px;border:1px solid var(--border);white-space:nowrap;${cellCursor}${stripeBg}"${cellOnclick}>
           <div style="display:flex;align-items:center;gap:6px">
             ${boatBadge(cell.third, 18, 11)}
             <span style="font-family:var(--mono);font-size:13px;font-weight:500;color:${oddsColor};margin-left:auto">${oddsLabel}</span>
@@ -3498,8 +3527,9 @@ function renderOdds(rno) {
 
       const rowKey    = _oddsPickKey(_oddsDateR, DATA.venue, rno, key, e.combo);
       const rowPicked = _oddsPickSet.has(rowKey) ? ' odds-picked' : '';
+      if (rowPicked) _oddsPickOdds.set(rowKey, e.odds); // 復元時にオッズ値も補完
 
-      return `<div class="${rowPicked.trim()}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="toggleOddsPick(this, '${rowKey}')">
+      return `<div class="${rowPicked.trim()}" style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="toggleOddsPick(this, '${rowKey}', ${e.odds})">
         <span style="font-size:10px;color:${ninkiColor};font-weight:700;min-width:18px;text-align:right;flex-shrink:0">${ninki}</span>
         <span style="display:inline-flex;align-items:center;gap:0;flex:1">${badgesHtml}</span>
         <span style="font-family:var(--mono);font-size:14px;font-weight:600;color:${oddsColor};min-width:5em;text-align:right;flex-shrink:0">${e.odds.toFixed(1)}</span>
@@ -3527,11 +3557,13 @@ function renderOdds(rno) {
     ? `<div style="padding:0.5rem 1.25rem;font-size:11px;color:var(--accent2);border-bottom:1px solid var(--border);font-weight:700">🏁 確定オッズ${finalBadge}</div>`
     : '';
 
-  // このレースで現在選択中の点数
-  const _pickCount = [..._oddsPickSet].filter(k => k.startsWith(_oddsPickPrefix)).length;
+  // このレースで現在選択中の点数・合成オッズ
+  const _pickKeysNow = [..._oddsPickSet].filter(k => k.startsWith(_oddsPickPrefix));
+  const _pickCount     = _pickKeysNow.length;
+  const _pickComposite = _compositeOdds(_pickKeysNow);
   const summaryBarHtml = `
     <div id="odds-pick-summary" data-prefix="${_oddsPickPrefix}" style="display:${_pickCount > 0 ? '' : 'none'};align-items:center;justify-content:space-between;gap:8px;padding:0.5rem 1.25rem;font-size:12px;color:var(--text);border-bottom:1px solid var(--border);background:var(--bg3)">
-      <span>選択中: <strong data-role="odds-pick-count">${_pickCount}</strong>点</span>
+      <span>選択中: <strong data-role="odds-pick-count">${_pickCount}</strong>点　合成: <strong data-role="odds-pick-composite">${_pickComposite != null ? _pickComposite.toFixed(2) + '倍' : '—'}</strong></span>
       <span style="cursor:pointer;color:var(--accent2);font-weight:600" onclick="clearOddsPicksForRace('${_oddsDateR}', '${DATA.venue}', ${rno})">クリア</span>
     </div>`;
 
