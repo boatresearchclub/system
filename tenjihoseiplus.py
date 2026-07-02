@@ -293,15 +293,46 @@ def aggregate_lap1(tenji_all: dict, csv_map: dict, player_map: dict) -> tuple[di
 # ---------- 展示JSON ----------
 
 def find_tenji_files(tenji_dir: Path, date_str: str = None, all_files: bool = False) -> list[Path]:
-    files = sorted(glob.glob(str(tenji_dir / "tenji_*.json")))
+    """
+    [fix] 「最新の1件」を選ぶ際、単純な文字列ソート(sorted()[-1])では
+    tenji_YYYYMMDD.json 形式以外のファイル（例: 旧形式の会場名入り個別ファイル
+    tenji_ashiya_20260616_1.json などがTENJI_DIRに残っていた場合）が
+    アルファベット順で必ず末尾に来てしまい、日付が進んでも
+    「本当の最新日付ファイル」を選べず、レース一覧が翌日に切り替わらない
+    事故が起きる（数字 '0'-'9' < 英字 'a'-'z' のASCII順のため）。
+    → tenji_YYYYMMDD.json 形式のファイルのみを対象に、ファイル名から
+      抽出した日付(8桁数字)の大小で「最新」を判定するように修正。
+    """
+    files = glob.glob(str(tenji_dir / "tenji_*.json"))
     if not files:
         return []
+
+    # tenji_YYYYMMDD.json 形式にマッチするものだけを「日付付きファイル」として扱う
+    dated = []
+    for f in files:
+        m = re.match(r"tenji_(\d{8})\.json$", Path(f).name)
+        if m:
+            dated.append((m.group(1), Path(f)))
+
     if date_str:
         d = date_str.replace("-", "")
+        # 日付指定時は旧形式ファイルも含めて名前に日付文字列を含むものを返す
+        # （従来の挙動を維持。旧形式が残っていても date_str 指定時は明示的なので問題ない）
         return [Path(f) for f in files if d in Path(f).name]
+
     if all_files:
-        return [Path(f) for f in files]
-    return [Path(files[-1])]
+        # 全件取得時は日付なし（旧形式含む）ファイルも従来通りすべて返す
+        return [Path(f) for f in sorted(files)]
+
+    # 日付指定なし・単一ファイル取得時 → tenji_YYYYMMDD.json の中から
+    # 日付が最大（＝最新）のものだけを選ぶ。旧形式ファイルは無視する。
+    if dated:
+        dated.sort(key=lambda t: t[0])
+        return [dated[-1][1]]
+
+    # tenji_YYYYMMDD.json 形式が1つも無い場合のみ、フォールバックとして
+    # 従来の文字列ソート末尾を返す（何も見つからず落ちるより安全側に倒す）
+    return [Path(sorted(files)[-1])]
 
 def _load_one_tenji(path: Path) -> dict:
     try:

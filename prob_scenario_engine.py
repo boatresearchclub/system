@@ -663,7 +663,15 @@ def _calc_tenkai_scores(boats: list, venue: str) -> list:
                 top_k = max(beta_map.keys(), key=lambda k: kimari1.get(k, 0))
                 b1_label = beta_map.get(top_k, "その他")
 
-            # 筆頭威力艇（boostsが既に計算済み）
+            # 筆頭威力艇（1号艇以外で「決まり手威力」が最も高い艇）
+            # [2026-07-02 修正] boosts が定義されないまま参照されており
+            # NameError で calc_prob_from_master が必ず落ちるバグを修正。
+            # kimari_coef_sum（決まり手種別ごとの威力を合算したスコア、
+            # 基礎prob非依存）を「威力」の定義として採用。
+            # ※ 本来の設計意図が別変数だった可能性はあるため、
+            #    v2_pattern_table によるブレンド結果が想定と違う場合は
+            #    ここの定義を見直してください。
+            boosts = {b: v for b, v in kimari_coef_sum.items() if b != 1}
             if boosts:
                 top_direct = max(boosts, key=boosts.get)
                 td_bt      = next((b for b in boats if b["boat"] == top_direct), None)
@@ -717,8 +725,29 @@ def _calc_tenkai_scores(boats: list, venue: str) -> list:
 #   クリップ: [0.60, 1.40] で極端な値を防ぐ
 # ══════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════
+# [2026-07-02] 無効化（dynamic_venue_band3040.js へ移管）
+#
+#   このテーブルは2026-06-25の1回限りのスクショ（会場ごと数件〜十数件）を
+#   固定値化したもの。1週間後（2026-07-02）の実績と比較すると徳山・三国など
+#   複数会場で過大評価⇔過小評価の方向自体が反転しており、固定係数がむしろ
+#   逆効果になっているケースを確認した。
+#
+#   補正の役割はフロントエンドの dynamic_venue_band3040.js に移管した。
+#   そちらは会場×hitProbEstの実績をローリング集計し、サンプル数に応じて
+#   ウェイトを連動させながら自己学習するため、この静的テーブルより追従性が
+#   高い。二重補正を避けるため、ここでは無効化する（_apply_venue_band3040_bias
+#   は早期returnでno-opになる）。
+#
+#   再有効化する場合は _VENUE_BAND3040_ENABLED を True に戻すこと。
+#   ただしテーブルの値自体は2026-06-25時点のまま更新していないため、
+#   再有効化前に最新データで係数を洗い直すこと。
+# ══════════════════════════════════════════════════════════════════
+_VENUE_BAND3040_ENABLED = False
+
 # スクリーンショットの実績値から算出（件数5件未満は None → スキップ）
 # 実績値 / 0.35（目標値）= 補正係数の根拠
+# [2026-07-02] 無効化中（_VENUE_BAND3040_ENABLED = False）。参考値として残置。
 _VENUE_BAND3040_COEF: dict[str, float | None] = {
     "尼崎":   0.00 / 0.35,   # 2件   → 小サンプル（要注意: 将来的にはサンプル増で更新）
     "徳山":   0.00 / 0.35,   # 3件   → 小サンプル
@@ -759,7 +788,14 @@ def _apply_venue_band3040_bias(boats: list, venue: str) -> list:
       1号艇 prob が全体2位との差 >= 0.15（= 突出メンバー）の場合は補正をかけない。
       band3040_bias は「平均的な1号艇が過大評価されていた」実績から導出した係数であり、
       峰竜太クラスの支配的な1号艇に無差別適用すると逆バイアスになる。
+
+    [2026-07-02] _VENUE_BAND3040_ENABLED = False のため無効化中。
+      補正はフロントエンドの dynamic_venue_band3040.js（hitProbEstベース・
+      自己学習）に移管済み。詳細はテーブル直前のコメント参照。
     """
+    if not _VENUE_BAND3040_ENABLED:
+        return boats  # 無効化中: 常にno-op（フロント側 dynamic_venue_band3040.js が補正を担当）
+
     # ── 突出1号艇スキップ判定 ──
     sorted_probs = sorted([bt.get("prob", 0) for bt in boats], reverse=True)
     boat1_prob   = next((bt.get("prob", 0) for bt in boats if int(bt.get("boat", 0)) == 1), None)
