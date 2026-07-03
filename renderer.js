@@ -1111,10 +1111,17 @@ function renderBuy(rno){
     b.tenji_score_indep = tenjiScoreMap ? (tenjiScoreMap[b.boat] ?? null) : null;
   });
 
-  // ── [2026-07-04 追加] コース別キャリブレーション補正 ──
+  // ── [2026-07-04 追加／同日 二重適用修正] コース別キャリブレーション補正 ──
   // computeScenCombosWithEV.js の calibrateCourse1Prob / calibrateOtherCourseProb
   // （calibration.js ①③パネルの実測データで自己学習）を、この画面表示用の
-  // final_prob にも適用する。
+  // final_prob に適用する。
+  //
+  // 【重要】analyzer.js の calcTenkaiProbsExtended（Stage1）側にも同じ関数の
+  //   呼び出しが以前あったが、tenkaiDiff = tenkaiNorm - baseNorm の計算で
+  //   baseNorm（較正前の生prob）との差分を取る際に較正分がそのまま
+  //   tenkaiBonus として再度乗ってしまい、事実上の二重補正になっていたため
+  //   2026-07-04付けで削除した（analyzer.js 側のコメント参照）。
+  //   較正の適用は、全ボーナス合成・正規化が終わった後のこの箇所のみで行う。
   //
   // 【注意】ここで使う補正テーブルは computeScenCombosWithEV.js 内の
   //   calcTenkaiProbs（展示データなしの簡易版）の実測誤差から学習したもので、
@@ -1127,7 +1134,9 @@ function renderBuy(rno){
     const _boat1r = ranked.find(b => b.boat === 1);
     if (_boat1r && typeof calibrateCourse1Prob === 'function') {
       const _raw1r = _boat1r.final_prob;
-      const _cal1r = calibrateCourse1Prob(_raw1r);
+      // [2026-07-04] 旧Stage1側で渡していた個人名（個人逃げ率ブレンド用）を
+      // こちらに引き継ぐ。calibrateCourse1Prob 側が第2引数未対応でも無害。
+      const _cal1r = calibrateCourse1Prob(_raw1r, _boat1r.name ?? null);
       if (_cal1r != null && !isNaN(_cal1r) && Math.abs(_cal1r - _raw1r) > 1e-9) {
         const _othersR = ranked.filter(b => b.boat !== 1);
         const _othersRTotal = _othersR.reduce((s, b) => s + b.final_prob, 0) || 1;

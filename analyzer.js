@@ -949,16 +949,19 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
     * Math.max(0, 1.0 - totalBoost * NIGE_BOOST_SCALE);
   const nigeProbClipped = Math.min(NIGE_CLIP_MAX, Math.max(NIGE_CLIP_MIN, rawNige));
 
-  // ── [2026-06-20 追加] コース別キャリブレーション補正 ──
-  // クリップ後の値（旧 nigeProb）はまだ「平均74.7%→実績60.8%」という
-  // 系統的な過大評価を含んでいる。calibrateCourse1Prob（区分線形補間、
-  // computeScenCombosWithEV.js 側で実測ベースに自動更新される）を通して
-  // 実績水準に引き寄せる。関数が未ロードの場合は従来通りクリップ後の値を使う
-  // （フォールバック。下流の二重補正にはならない）。
-  // [2026-06-29 修正] boat1?.name を渡して個人逃げ率ブレンドを有効化
-  const nigeProb = (typeof calibrateCourse1Prob === 'function')
-    ? calibrateCourse1Prob(nigeProbClipped, boat1?.name ?? null)
-    : nigeProbClipped;
+  // ── [2026-07-04 修正] コース別キャリブレーション補正はここでは適用しない ──
+  // [経緯] 2026-06-20にここへ calibrateCourse1Prob を追加していたが、この値
+  //   （nigeProb）は下流の tenkai_prob / tenkai_score としてそのまま
+  //   renderer.js の STEP2（tenkaiDiff = tenkaiNorm - baseNorm）に渡っていた。
+  //   baseNorm は較正前の生 prob のままなので、この diff に「較正で削った分」が
+  //   丸ごと再度乗ってしまい、tenkaiBonus 経由で較正が事実上二重に効いていた。
+  //   さらに renderer.js 側にも最終 final_prob への直接適用（2026-07-04追加）が
+  //   別途あり、実質2〜3重の較正がかかっていたことが実測ログで確認された。
+  // [対応] 較正の適用箇所を renderer.js の最終適用（final_prob に対して1回のみ）
+  //   に一本化する。ここでは較正前の nigeProbClipped をそのまま使う。
+  //   これにより tenkaiDiff は較正の影響を受けず、展開要因（層3の展示・気象・
+  //   被決まり手プレッシャー）のみを反映する本来の意味に戻る。
+  const nigeProb = nigeProbClipped;
 
   // ══════════════════════════════════════════════════════
   // 【Stage2】2〜6号艇の条件付き勝率（「1号艇が逃げなかった場合」の配分）

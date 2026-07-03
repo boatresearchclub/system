@@ -3187,12 +3187,27 @@ def main():
                 # 展示情報 or 結果情報に変化があったときだけ呼ぶ（内部でも変化なしなら自動スキップする）
                 if maybe_update_tenjihoseiplus is not None and (tenji_changed or result_changed):
                     try:
+                        # 締切時刻マップを構築（CSV優先→公式サイトfallback）。
+                        # _build_deadline_map() のキーは「会場名（日本語）」だが、
+                        # tenjihoseiplus.py 側は tenji JSON の venue（スラッグ、例: "heiwajima"）
+                        # で引くため、VENUE_SLUG でキーを変換してから渡す。
+                        _th_deadline_map = {}
+                        try:
+                            _venues_in_csv = get_venues_in_today_csvs()
+                            _dl_map_ja = _build_deadline_map(_venues_in_csv)
+                            _th_deadline_map = {
+                                VENUE_SLUG.get(v, v): m for v, m in _dl_map_ja.items()
+                            }
+                        except Exception as e:
+                            log(f"  [tenjihoseiplus] ⚠ 締切時刻マップ構築失敗: {e}")
+
                         th_updated = maybe_update_tenjihoseiplus(
                             results_csv_dir=RESULTS_CSV_DIR,
                             tenji_dir=TENJI_DIR,
                             player_map_path=PLAYER_ID_MAP,
                             template_html=TENJIHOSEIPLUS_TEMPLATE,
                             output_html=TENJIHOSEIPLUS_HTML,
+                            deadline_map=_th_deadline_map,
                         )
                     except Exception as e:
                         th_updated = False
