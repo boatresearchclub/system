@@ -1163,29 +1163,21 @@ function renderSidebar() {
     return `<span class="dl-badge dl-normal">${dl}</span>`;
   }
 
-  // 全レース
-  let html = `<button class="race-btn ${state.selKey==='all'?'active':''}" onclick="selectRace('all')">
-    <span class="race-num">全</span>全レース一覧
-  </button>`;
-
-  // ── 締切15分以内 ＋ 展示反映済み のレースを先頭に表示 ──────────────
-  function hasTenji(vr) {
-    return state.entries.some(e => e.venue === vr.venue && e.race === vr.race && e.tenji != null);
-  }
+  // ── 締切15分以内 のレースを最優先で先頭に表示 ──────────────
   const priorityRaces = state.venueRaces
     .map(vr => {
       if (!vr.deadline) return null;
       const [h, m] = vr.deadline.split(":").map(Number);
       const diff = (h * 60 + m) - nowMin;
       if (diff < 0 || diff > 15) return null;
-      if (!hasTenji(vr)) return null;
       return { vr, diff };
     })
     .filter(Boolean)
     .sort((a, b) => a.diff - b.diff);
 
+  let html = "";
   if (priorityRaces.length > 0) {
-    html += `<div class="venue-group"><div class="venue-header" style="color:#e74c3c;">🔥 締切間近（展示あり）</div>`;
+    html += `<div class="venue-group"><div class="venue-header" style="color:#e74c3c;">🔥 締切間近（15分以内）</div>`;
     for (const { vr } of priorityRaces) {
       const active = state.selKey === vr.key;
       const ja = VENUE_JA[vr.venue] || vr.venue;
@@ -1198,6 +1190,11 @@ function renderSidebar() {
     }
     html += `</div>`;
   }
+
+  // 全レース
+  html += `<button class="race-btn ${state.selKey==='all'?'active':''}" onclick="selectRace('all')">
+    <span class="race-num">全</span>全レース一覧
+  </button>`;
 
   // 会場ごとにグループ化
   const byVenue = {};
@@ -2569,6 +2566,8 @@ function entryHTML(e) {
   window.addEventListener("load", () => {
     checkUpdate(); // 初回：ページ読み込み直後にサーバーの最新データへ即同期
     setInterval(checkUpdate, CHECK_INTERVAL);
+    // 締切までの残り時間表示（🔥締切間近リスト含む）を1分ごとに更新
+    setInterval(renderSidebar, 60000);
   });
 
   // 手動更新ボタン
