@@ -1110,6 +1110,46 @@ function renderBuy(rno){
     b.tenkai_prob_base  = b.tenkai_prob;
     b.tenji_score_indep = tenjiScoreMap ? (tenjiScoreMap[b.boat] ?? null) : null;
   });
+
+  // ── [2026-07-04 追加] コース別キャリブレーション補正 ──
+  // computeScenCombosWithEV.js の calibrateCourse1Prob / calibrateOtherCourseProb
+  // （calibration.js ①③パネルの実測データで自己学習）を、この画面表示用の
+  // final_prob にも適用する。
+  //
+  // 【注意】ここで使う補正テーブルは computeScenCombosWithEV.js 内の
+  //   calcTenkaiProbs（展示データなしの簡易版）の実測誤差から学習したもので、
+  //   ここで使っている calcTenkaiProbsExtended（展示・気象・スリット込み）とは
+  //   厳密には別モデル。系統的な過大評価の傾向は共通するはずだが完全一致は
+  //   保証されないため、あくまで暫定的な代用補正である。
+  //   本来は本画面の final_prob 専用の実績照合パネルを別途用意し、
+  //   専用のキャリブレーションテーブルで学習させるのが望ましい。
+  try {
+    const _boat1r = ranked.find(b => b.boat === 1);
+    if (_boat1r && typeof calibrateCourse1Prob === 'function') {
+      const _raw1r = _boat1r.final_prob;
+      const _cal1r = calibrateCourse1Prob(_raw1r);
+      if (_cal1r != null && !isNaN(_cal1r) && Math.abs(_cal1r - _raw1r) > 1e-9) {
+        const _othersR = ranked.filter(b => b.boat !== 1);
+        const _othersRTotal = _othersR.reduce((s, b) => s + b.final_prob, 0) || 1;
+        const _remainR = Math.max(0, 1 - _cal1r);
+        _othersR.forEach(b => { b.final_prob = _remainR * (b.final_prob / _othersRTotal); });
+        _boat1r.final_prob = _cal1r;
+      }
+    }
+    if (typeof calibrateOtherCourseProb === 'function') {
+      ranked.forEach(b => {
+        if (b.boat == null || b.boat === 1 || b.final_prob == null) return;
+        const _rawOr = b.final_prob;
+        const _calOr = calibrateOtherCourseProb(_rawOr, b.boat);
+        if (_calOr != null && !isNaN(_calOr)) b.final_prob = _calOr;
+      });
+      const _renormR = ranked.reduce((s, b) => s + (b.final_prob || 0), 0);
+      if (_renormR > 0 && Math.abs(_renormR - 1) > 1e-9) {
+        ranked.forEach(b => { b.final_prob = b.final_prob / _renormR; });
+      }
+    }
+  } catch (_ccr) { /* 補正失敗時は無補正のまま続行（フォールバック） */ }
+
   ranked.sort((a, b) => b.final_prob - a.final_prob);
 
   // ─ STEP3: 2着率計算（inn_2place ベース）
