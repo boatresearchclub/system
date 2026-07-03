@@ -1485,18 +1485,45 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
   //
   // 各コース（1〜6）の係数: 1.0が「バイアスなし」、>1.0が「このkimariで出やすい」
   // ══════════════════════════════════════════════════════════════════
-  const KIMARI_PLACE2_BIAS = {
-    // コース: [1,  2,    3,    4,    5,    6  ]
-    '逃げ':       [0.0, 1.25, 1.20, 1.00, 0.90, 0.80],  // 1コース除外、内コース有利
-    '差し':       [1.40, 0.0, 1.20, 0.90, 0.85, 0.75],  // 1コース残りやすい（差された後）
-    'まくり':     [1.30, 1.20, 0.85, 0.0, 0.90, 0.85],  // 1/2コースが残りやすい
-    'まくり差し': [1.35, 1.25, 0.80, 0.85, 0.0, 0.80],  // 1/2コースが残りやすい
-    '抜き':       [1.00, 1.00, 1.00, 1.00, 1.00, 1.00], // バイアスなし
+  // [2026-07-03 置き換え] KIMARI_PLACE2_BIAS（決まり手キー・全国平均の決め打ち）を廃止。
+  //
+  // 【廃止理由】
+  //   calibration.js の実績データ（allResultsScenAll, actual1st/actual2nd）を使い、
+  //   1着コース別の実際の2着分布を集計したところ、'差し'[2コース]=0.0、
+  //   'まくり'[4コース]=0.0、'まくり差し'[5コース]=0.0 の3件すべてが誤りと判明した
+  //   （実測ではいずれも他コースと遜色ない頻度で2着に来ていた。例: まくり決まり手時の
+  //   4コース実測2着率11.8% vs 旧係数0.0）。'決まり手で勝った/差された側は2着に残れない'
+  //   という前提が実データと矛盾していたため、0.0によるハード排除は撤廃する。
+  //
+  //   また『kimari』（実際の決まり手）はそもそも allResultsScenAll に記録されておらず
+  //   （top_stats.js の results.push には actualKimari フィールドが無かった）、
+  //   検証時は actual1st（実際の1着コース。これは確実に記録されている）を代理指標として
+  //   使わざるを得なかった。であれば最初から『1着コース』をキーにしたテーブルに
+  //   置き換える方が、集計可能なデータと補正ロジックの対象が一致し整合的である。
+  //   ※ top_stats.js 側に actualKimari 記録を追加すれば（本パッチと合わせて反映済み）、
+  //     将来的には真の決まり手別データが溜まり次第、このテーブルをさらに精緻化できる。
+  //
+  // 【値の出典】2026-07-03 実測集計（1着コース別・2着コース分布、単位:件）
+  //   1着=1(n=1348): 2:498 3:376 4:251 5:154 6:69
+  //   1着=2(n=276) : 1:119 3:55  4:48  5:33  6:21
+  //   1着=3(n=271) : 1:109 2:53  4:49  5:37  6:23
+  //   1着=4(n=201) : 1:66  2:35  3:31  5:41  6:28
+  //   1着=5(n=132) : 1:52  2:30  3:16  4:18  6:16
+  //   1着=6(n=47)  : 1:18  2:4   3:8   4:10  5:7   ※サンプルやや少なめ、要継続監視
+  //   係数 = 実測2着出現率 ÷ 平均値(1/5=20%)。1.0=平均的、0.0は使用しない。
+  const WINNER_COURSE_PLACE2_COEF = {
+    // 1着コース: [2着候補コース1, 2, 3, 4, 5, 6]（自コース＝winner自身はnullで未使用）
+    1: [null, 1.85, 1.39, 0.93, 0.57, 0.26],
+    2: [2.16, null, 1.00, 0.87, 0.60, 0.38],
+    3: [2.01, 0.98, null, 0.90, 0.68, 0.42],
+    4: [1.64, 0.87, 0.77, null, 1.02, 0.70],
+    5: [1.97, 1.14, 0.61, 0.68, null, 0.61],
+    6: [1.92, 0.43, 0.85, 1.06, 0.75, null],
   };
   // bias係数の適用強度（0=無効, 1=フル適用）
   // [2026-06-25] 0.4 → 0.55 に引き上げ
   // 理由: キャリブレーション診断で2着予測の1位-2位的中率差が6%のみ（目標10%+）
-  //   であり、kimariタイプ別コースバイアスが十分に効いていなかった。
+  //   であり、コース別バイアスが十分に効いていなかった。
   //   0.55 は tenkai_remaining の実データを尊重しつつバイアスを効かせる実用的な中間値。
   //   2着確率の40-60%帯過大評価（+15%）は当日修正済みの展示クリップ引き下げで対応済み
   //   のため、この引き上げは2着識別力改善のみを目的とする。
@@ -1511,14 +1538,15 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
       .filter(r => r.boat !== winner.boat)
       .reduce((s, r) => s + (r.final_prob ?? r.tenkai_prob), 0) || 1;
 
+    // [2026-07-03] 1着コース別バイアス配列（実測ベース）。kimariに依存しないため
+    // winnerループの外（＝1回だけ）で取得する。
+    const biasByWinnerCourse = WINNER_COURSE_PLACE2_COEF[winner.boat] ?? null;
+
     for(const kimari of kimariTypes){
       if(!(scenarioProb[winner.boat]?.[kimari] > 0)) continue;
 
       const useInn2 = (kimari === '逃げ' && winner.boat === 1 && Object.keys(inn2Place).length > 0);
       const remForThis = tenkaiRem[kimari]?.[wc] || null;
-
-      // kimari別バイアス配列（コース1〜6に対応。インデックス=boat-1）
-      const biasByKimari = KIMARI_PLACE2_BIAS[kimari] ?? KIMARI_PLACE2_BIAS['抜き'];
 
       const place2List = rawBoats
         .filter(b => b.boat !== winner.boat)
@@ -1609,8 +1637,10 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             : 1.0;
           p2 *= rankCoef2;
 
-          // ── [2026-06-25 新規 / 2026-07-02 改修] kimariタイプ別 2着コースバイアス補正 ──
-          // biasByKimari[boat-1] が各コースの「このkimariで出やすさ」係数（全国平均ベースの決め打ち値）。
+          // ── [2026-07-03 改修] 1着コース別 2着コースバイアス補正（実測ベース） ──
+          // biasByWinnerCourse[boat-1] が各コースの「この1着コースの時の出やすさ」係数
+          // （2026-07-03 実測集計ベース。旧KIMARI_PLACE2_BIASの0.0強制排除は
+          //  実測検証で3件とも誤りと判明したため廃止し、ハードゼロは一切使わない）。
           //
           // [2026-07-02] 旧実装は tenkai_remaining（会場別・決まり手別の実測2着率）で
           // ベース値 p2 を算出済みの艇に対しても、KIMARI_BIAS_STRENGTH=0.55 固定で
@@ -1620,18 +1650,12 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
           //
           // 改修: 実測データの信頼度 _dataTrust2（tenkai_remainingのtrust列＝レース数由来、
           // またはinn_2placeなら1.0）に応じてバイアス強度を動的に絞る。
-          //   実測データ十分（trust→1） → 全国平均バイアスはほぼ効かせない
+          //   実測データ十分（trust→1） → 自社実測ベースのバイアスはほぼ効かせない
           //   実測データが薄い/ない（trust→0） → 従来通りKIMARI_BIAS_STRENGTH(0.55)をフル適用
-          const rawBias = biasByKimari[b.boat - 1] ?? 1.0;
+          const rawBias = biasByWinnerCourse?.[b.boat - 1] ?? 1.0;
           const effectiveBiasStrength = KIMARI_BIAS_STRENGTH * (1 - _dataTrust2);
-          // 勝者コースが bias 配列で 0.0 になっているコース（=物理的に不可能）は
-          // この winner では 0 のまま（正規化で除外される）。実測データの有無に関わらず除外は維持。
-          if(rawBias <= 0){
-            p2 = 0;  // このシナリオでは2着に来得ないコース
-          } else {
-            const blendedBias = 1.0 * (1 - effectiveBiasStrength) + rawBias * effectiveBiasStrength;
-            p2 *= blendedBias;
-          }
+          const blendedBias = 1.0 * (1 - effectiveBiasStrength) + rawBias * effectiveBiasStrength;
+          p2 *= blendedBias;
 
           return { boat: b.boat, name: b.name, p2 };
         });
