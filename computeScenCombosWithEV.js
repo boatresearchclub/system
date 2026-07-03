@@ -333,6 +333,141 @@
     try { localStorage.setItem(_COURSE1_CALIB_LS_KEY, JSON.stringify(COURSE1_CALIB_POINTS)); } catch (_e) {}
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // § 1.6  2〜6号艇 コース別（確率帯別）キャリブレーション補正テーブル
+  //
+  //   【背景】2026-07-03 診断（calibration.js ①③パネル）により、
+  //   1号艇のみ calibrateCourse1Prob で補正され、2〜6号艇の final_prob は
+  //   無補正のまま出力されていたことが判明。特に20〜40%帯（主に2〜4コース艇）
+  //   で実績が推定を大きく下回る過大評価が残存していた
+  //   （20-30%帯: 推定24.2%→実績16.3%、30-40%帯: 推定33.9%→実績16.7%）。
+  //
+  //   【方針】COURSE1_CALIB_POINTS と同じ区分線形補間方式を2〜6号艇にも適用する。
+  //   ただしコース1は1点（市場平均のnigeProb）に対して実績が概ね線形に効くのに対し、
+  //   2〜6号艇は確率帯によって誤差の大きさが大きく異なる（0-10%帯は過小評価、
+  //   20-40%帯は過大評価）ため、コースごとに複数点（BINS単位）の区分線形テーブルを
+  //   持たせる。1点しか実績が無いコース・帯は [0,0]→[実測点]→[1,実測点] にフォールバック。
+  //
+  //   【二重補正・自己崩壊ループ対策】
+  //   コース1と同じく、学習には「本モジュールの補正が適用される前」の生値を使う。
+  //   2〜6号艇はこれまで補正が存在しなかったため、boatProbs = 生値だったが、
+  //   本モジュール導入後は boatProbsRaw[course] に生値を保存するので、
+  //   calibration.js 側はそちらを優先して学習に使うこと（updateCourseOtherCalibPoints
+  //   の呼び出し元で対応）。
+  // ─────────────────────────────────────────────────────────────────────────
+  const _COURSE_OTHER_CALIB_LS_KEY = 'scen_calib_course_other_v1';
+  const OTHER_COURSES = [2, 3, 4, 5, 6];
+
+  function _loadCourseOtherCalibFromLS() {
+    try {
+      const raw = localStorage.getItem(_COURSE_OTHER_CALIB_LS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      // 各コースのテーブルが妥当かチェックし、不正なコースは除外
+      const cleaned = {};
+      OTHER_COURSES.forEach(c => {
+        if (_isSaneCalibPoints(parsed[c])) cleaned[c] = parsed[c];
+      });
+      return Object.keys(cleaned).length > 0 ? cleaned : null;
+    } catch (_e) { return null; }
+  }
+
+  // デフォルト: 補正なし（y=x）。calibration.js パネルに実測が蓄積され次第、
+  // updateCourseOtherCalibPoints が localStorage に学習結果を保存し、以後はそちらを使う。
+  const COURSE_OTHER_CALIB_POINTS = _loadCourseOtherCalibFromLS() || {
+    2: [[0.00, 0.00], [1.00, 1.00]],
+    3: [[0.00, 0.00], [1.00, 1.00]],
+    4: [[0.00, 0.00], [1.00, 1.00]],
+    5: [[0.00, 0.00], [1.00, 1.00]],
+    6: [[0.00, 0.00], [1.00, 1.00]],
+  };
+
+  /**
+   * 2〜6号艇の final_prob を実測ベースで補正する（区分線形補間）。
+   * @param {number} rawProb  補正前の final_prob (0〜1)
+   * @param {number} course   枠番（2〜6）
+   * @returns {number}        補正後の値（0〜1）
+   */
+  window.calibrateOtherCourseProb = function (rawProb, course) {
+    if (rawProb == null || isNaN(rawProb)) return rawProb;
+    const pts = COURSE_OTHER_CALIB_POINTS[course];
+    if (!pts || pts.length < 2) return rawProb;
+    const p = Math.max(0, Math.min(1, rawProb));
+
+    if (p <= pts[0][0]) return pts[0][1];
+    if (p >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+
+    for (let i = 1; i < pts.length; i++) {
+      const [x0, y0] = pts[i - 1];
+      const [x1, y1] = pts[i];
+      if (p <= x1) {
+        const t = (x1 - x0) > 1e-9 ? (p - x0) / (x1 - x0) : 0;
+        return y0 + t * (y1 - y0);
+      }
+    }
+    return p; // fallback（到達しないはず）
+  };
+
+  /**
+   * calibration.js の calcWinProbCalibrationByCourse() 結果
+   * （{ course(2-6): [ {estAvg, actual, count}, ... ] }）で
+   * COURSE_OTHER_CALIB_POINTS を更新する。
+   * updateCourse1CalibPoints / updateCalibPoints と同じ
+   * 自己崩壊ループ対策（最低サンプル数・異常値ガード・単調性チェック）を踏襲する。
+   *
+   * @param {Object} courseBinStats  { 2: [...], 3: [...], ..., 6: [...] }
+   */
+  window.updateCourseOtherCalibPoints = function (courseBinStats) {
+    if (!courseBinStats || typeof courseBinStats !== 'object') return;
+
+    const MIN_SAMPLES_HARD_BIN = 50; // 帯ごとの最低サンプル数（艇単位×レースなので比較的多め）
+
+    OTHER_COURSES.forEach(course => {
+      const bins = courseBinStats[course];
+      if (!Array.isArray(bins) || bins.length === 0) return;
+
+      // サンプル十分な帯だけを採用し、estAvg昇順に並べる
+      const usable = bins
+        .filter(b => b && b.estAvg != null && b.actual != null && b.count >= MIN_SAMPLES_HARD_BIN)
+        .sort((a, b) => a.estAvg - b.estAvg);
+
+      if (usable.length === 0) return; // このコースは全帯サンプル不足→既存テーブル維持
+
+      // 崩壊値ガード: 高確率帯で実績が極端に低い場合は更新しない
+      const collapsed = usable.some(b => b.estAvg >= HIGH_PROB_BIN_MIN && b.actual <= EXTREME_LOW_ACTUAL_THRESH);
+      if (collapsed) {
+        console.warn(`[updateCourseOtherCalibPoints] course${course}: 異常値（崩壊値）のため更新をスキップしました。`, usable);
+        return;
+      }
+
+      // 両端を [0,0] / [1, 最終帯の実績] で挟む
+      const lastActual = usable[usable.length - 1].actual;
+      const newPoints = [[0.00, 0.00], ...usable.map(b => [b.estAvg, b.actual]), [1.00, lastActual]];
+
+      // x が単調増加になるよう重複・逆転を除去（同一estAvgが並んだ場合は後者を優先）
+      const dedup = [];
+      newPoints.forEach(pt => {
+        if (dedup.length > 0 && pt[0] <= dedup[dedup.length - 1][0]) {
+          dedup[dedup.length - 1] = pt;
+        } else {
+          dedup.push(pt);
+        }
+      });
+
+      if (!_isSaneCalibPoints(dedup)) {
+        console.warn(`[updateCourseOtherCalibPoints] course${course}: 更新後テーブルが異常と判定されたため、適用を中止しました。`, dedup);
+        return;
+      }
+
+      COURSE_OTHER_CALIB_POINTS[course] = dedup;
+    });
+
+    try {
+      localStorage.setItem(_COURSE_OTHER_CALIB_LS_KEY, JSON.stringify(COURSE_OTHER_CALIB_POINTS));
+    } catch (_e) { /* 保存失敗は無視 */ }
+  };
+
   /**
    * キャリブレーション補正テーブルを外部から更新する。
    * calibration.js の binStats を渡すと自動更新できる。
@@ -712,6 +847,26 @@
                     }
                   } catch (_cc1b) { /* 補正失敗時は無補正のまま続行 */ }
 
+                  // ── [2026-07-03 追加] 2〜6号艇のコース別キャリブレーション補正 ──
+                  // 非キャッシュ経路と同一ロジック（§1.6 calibrateOtherCourseProb）。
+                  try {
+                    if (typeof calibrateOtherCourseProb === 'function') {
+                      _ranked2.forEach(b => {
+                        if (b.boat == null || b.boat === 1 || b.final_prob == null) return;
+                        const _rawOtherB = b.final_prob;
+                        _boatProbsRaw[b.boat] = _rawOtherB; // 再学習用（補正前の生値）
+                        const _calOtherB = calibrateOtherCourseProb(_rawOtherB, b.boat);
+                        if (_calOtherB != null && !isNaN(_calOtherB)) {
+                          b.final_prob = _calOtherB;
+                        }
+                      });
+                      const _renormTotalB = _ranked2.reduce((s, b) => s + (b.final_prob || 0), 0);
+                      if (_renormTotalB > 0 && Math.abs(_renormTotalB - 1) > 1e-9) {
+                        _ranked2.forEach(b => { b.final_prob = b.final_prob / _renormTotalB; });
+                      }
+                    }
+                  } catch (_ccob) { /* 補正失敗時は無補正のまま続行 */ }
+
                   _ranked2.forEach(b => { if (b.boat != null) _boatProbs[b.boat] = b.final_prob; });
                 }
               } finally {
@@ -964,6 +1119,30 @@
               }
             }
           } catch (_cc1) { /* 補正失敗時は無補正のまま続行（フォールバック） */ }
+
+          // ── [2026-07-03 追加] 2〜6号艇のコース別キャリブレーション補正 ──
+          // 上のブロックで1号艇の補正差分を「比率のまま」再配分しただけの
+          // 2〜6号艇の final_prob（＝生値）に、calibrateOtherCourseProb で
+          // コース別・確率帯別の実測補正をかける。最後に6艇合計が1.0になるよう
+          // 全体を再正規化する（1号艇補正済みの値も含めて再スケールされるが、
+          // 相対順位は変えず絶対水準だけを実測に近づけるという設計思想は維持）。
+          try {
+            if (typeof calibrateOtherCourseProb === 'function') {
+              ranked2.forEach(b => {
+                if (b.boat == null || b.boat === 1 || b.final_prob == null) return;
+                const _rawOther = b.final_prob;
+                b._rawCourseProb = _rawOther; // 再学習用（補正前の生値）
+                const _calOther = calibrateOtherCourseProb(_rawOther, b.boat);
+                if (_calOther != null && !isNaN(_calOther)) {
+                  b.final_prob = _calOther;
+                }
+              });
+              const _renormTotal = ranked2.reduce((s, b) => s + (b.final_prob || 0), 0);
+              if (_renormTotal > 0 && Math.abs(_renormTotal - 1) > 1e-9) {
+                ranked2.forEach(b => { b.final_prob = b.final_prob / _renormTotal; });
+              }
+            }
+          } catch (_cco) { /* 補正失敗時は無補正のまま続行（フォールバック） */ }
 
           ranked2.sort((a, b) => b.final_prob - a.final_prob);
         } catch (_efp) {
@@ -1237,11 +1416,12 @@
         if (b.boat != null && b.final_prob != null) {
           boatProbs[b.boat] = b.final_prob;
         }
-        // [2026-06-20 追加] 1号艇のみ補正前の生値も保持。
-        // calibration.js がこちらを使って updateCourse1CalibPoints を
-        // 呼ぶことで、補正済み値を学習材料にする自己崩壊ループを防ぐ。
-        if (b.boat === 1 && b._rawCourseProb != null) {
-          boatProbsRaw[1] = b._rawCourseProb;
+        // [2026-06-20 追加/2026-07-03 拡張] 全艇の補正前の生値も保持。
+        // calibration.js がこちらを使って updateCourse1CalibPoints /
+        // updateCourseOtherCalibPoints を呼ぶことで、補正済み値を
+        // 学習材料にしてしまう自己崩壊ループを防ぐ。
+        if (b.boat != null && b._rawCourseProb != null) {
+          boatProbsRaw[b.boat] = b._rawCourseProb;
         }
       });
 

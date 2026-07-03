@@ -433,6 +433,49 @@
     }));
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-03 追加] 2〜6号艇 コース別×確率帯別 勝率キャリブレーション
+  // ──────────────────────────────────────────────────────────────────
+  // calcCalibrationByCourse はコースごとに単一の平均値しか出さないため、
+  // computeScenCombosWithEV.js の updateCourseOtherCalibPoints に渡す
+  // 「帯ごとの実測」を作れない。calcWinProbCalibration と同じ BINS を
+  // コース別に束ね直し、{ 2: [...], 3: [...], ..., 6: [...] } を返す。
+  // コース1は既存の calibrateCourse1Prob/updateCourse1CalibPoints が
+  // 単一点方式で担当しているため、ここでは対象外（2〜6号艇のみ）。
+  function calcWinProbCalibrationByCourse(results) {
+    const courses = [2, 3, 4, 5, 6];
+    const out = {};
+
+    courses.forEach(course => {
+      const binned = BINS.map(bin => ({
+        label: bin.label, min: bin.min, max: bin.max,
+        total: 0, hits: 0, sumEst: 0,
+      }));
+
+      (results || []).forEach(r => {
+        const winner = _getWinnerCourse(r);
+        if (winner == null) return;
+        const est = _getBoatProb(r, course);
+        if (est == null) return;
+        const bin = binned.find(b => est >= b.min && est < b.max);
+        if (!bin) return;
+        bin.total++;
+        bin.sumEst += est;
+        if (winner === course) bin.hits++;
+      });
+
+      out[course] = binned.map(b => ({
+        label  : b.label,
+        count  : b.total,
+        hits   : b.hits,
+        actual : b.total > 0 ? b.hits / b.total : null,
+        estAvg : b.total > 0 ? b.sumEst / b.total : null,
+      }));
+    });
+
+    return out;
+  }
+
   // コース別勝率キャリブレーション HTML生成
   function buildCoursCalibHTML(courseStats, totalAll) {
     const maxBar = 100; // px（バーの最大幅px）
@@ -1114,6 +1157,26 @@
         const courseStatsRaw = calcCalibrationByCourse(allRawCourse);
         if (typeof updateCourse1CalibPoints === 'function') updateCourse1CalibPoints(courseStatsRaw);
       } catch (_ccErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
+
+      // ―― ④ 2〜6号艇の補正テーブル更新には各艇の「生の推定値」を使用する ――
+      // [2026-07-03 追加] ①③と同じ自己崩壊ループ対策。
+      // boatProbsRaw[course]（computeScenCombosWithEV.js § 1.6 が保持する
+      // 補正前の final_prob）があればそちらで boatProbs[course] を上書きしてから
+      // 集計する。無ければ（旧データ・導入直後で raw 未保存等）boatProbs の
+      // ままフォールバックする（無補正時は raw==補正後なので実害なし）。
+      try {
+        const allRawOther = all.map(r => {
+          if (!r.boatProbsRaw) return r;
+          const overrides = {};
+          [2, 3, 4, 5, 6].forEach(c => {
+            if (r.boatProbsRaw[c] != null) overrides[c] = r.boatProbsRaw[c];
+          });
+          if (Object.keys(overrides).length === 0) return r;
+          return Object.assign({}, r, { boatProbs: Object.assign({}, r.boatProbs, overrides) });
+        });
+        const courseBinStatsRaw = calcWinProbCalibrationByCourse(allRawOther);
+        if (typeof updateCourseOtherCalibPoints === 'function') updateCourseOtherCalibPoints(courseBinStatsRaw);
+      } catch (_ccoErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
 
       container.innerHTML = `
         <div class="ai-stats-card" style="margin-bottom:0.6rem">

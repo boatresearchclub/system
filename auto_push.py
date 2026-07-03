@@ -1790,7 +1790,8 @@ def _push_queue_worker():
                 last_push_time = time.time()
                 log(f"  [PushQueue] ✓ push完了: {msg}")
             else:
-                log(f"  [PushQueue] ✕ push失敗（リトライ上限到達）: {msg}")
+                log(f"  [PushQueue] ✕✕✕ push失敗（リトライ上限到達）: {msg}")
+                log(f"  [PushQueue] ⚠️ 認証切れ・SSH疎通不可等の可能性 → 手元PCでの確認が必要です")
 
         except Exception as e:
             log(f"  [PushQueue] ✕ 例外: {e}")
@@ -2629,13 +2630,26 @@ def git_push(changed_files, urgent=False):
         log(f"  pushキューに追加 [{push_summary}]" + ("（緊急）" if urgent else ""))
         return True
 
-def _run_nolock(cmd):
-    """_git_lock 取得済みの内部から呼ぶ git サブコマンド実行（ロックなし版）"""
+def _run_nolock(cmd, timeout=60):
+    """_git_lock 取得済みの内部から呼ぶ git サブコマンド実行（ロックなし版）
+
+    GIT_TERMINAL_PROMPT=0 でGitの対話プロンプト（Credential Manager の
+    ブラウザ認証待ちを含む）を即座に失敗させ、さらに timeout でも二重に
+    ハングを防ぐ。認証エラー時は無人稼働のまま止まり続けず、失敗として
+    ログ・リトライ・通知の既存フローに乗せる。
+    """
     if cmd[0] == "git" and cmd[1] in ("commit", "add"):
         _clear_git_lock()
-    r = subprocess.run(cmd, cwd=str(SCRIPTS_DIR),
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return r.returncode, (r.stdout + r.stderr).strip()
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    try:
+        r = subprocess.run(cmd, cwd=str(SCRIPTS_DIR),
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env, timeout=timeout)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return 1, f"[TIMEOUT] '{' '.join(cmd)}' が{timeout}秒でタイムアウト（認証待ち等でハングした可能性）"
 
 def _git_add_locked(changed_files):
     """_git_lock 保持中に呼ばれる。git add（難読化含む）だけ実施。commit/pushはしない。"""
