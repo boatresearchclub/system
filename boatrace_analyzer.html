@@ -2333,8 +2333,9 @@ function bar(rate, max, color) {
 
 function diffVal(v) {
   if (v == null) return `<span class="dv na">データなし</span>`;
-  const cls = v > 0 ? "pos" : v < 0 ? "neg" : "neu";
-  return `<span class="dv ${cls}">${v > 0 ? "+" : ""}${v.toFixed(1)}%</span>`;
+  const rounded = Math.round(v);
+  const cls = rounded > 0 ? "pos" : rounded < 0 ? "neg" : "neu";
+  return `<span class="dv ${cls}">${rounded > 0 ? "+" : ""}${rounded}%</span>`;
 }
 
 function entryHTML(e) {
