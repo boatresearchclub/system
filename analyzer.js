@@ -50,6 +50,12 @@ function getCourseMaster(name, course) {
   return cmBase?.[name]?.[course];
 }
 
+// [追加 2026-07-05] 3着予測の最終フォールバック用・コース別固定統計値。
+// 会場別データ・全国平均データの両方が欠損している場合にのみ使用する。
+// final_prob（1着確率）への引きずられを防ぐための絶対的な最終防波堤。
+const FIXED_3RD_RATE_BY_COURSE = { 1: 0.14, 2: 0.17, 3: 0.18, 4: 0.19, 5: 0.17, 6: 0.15 };
+const FIXED_3RD_RATE_DEFAULT   = 0.16;
+
 // buildWeatherBar / buildCourseOrderBanner / buildTenjiSection は renderer.js で定義済み
 
 // VENUE_TENJI_CONFIG / SUMINOE_TENJI_TABLE / VENUE_SLUG_MAP は config.js で定義済み
@@ -1807,18 +1813,20 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         r3 = personR3;
       } else {
         // ④フォールバック: コース別全国平均3着率テーブルを優先使用
-        // [2026-06-25] 旧実装は final_prob 相対比を使っていたが、これは
-        // 1着確率の高い艇を3着にも引き上げる傾向があり、3着予測が
-        // 「機能していない」（1位23%・5位以下17%でほぼ均等）の原因の一つ。
-        // 会場の3着残存率テーブルがあれば優先し、なければ全国平均を使う。
-        // 全国平均もなければ final_prob 相対比（旧動作）に落ちる。
+        // [修正 2026-07-05] avgR3 も無い場合に final_prob 相対比へ逃げる
+        // ルートを完全に切断。1着確率の高い艇を3着にも引き上げてしまい
+        // 3着予測が機能しない原因だったバグの再発防止。
+        // 会場別・全国平均のどちらも欠損している場合は、コース別の固定
+        // 統計値を最終フォールバックとして必ず適用する。
         const avgR3 = MASTER_EXT?.venue_stats?.[_venueForCalc3rd]?.avg_3rd_rate?.[String(b.boat)]
                    ?? MASTER_EXT?.avg_3rd_rate?.[String(b.boat)]
                    ?? null;
-        r3 = avgR3;  // null の場合は baseScore で final_prob 比を使う（下記）
+        r3 = avgR3 ?? (FIXED_3RD_RATE_BY_COURSE[b.boat] ?? FIXED_3RD_RATE_DEFAULT);
       }
 
-      const baseScore = r3 ?? ((b.final_prob ?? b.tenkai_prob ?? 0) / candidateTotal);
+      // [修正 2026-07-05] r3 は上記のいずれかの分岐で必ず値が入るため、
+      // final_prob / tenkai_prob への引きずられルートはここで完全排除する。
+      const baseScore = r3;
 
       const CLIP3_BY_COURSE = {
         1: [0.85, 1.20],

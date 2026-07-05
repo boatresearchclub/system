@@ -165,13 +165,23 @@ def resolve_player_name(raw_name: str, reg_no) -> tuple[str, str]:
 # ST補正・調子補正
 # ══════════════════════════════════════════════════════════════════
 
-def st_rank_to_correction(st_rank) -> float:
+def st_rank_to_correction(st_rank, course: str = "1") -> float:
     """
-    コース別ST順位 → 補正係数（rank=1→1.2 / rank=3.0→1.0 / rank=6→0.7）
+    コース別ST順位 → 補正係数。
+    [修正 2026-07-05] 全コース共通の基準値(3.0固定)・感度係数(0.048固定)を、
+    master_data.json の meta.parameters.st_avg_by_course /
+    st_sensitivity_by_course（コース別の実測値）に差し替え。
+    旧実装は「選手個人のst_rankは見ているが、比較対象の基準値・感度が
+    全コース一律」だったため、1コースはST差の影響が強く・6コースは
+    弱いという実態を無視して補正がねじれていた。
+    例: 1コースは基準3.14・感度0.15、6コースは基準4.04・感度0.03。
     """
     if st_rank is None:
         return 1.0
-    raw = 1.0 + (3.0 - st_rank) * (0.12 / 2.5)
+    params      = MASTER.get("meta", {}).get("parameters", {})
+    baseline    = params.get("st_avg_by_course", {}).get(course, 3.0)
+    sensitivity = params.get("st_sensitivity_by_course", {}).get(course, 0.048)
+    raw = 1.0 + (baseline - st_rank) * sensitivity
     return max(0.82, min(1.12, raw))
 
 
@@ -685,7 +695,20 @@ def _calc_tenkai_scores(boats: list, venue: str) -> list:
 
                     entry = v2_table.get(pk)
                     if entry:
-                        V2_BLEND = 0.35 if entry.get("reliable") else 0.15
+                        is_reliable = entry.get("reliable", False)
+                        V2_BLEND = 0.35 if is_reliable else 0.15
+
+                        # [修正 2026-07-05] サンプル数不足(n<500)のパターンで
+                        # ブレンドした場合、該当レース全艇に「予測不適正」警告
+                        # フラグを付与する。has_insufficientによるTrueは上書き
+                        # しない（Trueへの追加のみ・Falseへの後戻りはしない）。
+                        if not is_reliable:
+                            for wbt in boats:
+                                wbt["prob_warning"] = True
+                                wbt.setdefault("prob_warning_reason", [])
+                                if "low_sample_pattern" not in wbt["prob_warning_reason"]:
+                                    wbt["prob_warning_reason"].append("low_sample_pattern")
+
                         # 1号艇: 実績boat1_rateに向けてブレンド
                         target1   = entry["boat1_rate"]
                         cur_total = sum(raw_scores.values()) or 1.0
@@ -951,7 +974,7 @@ def calc_prob_from_master(
             pi      = player_index.get(name, {})
             st_rank = pi.get("st_rank", {}).get(c)
 
-        st_corr   = st_rank_to_correction(st_rank)
+        st_corr   = st_rank_to_correction(st_rank, c)
         pi        = player_index.get(name)
         overall_w = pi.get("overall_win") if pi else None
         form_corr = form_correction(pi, overall_w)

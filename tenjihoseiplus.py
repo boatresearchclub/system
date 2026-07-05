@@ -35,6 +35,18 @@ import glob
 import io
 from pathlib import Path
 from collections import defaultdict
+from datetime import datetime, timedelta
+
+# ============================================================
+# 直近データ限定モード
+#   競艇場は温水パイプの有無（冬夏）やプロペラ制度で傾向が変わるため、
+#   「直近 N 日」に絞った集計の方が実戦投資での精度が担保されやすい。
+#   ここで設定した日数が、全期間集計とは別枠の「直近集計」の対象期間になる。
+#   （全期間集計は既存互換のため引き続き ctp/cap/pcp/pca/pcd/pcavg 等の
+#    キー名でそのまま出力し、直近集計は同名+"R"（Recent）サフィックスの
+#    キーで追加出力する＝両方をHTML側に渡してユーザーが切り替えられる）
+# ============================================================
+RECENT_DAYS_LIMIT = 90
 
 # ============================================================
 # 会場名 日本語→英語スラッグ
@@ -100,6 +112,18 @@ def calc_rates(places: list) -> dict | None:
 def normalize_date(d) -> str:
     return str(d).replace("-", "").replace("/", "").strip()
 
+def recent_cutoff_str(recent_days: int, base_date: datetime = None) -> str:
+    """直近Nモードのカットオフ日付をYYYYMMDD文字列で返す（この日付を含めて以降が対象）。"""
+    base = base_date or datetime.now()
+    cutoff = base - timedelta(days=recent_days)
+    return cutoff.strftime("%Y%m%d")
+
+def is_recent(date_str: str, cutoff_str: str) -> bool:
+    """date_str / cutoff_str は YYYYMMDD 形式。date_str が不正な場合は対象外(False)扱い。"""
+    if not date_str or len(date_str) != 8 or not date_str.isdigit():
+        return False
+    return date_str >= cutoff_str
+
 def normalize_race(r) -> str:
     try:
         return str(int(str(r).strip()))
@@ -109,7 +133,16 @@ def normalize_race(r) -> str:
 
 # ---------- CSV集計 ----------
 
-def aggregate_csvs(csv_paths: list[Path]) -> tuple[dict, dict, dict, dict, dict, dict, dict]:
+def aggregate_csvs(csv_paths: list[Path], recent_days: int | None = None) -> tuple[dict, dict, dict, dict, dict, dict, dict]:
+    """
+    結果CSVを集計する。
+    recent_days が指定された場合、行の「日付」列が直近 recent_days 日以内
+    （実行時点基準）のものだけを対象に集計する（＝直近データ限定モード）。
+    recent_days=None の場合は従来通り全期間を対象にする。
+    """
+    cutoff_str = recent_cutoff_str(recent_days) if recent_days is not None else None
+    if cutoff_str:
+        print(f"[tenjihoseiplus] 直近{recent_days}日限定モード（カットオフ={cutoff_str}）")
     print("[tenjihoseiplus] 進入変更レースを検出中...")
     changed_races = set()
     for path in csv_paths:
@@ -155,8 +188,12 @@ def aggregate_csvs(csv_paths: list[Path]) -> tuple[dict, dict, dict, dict, dict,
             if not tenji_raw or not course_raw or not place_raw or not reg_raw:
                 continue
 
+            norm_date = normalize_date(date_raw)
+            if cutoff_str and not is_recent(norm_date, cutoff_str):
+                continue
+
             venue_en = VENUE_JA_TO_EN.get(venue_raw, venue_raw)
-            race_key = f"{venue_en}|{normalize_date(date_raw)}|{normalize_race(race_raw)}"
+            race_key = f"{venue_en}|{norm_date}|{normalize_race(race_raw)}"
             if race_key in changed_races:
                 continue
 
@@ -206,7 +243,13 @@ def aggregate_csvs(csv_paths: list[Path]) -> tuple[dict, dict, dict, dict, dict,
     return dd2d(ctp), dd2d(cap), dd2d(pcp), dd2d(pca), dd2d(pcd), pcavg, csv_map
 
 
-def aggregate_lap1(tenji_all: dict, csv_map: dict, player_map: dict) -> tuple[dict, dict, dict, dict, dict, dict]:
+def aggregate_lap1(tenji_all: dict, csv_map: dict, player_map: dict,
+                    recent_days: int | None = None) -> tuple[dict, dict, dict, dict, dict, dict]:
+    """
+    展示＋1周（lap1）の集計。recent_days 指定時は tenji エントリーの日付が
+    直近 recent_days 日以内のものだけを対象にする（＝直近データ限定モード）。
+    """
+    cutoff_str = recent_cutoff_str(recent_days) if recent_days is not None else None
     ctpL = defaultdict(lambda: defaultdict(list))
     capL = defaultdict(list)
     pcpL = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -232,6 +275,8 @@ def aggregate_lap1(tenji_all: dict, csv_map: dict, player_map: dict) -> tuple[di
             race       = normalize_race(entry.get("race", ""))
 
             if lap1_raw is None or tenji_raw is None or not course_raw:
+                continue
+            if cutoff_str and not is_recent(date, cutoff_str):
                 continue
             try:
                 lap1   = float(lap1_raw)
@@ -464,10 +509,15 @@ def build_auto_script(entries, venue_races, ctp, cap, pcp, pca,
                       pcdL, pcavgL,
                       reg_to_name, name_to_reg,
                       tenji_file_names: list,
-                      business_date: str = None) -> str:
+                      business_date: str = None,
+                      ctpR=None, capR=None, pcpR=None, pcaR=None,
+                      ctpLR=None, capLR=None, pcpLR=None, pcaLR=None,
+                      pcdR=None, pcavgR=None,
+                      pcdLR=None, pcavgLR=None,
+                      recent_days: int = RECENT_DAYS_LIMIT) -> str:
 
     def jd(obj):
-        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
+        return json.dumps(obj if obj is not None else {}, ensure_ascii=False, separators=(',', ':'))
 
     entries_js     = jd(entries)
     venue_races_js = jd(venue_races)
@@ -483,6 +533,19 @@ def build_auto_script(entries, venue_races, ctp, cap, pcp, pca,
     capL_js        = jd(capL)
     pcpL_js        = jd(pcpL)
     pcaL_js        = jd(pcaL)
+    # ── 直近 recent_days 日限定モードの集計（全期間集計とは別枠） ──
+    ctpR_js        = jd(ctpR)
+    capR_js        = jd(capR)
+    pcpR_js        = jd(pcpR)
+    pcaR_js        = jd(pcaR)
+    pcdR_js        = jd(pcdR)
+    pcavgR_js      = jd(pcavgR)
+    ctpLR_js       = jd(ctpLR)
+    capLR_js       = jd(capLR)
+    pcpLR_js       = jd(pcpLR)
+    pcaLR_js       = jd(pcaLR)
+    pcdLR_js       = jd(pcdLR)
+    pcavgLR_js     = jd(pcavgLR)
     r2n_js         = jd(reg_to_name)
     n2r_js         = jd(name_to_reg)
     tenji_ui_js    = json.dumps(
@@ -490,6 +553,7 @@ def build_auto_script(entries, venue_races, ctp, cap, pcp, pca,
         ensure_ascii=False, separators=(',', ':')
     )
     business_date_js = json.dumps(business_date, ensure_ascii=False)
+    recent_days_js    = json.dumps(recent_days, ensure_ascii=False)
 
     return f"""
 // ============================================================
@@ -510,6 +574,19 @@ window.__DATA__ = {{
   "pcaL":{pcaL_js},
   "pcdL":{pcdL_js},
   "pcavgL":{pcavgL_js},
+  "ctpR":{ctpR_js},
+  "capR":{capR_js},
+  "pcpR":{pcpR_js},
+  "pcaR":{pcaR_js},
+  "pcdR":{pcdR_js},
+  "pcavgR":{pcavgR_js},
+  "ctpLR":{ctpLR_js},
+  "capLR":{capLR_js},
+  "pcpLR":{pcpLR_js},
+  "pcaLR":{pcaLR_js},
+  "pcdLR":{pcdLR_js},
+  "pcavgLR":{pcavgLR_js},
+  "recentDays":{recent_days_js},
   "regToName":{r2n_js},
   "nameToReg":{n2r_js},
   "businessDate":{business_date_js}
@@ -527,6 +604,19 @@ window.__DATA__ = {{
   state.pcaL       = {pcaL_js};
   state.pcdL       = {pcdL_js};
   state.pcavgL     = {pcavgL_js};
+  state.ctpR       = {ctpR_js};
+  state.capR       = {capR_js};
+  state.pcpR       = {pcpR_js};
+  state.pcaR       = {pcaR_js};
+  state.pcdR       = {pcdR_js};
+  state.pcavgR     = {pcavgR_js};
+  state.ctpLR      = {ctpLR_js};
+  state.capLR      = {capLR_js};
+  state.pcpLR      = {pcpLR_js};
+  state.pcaLR      = {pcaLR_js};
+  state.pcdLR      = {pcdLR_js};
+  state.pcavgLR    = {pcavgLR_js};
+  state.recentDays = {recent_days_js};
   state.regToName  = {r2n_js};
   state.nameToReg  = {n2r_js};
   state.entries    = {entries_js};
@@ -588,11 +678,16 @@ def build_full_html(template_path: Path, auto_script: str) -> str:
 # ============================================================
 
 _cache = {
-    "csv_sig": None, "player_map_sig": None,
+    "csv_sig": None, "player_map_sig": None, "recent_days": None,
     "ctp": None, "cap": None, "pcp": None, "pca": None,
     "pcd": None, "pcavg": None, "csv_map": None,
     "ctpL": None, "capL": None, "pcpL": None, "pcaL": None,
     "pcdL": None, "pcavgL": None,
+    # ── 直近 RECENT_DAYS_LIMIT 日限定モードの集計（全期間集計とは別枠） ──
+    "ctpR": None, "capR": None, "pcpR": None, "pcaR": None,
+    "pcdR": None, "pcavgR": None, "csv_mapR": None,
+    "ctpLR": None, "capLR": None, "pcpLR": None, "pcaLR": None,
+    "pcdLR": None, "pcavgLR": None,
     "player_map": None, "reg_to_name": None, "name_to_reg": None,
 }
 
@@ -603,14 +698,20 @@ def _csv_dir_signature(results_csv_dir: Path) -> tuple:
     return tuple((p, Path(p).stat().st_mtime) for p in paths)
 
 def _ensure_csv_aggregates(results_csv_dir: Path, tenji_dir: Path,
-                            player_map_path: Path, force: bool = False) -> bool:
+                            player_map_path: Path, force: bool = False,
+                            recent_days: int = RECENT_DAYS_LIMIT) -> bool:
     """結果CSV・選手マップに変更があれば再集計してキャッシュを更新する。
-    変更がなければ何もせず False を返す（高速スキップ）。"""
+    変更がなければ何もせず False を返す（高速スキップ）。
+
+    全期間集計（ctp/cap/pcp/pca/pcd/pcavg 等・従来通りのキー名）に加えて、
+    「直近 recent_days 日限定」の集計を同名+"R"サフィックスのキーで
+    別枠で計算する。温水パイプの有無（冬夏）やプロペラ制度の変化で
+    傾向が変わるため、直近データの方が実戦投資での精度が担保されやすい。"""
     sig = _csv_dir_signature(results_csv_dir)
     pm_sig = player_map_path.stat().st_mtime if player_map_path.exists() else None
 
     if not force and sig == _cache["csv_sig"] and pm_sig == _cache["player_map_sig"] \
-       and _cache["ctp"] is not None:
+       and _cache["recent_days"] == recent_days and _cache["ctp"] is not None:
         return False
 
     csv_paths = [Path(p) for p, _ in sig]
@@ -618,9 +719,12 @@ def _ensure_csv_aggregates(results_csv_dir: Path, tenji_dir: Path,
     if not result_csvs:
         print(f"[tenjihoseiplus][WARN] 結果CSVなし: {results_csv_dir}")
         ctp, cap, pcp, pca, pcd, pcavg, csv_map = {}, {}, {}, {}, {}, {}, {}
+        ctpR, capR, pcpR, pcaR, pcdR, pcavgR, csv_mapR = {}, {}, {}, {}, {}, {}, {}
     else:
-        print(f"[tenjihoseiplus] 結果CSV {len(result_csvs)}件を再集計中...")
+        print(f"[tenjihoseiplus] 結果CSV {len(result_csvs)}件を再集計中（全期間）...")
         ctp, cap, pcp, pca, pcd, pcavg, csv_map = aggregate_csvs(result_csvs)
+        print(f"[tenjihoseiplus] 結果CSV {len(result_csvs)}件を再集計中（直近{recent_days}日限定）...")
+        ctpR, capR, pcpR, pcaR, pcdR, pcavgR, csv_mapR = aggregate_csvs(result_csvs, recent_days=recent_days)
 
     player_map = {}
     if player_map_path.exists():
@@ -632,18 +736,27 @@ def _ensure_csv_aggregates(results_csv_dir: Path, tenji_dir: Path,
     if all_tenji_paths:
         all_tenji_data = load_tenji(all_tenji_paths)
         ctpL, capL, pcpL, pcaL, pcdL, pcavgL = aggregate_lap1(all_tenji_data, csv_map, player_map)
+        ctpLR, capLR, pcpLR, pcaLR, pcdLR, pcavgLR = aggregate_lap1(
+            all_tenji_data, csv_mapR, player_map, recent_days=recent_days
+        )
     else:
         ctpL, capL, pcpL, pcaL, pcdL, pcavgL = {}, {}, {}, {}, {}, {}
+        ctpLR, capLR, pcpLR, pcaLR, pcdLR, pcavgLR = {}, {}, {}, {}, {}, {}
 
     _cache.update({
-        "csv_sig": sig, "player_map_sig": pm_sig,
+        "csv_sig": sig, "player_map_sig": pm_sig, "recent_days": recent_days,
         "ctp": ctp, "cap": cap, "pcp": pcp, "pca": pca,
         "pcd": pcd, "pcavg": pcavg, "csv_map": csv_map,
         "ctpL": ctpL, "capL": capL, "pcpL": pcpL, "pcaL": pcaL,
         "pcdL": pcdL, "pcavgL": pcavgL,
+        "ctpR": ctpR, "capR": capR, "pcpR": pcpR, "pcaR": pcaR,
+        "pcdR": pcdR, "pcavgR": pcavgR, "csv_mapR": csv_mapR,
+        "ctpLR": ctpLR, "capLR": capLR, "pcpLR": pcpLR, "pcaLR": pcaLR,
+        "pcdLR": pcdLR, "pcavgLR": pcavgLR,
         "player_map": player_map, "reg_to_name": reg_to_name, "name_to_reg": name_to_reg,
     })
-    print(f"[tenjihoseiplus] 再集計完了: コース数={len(ctp)} 選手数={len(pcp)}")
+    print(f"[tenjihoseiplus] 再集計完了: コース数={len(ctp)} 選手数={len(pcp)} "
+          f"(直近{recent_days}日: コース数={len(ctpR)} 選手数={len(pcpR)})")
     return True
 
 
@@ -652,9 +765,14 @@ def maybe_update_tenjihoseiplus(results_csv_dir: Path, tenji_dir: Path,
                                  output_html: Path,
                                  tenji_date: str = None,
                                  force_csv_reaggregate: bool = False,
-                                 deadline_map: dict = None) -> bool:
+                                 deadline_map: dict = None,
+                                 recent_days: int = RECENT_DAYS_LIMIT) -> bool:
     """
     tenjihoseiplus.html を必要なら再生成して書き出す。
+
+    recent_days: 「直近Nデータ限定モード」の対象日数。全期間集計とは別に、
+                 直近recent_days日限定の集計（キー名+"R"サフィックス）も
+                 併せて計算しHTML側に埋め込む（既定 90日）。
 
     戻り値:
       True  → output_html を書き換えた（呼び出し側で git add すべき）
@@ -692,7 +810,7 @@ def maybe_update_tenjihoseiplus(results_csv_dir: Path, tenji_dir: Path,
         )
 
     _ensure_csv_aggregates(results_csv_dir, tenji_dir, player_map_path,
-                           force=force_csv_reaggregate)
+                           force=force_csv_reaggregate, recent_days=recent_days)
 
     tenji_paths = find_tenji_files(tenji_dir, tenji_date, all_files=False)
     if not tenji_paths:
@@ -727,6 +845,11 @@ def maybe_update_tenjihoseiplus(results_csv_dir: Path, tenji_dir: Path,
         _cache["pcdL"], _cache["pcavgL"],
         _cache["reg_to_name"], _cache["name_to_reg"], tenji_file_names,
         business_date=business_date,
+        ctpR=_cache["ctpR"], capR=_cache["capR"], pcpR=_cache["pcpR"], pcaR=_cache["pcaR"],
+        ctpLR=_cache["ctpLR"], capLR=_cache["capLR"], pcpLR=_cache["pcpLR"], pcaLR=_cache["pcaLR"],
+        pcdR=_cache["pcdR"], pcavgR=_cache["pcavgR"],
+        pcdLR=_cache["pcdLR"], pcavgLR=_cache["pcavgLR"],
+        recent_days=recent_days,
     )
     full_html = build_full_html(template_html, auto_script)
 

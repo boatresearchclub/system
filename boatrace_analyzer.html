@@ -76,6 +76,23 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .dl-soon   { background:#ff9500;color:#fff; }   /* 30分以内 */
 .dl-normal { background:var(--bg3);color:var(--text3); }
 
+/* ===== 精度担保ランクバッジ ===== */
+.prec-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:10px; font-weight:800; padding:2px 8px; border-radius:11px;
+  white-space:nowrap; letter-spacing:0.01em; line-height:1.6;
+}
+.prec-badge.prec-hi {
+  background:linear-gradient(90deg,#ffd54a,#00b86b);
+  color:#083318; box-shadow:0 0 0 1px rgba(0,184,107,0.35) inset;
+}
+.prec-badge.prec-mid { background:var(--blue); color:#fff; }
+.prec-badge.prec-low { background:#8a94a8; color:#fff; }
+.prec-note {
+  font-size:10px; color:var(--text3); margin:2px 0 8px; line-height:1.5;
+}
+.prec-note.warn { color:var(--orange); }
+
 /* Toolbar */
 .tb-label { font-size: 11px; color: var(--text3); white-space: nowrap; }
 select {
@@ -534,11 +551,20 @@ const state = {
   capL: {},  // course -> [places]（lap1+展示）
   pcpL: {},  // reg -> course -> tbin -> [places]（lap1+展示）
   pcaL: {},  // reg -> course -> [places]（lap1+展示）
-  pcd: {},    // reg -> course -> diffBin -> [places]（展示のみ・平均差ビン）
-  pcavg: {},  // reg -> course -> 平均タイム（展示のみ）
-  pcdL: {},   // reg -> course -> diffBin -> [places]（1周+展示・平均差ビン）
-  pcavgL: {}, // reg -> course -> 平均タイム（1周+展示）
-  lap1Mode: false,
+  pcd: {},    // reg -> course -> diffBin -> [places]（展示のみ・平均差ビン・全期間）
+  pcavg: {},  // reg -> course -> 平均タイム（展示のみ・全期間）
+  pcdL: {},   // reg -> course -> diffBin -> [places]（1周+展示・平均差ビン・全期間）
+  pcavgL: {}, // reg -> course -> 平均タイム（1周+展示・全期間）
+  // ── 直近Nデータ限定モード（tenjihoseiplus.py の RECENT_DAYS_LIMIT で集計）──
+  // 温水パイプ（冬夏）やプロペラ制度の変化を踏まえ、直近データのみの集計を別枠で保持し、
+  // ユーザーが「全期間」／「直近」を切り替えられるようにする
+  ctpR: {}, capR: {}, pcpR: {}, pcaR: {},           // 展示タイムのみ・直近
+  ctpLR: {}, capLR: {}, pcpLR: {}, pcaLR: {},       // lap1+展示・直近
+  pcdR: {}, pcavgR: {},                              // 展示のみ・平均差ビン・直近
+  pcdLR: {}, pcavgLR: {},                            // lap1+展示・平均差ビン・直近
+  recentDays: 90,   // Python側 RECENT_DAYS_LIMIT の値（表示用）
+  recentMode: true, // true=直近Nデータ限定 / false=全期間（デフォルトは直近＝季節・機械傾向の変化を反映）
+  lap1Mode: true,  // デフォルト：展示＋1周（lap1）＝回り足・出足込みの実戦タイムを最優先表示
   regToName: {}, // reg -> 選手名
   nameToReg: {}, // 選手名 -> reg
   mode: "race",
@@ -1702,13 +1728,21 @@ function renderRaceInput() {
   }
 
   html += `
-  <div style="display:flex;gap:6px;margin-bottom:8px;">
+  <div style="display:flex;gap:6px;margin-bottom:6px;">
     <button id="ri-toggle-tenji" onclick="state.lap1Mode=false;updateRaceInputToggle();"
       style="flex:1;padding:5px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
       background:${state.lap1Mode?'var(--bg3)':'var(--blue)'};color:${state.lap1Mode?'var(--text2)':'#fff'};">展示タイム</button>
     <button id="ri-toggle-lap1" onclick="state.lap1Mode=true;updateRaceInputToggle();"
       style="flex:1;padding:5px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
       background:${state.lap1Mode?'var(--blue)':'var(--bg3)'};color:${state.lap1Mode?'#fff':'var(--text2)'};">1周+展示</button>
+  </div>
+  <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center;">
+    <button id="ri-toggle-all" onclick="state.recentMode=false;updateRaceInputToggle();"
+      style="flex:1;padding:4px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
+      background:${!state.recentMode?'var(--teal)':'var(--bg3)'};color:${!state.recentMode?'#fff':'var(--text2)'};">全期間</button>
+    <button id="ri-toggle-recent" onclick="state.recentMode=true;updateRaceInputToggle();"
+      style="flex:1;padding:4px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
+      background:${state.recentMode?'var(--teal)':'var(--bg3)'};color:${state.recentMode?'#fff':'var(--text2)'};">直近${state.recentDays||90}日</button>
   </div>
 
   <!-- テキスト貼り付けエリア -->
@@ -1813,10 +1847,66 @@ function binDiff(diff) {
   return "F";                  // +0.10〜
 }
 
+// ===== 精度担保ランクバッジ =====
+// isDiffMode: 平均差タイム表示か（true）／絶対タイム表示か（false）
+// isL       : 展示＋1周（lap1）か（true）／展示のみか（false）
+function precBadgeHTML(isDiffMode, isL) {
+  if (isDiffMode && isL) {
+    return `<span class="prec-badge prec-hi">🔥 精度特大・大勝負用</span>`;
+  }
+  if (isDiffMode && !isL) {
+    return `<span class="prec-badge prec-mid">⚡ 精度中・スリット展開用</span>`;
+  }
+  return `<span class="prec-badge prec-low">⚠️ 精度低・環境ノイズ注意</span>`;
+}
+const ABS_TIME_WARNING_NOTE =
+  '<div class="prec-note warn">※絶対タイムは当日の風速や気温のノイズが含まれるため、過去統計としての信頼度は低めです</div>';
+
+// ===== 集計データ選択ヘルパー =====
+// baseKey: "pca" / "pcp" / "ctp" / "cap" / "pcd" / "pcavg" のいずれか
+// isL : 展示＋1周（lap1）データを使うか
+// isR : 直近Nデータ限定モードを使うか（tenjihoseiplus.py RECENT_DAYS_LIMIT）
+// 例: pickAgg('pca', true, true) -> state.pcaLR
+function pickAgg(baseKey, isL, isR) {
+  let key = baseKey;
+  if (isL) key += "L";
+  if (isR) key += "R";
+  return state[key] || {};
+}
+
+// ===== 平均差タイム（秒）の乖離に応じたグラデーションカラー =====
+// diff: 入力タイム − 選手コース平均タイム（秒）。負＝好タイム（機力抜群）、正＝ドカ遅い（機力最悪）
+function diffTimeColor(diff) {
+  if (diff == null || isNaN(diff)) {
+    return { bg: "transparent", fg: "var(--text3)", weight: 400, border: "transparent" };
+  }
+  if (diff <= -0.04) {
+    // 抜群ゾーン：-0.04を基準に-0.20まで濃くなる深緑グラデーション
+    const t = Math.min(1, (-diff - 0.04) / 0.16);
+    const alpha = (0.28 + t * 0.52).toFixed(2);
+    return { bg: `rgba(0,140,90,${alpha})`, fg: t > 0.35 ? "#ffffff" : "#00552f", weight: 800, border: "rgba(0,140,90,0.6)" };
+  }
+  if (diff >= 0.05) {
+    // 壁崩壊ゾーン：+0.05を基準に+0.20まで濃くなる警告赤グラデーション
+    const t = Math.min(1, (diff - 0.05) / 0.15);
+    const alpha = (0.28 + t * 0.52).toFixed(2);
+    return { bg: `rgba(255,59,59,${alpha})`, fg: t > 0.35 ? "#ffffff" : "#7a0000", weight: 800, border: "rgba(255,59,59,0.6)" };
+  }
+  // 中間ゾーン（-0.04〜+0.05）：ゆるやかなグラデーションで方向感だけ示す
+  const t = (diff + 0.04) / 0.09; // 0(良)→1(悪)
+  if (diff < 0) {
+    const alpha = (0.06 + Math.abs(diff) * 1.4).toFixed(2);
+    return { bg: `rgba(0,184,107,${alpha})`, fg: "var(--text2)", weight: 600, border: "transparent" };
+  }
+  const alpha = (0.06 + diff * 1.1).toFixed(2);
+  return { bg: `rgba(255,140,60,${alpha})`, fg: "var(--text2)", weight: 600, border: "transparent" };
+}
+
 function calcRaceInput() {
   const COURSE_BG_LOCAL = COURSE_BG;
   const COURSE_TC_LOCAL = COURSE_TC;
   const isL = state.lap1Mode;
+  const isR = state.recentMode;
   const results = [];
 
   for (let c = 1; c <= 6; c++) {
@@ -1852,11 +1942,11 @@ function calcRaceInput() {
       tbinKey = tbin.toFixed(2);
     }
 
-    // 着率計算（lap1Modeに応じて切り替え）
-    const pca = (isL ? state.pcaL : state.pca) || {};
-    const pcp = (isL ? state.pcpL : state.pcp) || {};
-    const ctp = (isL ? state.ctpL : state.ctp) || {};
-    const cap = (isL ? state.capL : state.cap) || {};
+    // 着率計算（lap1Mode・recentModeに応じて切り替え）
+    const pca = pickAgg("pca", isL, isR);
+    const pcp = pickAgg("pcp", isL, isR);
+    const ctp = pickAgg("ctp", isL, isR);
+    const cap = pickAgg("cap", isL, isR);
 
     const plAll   = reg ? ((pca[reg] || {})[cKey] || []) : [];
     const plTbin  = (reg && tbinKey) ? (((pcp[reg] || {})[cKey] || {})[tbinKey] || []) : [];
@@ -1868,18 +1958,18 @@ function calcRaceInput() {
     const rCtpAll  = calcRates(ctpAll);
     const rCtpTbin = calcRates(ctpTbin);
 
-    // 平均差ビン集計 ※lap1Mode（1周+展示 / 展示タイム）に応じて切り替え
-    const pcd = (isL ? state.pcdL : state.pcd) || {};
+    // 平均差ビン集計 ※lap1Mode・recentModeに応じて切り替え
+    const pcd = pickAgg("pcd", isL, isR);
     const pcdCourse = reg ? ((pcd[reg] || {})[cKey] || {}) : {};
     // 選手×コースの平均タイム（全ビンのデータから逆算）
-    const pca2 = (isL ? state.pcaL : state.pca) || {};
+    const pca2 = pickAgg("pca", isL, isR);
     const allTimes = reg ? ((pca2[reg] || {})[cKey] || []) : [];
     // 平均タイムはpca（コース通算）のnをもとに近似できないのでpcdのキーから推定
     // → 展示タイムの入力値と各ビンの境界から差を計算
     const inputTime = isL ? (!isNaN(lap1V) && !isNaN(tenjiV) ? lap1V + tenjiV : NaN) : tenjiV;
     // 選手のコース平均タイム: pca通算データのサンプル数は分かるがタイム平均は別途必要
-    // → state.pcavg / state.pcavgL（Python側で計算）から取得
-    const pcavg = (isL ? state.pcavgL : state.pcavg) || {};
+    // → state.pcavg / state.pcavgL / state.pcavgR / state.pcavgLR（Python側で計算）から取得
+    const pcavg = pickAgg("pcavg", isL, isR);
     const avgTime = reg ? ((pcavg[reg] || {})[cKey] || null) : null;
     let rDiff = null, diffBin = null;
     if (avgTime !== null && !isNaN(inputTime)) {
@@ -1922,12 +2012,15 @@ function calcRaceInput() {
   };
 
   // タイム差の表示（入力タイム − 選手コース平均）
+  // -0.04秒以上の好タイム／+0.05秒以上のドカ遅れタイムを一瞬で判別できるよう
+  // グラデーションカラーのチップとしてレンダリングする
   const timeDiffSpan = (inputTime, avgTime) => {
     if (avgTime === null || isNaN(inputTime)) return '<span style="font-size:9px;color:var(--text3);">−</span>';
     const diff = inputTime - avgTime;
     const sign = diff > 0 ? "+" : "";
-    const cls = diff < -0.05 ? "pos" : diff > 0.05 ? "neg" : "neu";
-    return `<span class="cell-diff ${cls}" style="font-size:10px;min-width:36px;">${sign}${diff.toFixed(2)}</span>`;
+    const c = diffTimeColor(diff);
+    return `<span style="font-size:10px;min-width:36px;display:inline-block;padding:2px 6px;border-radius:6px;
+      font-weight:${c.weight};background:${c.bg};color:${c.fg};box-shadow:0 0 0 1px ${c.border} inset;">${sign}${diff.toFixed(2)}</span>`;
   };
 
   // 共通ヘッダー列（コース・選手・タイム）
@@ -1988,7 +2081,7 @@ function calcRaceInput() {
     const timeLabel = !isNaN(inputTimeVal) ? inputTimeVal.toFixed(2) : "−";
 
     // ビン情報サブテキスト ※lap1Mode（1周+展示 / 展示タイム）に応じて切り替え
-    const pcd = (isL ? state.pcdL : state.pcd) || {};
+    const pcd = pickAgg("pcd", isL, isR);
     const pcdCourse = r.reg ? ((pcd[r.reg] || {})[String(r.c)] || {}) : {};
     const db = r.diffBin ? DIFF_BINS_INPUT.find(b => b.key === r.diffBin) : null;
     const places = db ? (pcdCourse[db.key] || []) : [];
@@ -2022,7 +2115,7 @@ function calcRaceInput() {
     <tbody>`;
 
   for (const r of results) {
-    const pcd = (isL ? state.pcdL : state.pcd) || {};
+    const pcd = pickAgg("pcd", isL, isR);
     const pcdCourse = r.reg ? ((pcd[r.reg] || {})[String(r.c)] || {}) : {};
     const db = r.diffBin ? DIFF_BINS_INPUT.find(b => b.key === r.diffBin) : null;
     const places = db ? (pcdCourse[db.key] || []) : [];
@@ -2040,24 +2133,27 @@ function calcRaceInput() {
   diffTbl += `</tbody></table>`;
 
   // ===== タブUI組み立て =====
+  // デフォルトは「平均差タイム × 展示＋1周（lap1）」＝精度担保が最も高い集計を最優先描画する
   let html = `<div style="padding:16px;">
     <div style="font-size:15px;font-weight:700;margin-bottom:12px;color:var(--text);">📊 レース入力分析</div>
 
-    <div style="display:flex;gap:4px;margin-bottom:10px;">
+    <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
       <button id="ri-tab-abs" onclick="switchRiTab('abs')"
         style="padding:4px 14px;border-radius:16px;border:1px solid var(--border2);font-size:12px;font-weight:600;
-        cursor:pointer;font-family:inherit;background:var(--blue);color:#fff;">
+        cursor:pointer;font-family:inherit;background:var(--bg3);color:var(--text2);">
         絶対タイムビン
       </button>
       <button id="ri-tab-diff" onclick="switchRiTab('diff')"
         style="padding:4px 14px;border-radius:16px;border:1px solid var(--border2);font-size:12px;font-weight:600;
-        cursor:pointer;font-family:inherit;background:var(--bg3);color:var(--text2);">
+        cursor:pointer;font-family:inherit;background:var(--blue);color:#fff;">
         平均差ビン
       </button>
+      <span id="ri-prec-badge">${precBadgeHTML(true, isL)}</span>
     </div>
+    <div id="ri-abs-note" style="display:none;">${ABS_TIME_WARNING_NOTE}</div>
 
-    <div id="ri-tbl-abs">${absTbl}</div>
-    <div id="ri-tbl-diff" style="display:none;">${diffTbl}</div>
+    <div id="ri-tbl-abs" style="display:none;">${absTbl}</div>
+    <div id="ri-tbl-diff">${diffTbl}</div>
   </div>`;
 
   content.innerHTML = html;
@@ -2065,12 +2161,16 @@ function calcRaceInput() {
 
 function switchRiTab(mode) {
   const isAbs = mode === 'abs';
+  const isL = state.lap1Mode;
   document.getElementById('ri-tbl-abs').style.display  = isAbs ? '' : 'none';
   document.getElementById('ri-tbl-diff').style.display = isAbs ? 'none' : '';
+  document.getElementById('ri-abs-note').style.display = isAbs ? '' : 'none';
   document.getElementById('ri-tab-abs').style.background  = isAbs ? 'var(--blue)' : 'var(--bg3)';
   document.getElementById('ri-tab-abs').style.color       = isAbs ? '#fff' : 'var(--text2)';
   document.getElementById('ri-tab-diff').style.background = isAbs ? 'var(--bg3)' : 'var(--blue)';
   document.getElementById('ri-tab-diff').style.color      = isAbs ? 'var(--text2)' : '#fff';
+  const badgeEl = document.getElementById('ri-prec-badge');
+  if (badgeEl) badgeEl.innerHTML = precBadgeHTML(!isAbs, isL);
 }
 
 // ========================
@@ -2131,14 +2231,18 @@ function switchPTab(tabId, mode) {
   const diffTbl = document.getElementById(tabId + '-diff-tbl');
   const absBtn  = document.getElementById(tabId + '-abs');
   const diffBtn = document.getElementById(tabId + '-diff');
+  const badge   = document.getElementById(tabId + '-badge');
+  const note    = document.getElementById(tabId + '-abs-note');
   if (!absTbl || !diffTbl) return;
   const showAbs = mode === 'abs';
   absTbl.style.display  = showAbs ? '' : 'none';
   diffTbl.style.display = showAbs ? 'none' : '';
+  if (note) note.style.display = showAbs ? '' : 'none';
   absBtn.style.background  = showAbs ? 'var(--blue)' : 'var(--bg3)';
   absBtn.style.color       = showAbs ? '#fff' : 'var(--text2)';
   diffBtn.style.background = showAbs ? 'var(--bg3)' : 'var(--blue)';
   diffBtn.style.color      = showAbs ? 'var(--text2)' : '#fff';
+  if (badge) badge.innerHTML = precBadgeHTML(!showAbs, state.lap1Mode);
 }
 
 function renderPlayerProfile() {
@@ -2150,23 +2254,33 @@ function renderPlayerProfile() {
   const reg = state.selPlayer;
   const name = state.regToName[reg] || "不明";
   const isL = state.lap1Mode;
-  const _pca = isL ? (state.pcaL || {}) : state.pca;
-  const _pcp = isL ? (state.pcpL || {}) : state.pcp;
-  const _ctp = isL ? (state.ctpL || {}) : state.ctp;
-  const _cap = isL ? (state.capL || {}) : state.cap;
+  const isR = state.recentMode;
+  const _pca = pickAgg("pca", isL, isR);
+  const _pcp = pickAgg("pcp", isL, isR);
+  const _ctp = pickAgg("ctp", isL, isR);
+  const _cap = pickAgg("cap", isL, isR);
   const pca = (_pca[reg] || {});
   const pcp = (_pcp[reg] || {});
 
   let html = `<div class="player-profile">
     <div class="player-title">${name}</div>
     <div class="player-sub">登録番号 ${reg}　過去実績から展示タイム帯別着率を表示</div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;">
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
       <button onclick="state.lap1Mode=false;renderPlayerProfile();"
         style="padding:4px 12px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
         background:${!isL?'var(--blue)':'var(--bg3)'};color:${!isL?'#fff':'var(--text2)'};">展示タイム</button>
       <button onclick="state.lap1Mode=true;renderPlayerProfile();"
         style="padding:4px 12px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
         background:${isL?'var(--blue)':'var(--bg3)'};color:${isL?'#fff':'var(--text2)'};">1周+展示</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+      <button onclick="state.recentMode=false;renderPlayerProfile();"
+        style="padding:3px 10px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
+        background:${!isR?'var(--teal)':'var(--bg3)'};color:${!isR?'#fff':'var(--text2)'};">全期間</button>
+      <button onclick="state.recentMode=true;renderPlayerProfile();"
+        style="padding:3px 10px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
+        background:${isR?'var(--teal)':'var(--bg3)'};color:${isR?'#fff':'var(--text2)'};">直近${state.recentDays||90}日</button>
+      <span style="font-size:9px;color:var(--text3);">※直近データは温水パイプ（冬夏）やプロペラ制度の変化を反映しやすく、精度担保の観点で推奨</span>
     </div>`;
 
   for (let course = 1; course <= 6; course++) {
@@ -2195,10 +2309,10 @@ function renderPlayerProfile() {
         <span class="course-section-sub">出走 ${allPlaces.length}回</span>
       </div>`;
 
-    // pcd（平均差ビン）データ取得 ※lap1Mode（1周+展示 / 展示タイム）に応じて切り替え
-    const _pcd = (isL ? state.pcdL : state.pcd) || {};
+    // pcd（平均差ビン）データ取得 ※lap1Mode・recentModeに応じて切り替え
+    const _pcd = pickAgg("pcd", isL, isR);
     const pcdCourse = (_pcd[reg] || {})[cKey] || {};
-    const avgTime = ((isL ? state.pcavgL : state.pcavg) || {})[reg]?.[cKey] ?? null;
+    const avgTime = (pickAgg("pcavg", isL, isR)[reg] || {})[cKey] ?? null;
 
     // 平均差ビンのラベルと範囲
     const DIFF_BINS = [
@@ -2211,20 +2325,23 @@ function renderPlayerProfile() {
     ];
 
     const tabId = `ptab-${reg}-${cKey}`;
+    // デフォルトは「平均差ビン」＝精度担保が最も高い集計を最優先描画する
     html += `
-    <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+    <div style="display:flex;gap:6px;margin-bottom:4px;flex-wrap:wrap;align-items:center;">
       <button onclick="switchPTab('${tabId}','abs')" id="${tabId}-abs"
-        style="padding:3px 10px;border-radius:16px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;background:var(--blue);color:#fff;">
+        style="padding:3px 10px;border-radius:16px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;background:var(--bg3);color:var(--text2);">
         絶対タイム
       </button>
       <button onclick="switchPTab('${tabId}','diff')" id="${tabId}-diff"
-        style="padding:3px 10px;border-radius:16px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;background:var(--bg3);color:var(--text2);">
+        style="padding:3px 10px;border-radius:16px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;background:var(--blue);color:#fff;">
         平均差ビン${avgTime !== null ? '（平均'+avgTime.toFixed(2)+'）' : ''}
       </button>
-    </div>`;
+      <span id="${tabId}-badge">${precBadgeHTML(true, isL)}</span>
+    </div>
+    <div id="${tabId}-abs-note" style="display:none;">${ABS_TIME_WARNING_NOTE}</div>`;
 
     // === 絶対タイムビンテーブル ===
-    html += `<div id="${tabId}-abs-tbl">
+    html += `<div id="${tabId}-abs-tbl" style="display:none;">
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
     <table class="ttime-table">
       <thead><tr>
@@ -2257,7 +2374,7 @@ function renderPlayerProfile() {
       </tr>`;
     }
     html += `</tbody></table></div></div>`;
-    html += `<div id="${tabId}-diff-tbl" style="display:none;">
+    html += `<div id="${tabId}-diff-tbl">
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
     <table class="ttime-table">
       <thead><tr>
@@ -2363,6 +2480,10 @@ function entryHTML(e) {
       <span class="tenji-unit">展示</span>
       <span class="rank-badge" style="color:${rankCol};background:${rankCol}22;">タイム${e.tenjiRank}位</span>
     </div>
+  </div>
+  <div style="margin:-4px 0 8px;">
+    <span class="prec-badge prec-low">⚠️ 精度低・環境ノイズ注意</span>
+    <span style="font-size:9px;color:var(--text3);margin-left:6px;">展示タイムは風速・気温の影響を受けやすいため、精度優先の判断は「選手検索」タブの平均差×展示＋1周を参照してください</span>
   </div>
 
   <div class="data-grid">
@@ -2522,6 +2643,20 @@ function entryHTML(e) {
       state.pcavg        = newData.pcavg        || state.pcavg;
       state.pcdL         = newData.pcdL         || state.pcdL;
       state.pcavgL       = newData.pcavgL       || state.pcavgL;
+      // ── 直近Nデータ限定モード（tenjihoseiplus.py RECENT_DAYS_LIMIT）──
+      state.ctpR         = newData.ctpR         || state.ctpR;
+      state.capR         = newData.capR         || state.capR;
+      state.pcpR         = newData.pcpR         || state.pcpR;
+      state.pcaR         = newData.pcaR         || state.pcaR;
+      state.ctpLR        = newData.ctpLR        || state.ctpLR;
+      state.capLR        = newData.capLR        || state.capLR;
+      state.pcpLR        = newData.pcpLR        || state.pcpLR;
+      state.pcaLR        = newData.pcaLR        || state.pcaLR;
+      state.pcdR         = newData.pcdR         || state.pcdR;
+      state.pcavgR       = newData.pcavgR       || state.pcavgR;
+      state.pcdLR        = newData.pcdLR        || state.pcdLR;
+      state.pcavgLR      = newData.pcavgLR      || state.pcavgLR;
+      state.recentDays   = newData.recentDays   || state.recentDays;
       state.regToName    = newData.regToName    || state.regToName;
       state.nameToReg    = newData.nameToReg    || state.nameToReg;
       state.businessDate = newBusinessDate      || state.businessDate;

@@ -254,17 +254,45 @@ const SUMINOE_TENJI_TABLE = {
   ],
 };
 
-// 住之江補正テーブルを引いて行を返す
+// [修正 2026-07-05] 実測テーブル共通: 階段状binを線形補間してなめらかにする。
+// 旧実装は if/else の範囲判定でbinの境界(0.01秒差)を跨ぐと
+// p1/p2/p3が不連続にジャンプしていた（オーバーフィッティング要因）。
+// 各binの中央値を代表点として線形補間し、実測データの値自体は保持したまま
+// 連続的な変化にする（住之江・常滑・蒲郡いずれも実測データのため、
+// 値を捨てて他会場と同じ合成感度式に統一するのではなく、補間のみ行う）。
+function _interpolateTenjiTable(rows, diff) {
+  const points = rows.map((r, i) => {
+    let lo = r.lo, hi = r.hi;
+    // 両端(null)は隣接binの幅を流用して代表点を推定
+    if (lo === null) lo = hi - (rows[i + 1] ? (rows[i + 1].hi - rows[i + 1].lo || 0.2) : 0.2);
+    if (hi === null) hi = lo + (rows[i - 1] ? (rows[i - 1].hi - rows[i - 1].lo || 0.2) : 0.2);
+    return { x: (lo + hi) / 2, p1: r.p1, p2: r.p2, p3: r.p3, p3r: r.p3r };
+  });
+
+  if (diff <= points[0].x) return points[0];
+  if (diff >= points[points.length - 1].x) return points[points.length - 1];
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    if (diff >= a.x && diff <= b.x) {
+      const t = (diff - a.x) / (b.x - a.x);
+      return {
+        p1:  a.p1  + (b.p1  - a.p1)  * t,
+        p2:  a.p2  + (b.p2  - a.p2)  * t,
+        p3:  a.p3  + (b.p3  - a.p3)  * t,
+        p3r: a.p3r + (b.p3r - a.p3r) * t,
+      };
+    }
+  }
+  return points[points.length - 1];
+}
+
+// 住之江補正テーブルを引いて行を返す（線形補間版）
 function _suminoeTableLookup(boat, diff) {
   const rows = SUMINOE_TENJI_TABLE[boat];
   if (!rows) return null;
   const d = Math.round(diff * 100) / 100; // 小数第3位四捨五入
-  for (const r of rows) {
-    const okLo = r.lo === null || d >= r.lo;
-    const okHi = r.hi === null || d <  r.hi;
-    if (okLo && okHi) return r;
-  }
-  return rows[rows.length - 1];
+  return _interpolateTenjiTable(rows, d);
 }
 
 // ── 常滑 展示補正テーブル（1周+展示 合算diff → 各着補正率） ──
@@ -334,17 +362,12 @@ const TOKONAME_TENJI_TABLE = {
   ],
 };
 
-// 常滑補正テーブルを引いて行を返す
+// 常滑補正テーブルを引いて行を返す（線形補間版）
 function _tokonameTableLookup(boat, diff) {
   const rows = TOKONAME_TENJI_TABLE[boat];
   if (!rows) return null;
   const d = Math.round(diff * 100) / 100;
-  for (const r of rows) {
-    const okLo = r.lo === null || d >= r.lo;
-    const okHi = r.hi === null || d <  r.hi;
-    if (okLo && okHi) return r;
-  }
-  return rows[rows.length - 1];
+  return _interpolateTenjiTable(rows, d);
 }
 
 // ── 蒲郡 展示補正テーブル（1周+直線+展示 合算diff → 各着補正率） ──
@@ -418,15 +441,10 @@ const GAMAGORI_TENJI_TABLE = {
   ],
 };
 
-// 蒲郡補正テーブルを引いて行を返す
+// 蒲郡補正テーブルを引いて行を返す（線形補間版）
 function _gamagoriTableLookup(boat, diff) {
   const rows = GAMAGORI_TENJI_TABLE[boat];
   if (!rows) return null;
   const d = Math.round(diff * 100) / 100;
-  for (const r of rows) {
-    const okLo = r.lo === null || d >= r.lo;
-    const okHi = r.hi === null || d <  r.hi;
-    if (okLo && okHi) return r;
-  }
-  return rows[rows.length - 1];
+  return _interpolateTenjiTable(rows, d);
 }
