@@ -266,6 +266,8 @@ code { background: var(--bg3); border: 1px solid var(--border); border-radius: 4
 
   /* 入力ペイン折りたたみ */
   #input-toggle-row { display: flex !important; }
+  /* 切り替えトグル（展示タイム/1周+展示、全期間/直近90日）は常に表示 */
+  #race-input-toggle-fixed { display: block !important; margin-bottom: 6px; }
   #input-pane-inner {
     overflow: hidden;
     transition: max-height 0.2s ease;
@@ -474,6 +476,8 @@ code { background: var(--bg3); border: 1px solid var(--border); border-radius: 4
           border-bottom:1px solid var(--border);align-items:center;">
           <span id="input-toggle-label" style="font-size:11px;color:var(--text3);font-weight:600;">入力 ▼</span>
         </div>
+        <!-- 切り替えトグルはモバイルでも常に表示（折りたたみの対象外） -->
+        <div id="race-input-toggle-fixed"></div>
         <div id="input-pane-inner">
           <div id="race-input-form"></div>
         </div>
@@ -563,7 +567,7 @@ const state = {
   pcdR: {}, pcavgR: {},                              // 展示のみ・平均差ビン・直近
   pcdLR: {}, pcavgLR: {},                            // lap1+展示・平均差ビン・直近
   recentDays: 90,   // Python側 RECENT_DAYS_LIMIT の値（表示用）
-  recentMode: true, // true=直近Nデータ限定 / false=全期間（デフォルトは直近＝季節・機械傾向の変化を反映）
+  recentMode: false, // true=直近Nデータ限定 / false=全期間（デフォルトは全期間）
   lap1Mode: true,  // デフォルト：展示＋1周（lap1）＝回り足・出足込みの実戦タイムを最優先表示
   regToName: {}, // reg -> 選手名
   nameToReg: {}, // 選手名 -> reg
@@ -1717,6 +1721,7 @@ function setupOcrPaste() {
 
 function renderRaceInput() {
   const form = document.getElementById("race-input-form");
+  const toggleFixed = document.getElementById("race-input-toggle-fixed");
   let html = "";
 
   // 手入力コースフィールドは非表示（内部的には保持）
@@ -1727,24 +1732,29 @@ function renderRaceInput() {
     <input id="ri-tenji-${c}" type="hidden">`;
   }
 
-  html += `
-  <div style="display:flex;gap:6px;margin-bottom:6px;">
-    <button id="ri-toggle-tenji" onclick="state.lap1Mode=false;updateRaceInputToggle();"
-      style="flex:1;padding:5px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
-      background:${state.lap1Mode?'var(--bg3)':'var(--blue)'};color:${state.lap1Mode?'var(--text2)':'#fff'};">展示タイム</button>
-    <button id="ri-toggle-lap1" onclick="state.lap1Mode=true;updateRaceInputToggle();"
-      style="flex:1;padding:5px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
-      background:${state.lap1Mode?'var(--blue)':'var(--bg3)'};color:${state.lap1Mode?'#fff':'var(--text2)'};">1周+展示</button>
-  </div>
-  <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center;">
-    <button id="ri-toggle-all" onclick="state.recentMode=false;updateRaceInputToggle();"
-      style="flex:1;padding:4px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
-      background:${!state.recentMode?'var(--teal)':'var(--bg3)'};color:${!state.recentMode?'#fff':'var(--text2)'};">全期間</button>
-    <button id="ri-toggle-recent" onclick="state.recentMode=true;updateRaceInputToggle();"
-      style="flex:1;padding:4px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
-      background:${state.recentMode?'var(--teal)':'var(--bg3)'};color:${state.recentMode?'#fff':'var(--text2)'};">直近${state.recentDays||90}日</button>
-  </div>
+  // 切り替えトグル（展示タイム/1周+展示、全期間/直近90日）は
+  // 折りたたみの対象外（#race-input-toggle-fixed）に描画し、モバイルでも常に表示させる
+  if (toggleFixed) {
+    toggleFixed.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <button id="ri-toggle-tenji" onclick="state.lap1Mode=false;updateRaceInputToggle();"
+        style="flex:1;padding:5px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
+        background:${state.lap1Mode?'var(--bg3)':'var(--blue)'};color:${state.lap1Mode?'var(--text2)':'#fff'};">展示タイム</button>
+      <button id="ri-toggle-lap1" onclick="state.lap1Mode=true;updateRaceInputToggle();"
+        style="flex:1;padding:5px;border-radius:20px;border:1px solid var(--border2);font-size:11px;cursor:pointer;font-family:inherit;
+        background:${state.lap1Mode?'var(--blue)':'var(--bg3)'};color:${state.lap1Mode?'#fff':'var(--text2)'};">1周+展示</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center;">
+      <button id="ri-toggle-all" onclick="state.recentMode=false;updateRaceInputToggle();"
+        style="flex:1;padding:4px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
+        background:${!state.recentMode?'var(--teal)':'var(--bg3)'};color:${!state.recentMode?'#fff':'var(--text2)'};">全期間</button>
+      <button id="ri-toggle-recent" onclick="state.recentMode=true;updateRaceInputToggle();"
+        style="flex:1;padding:4px;border-radius:20px;border:1px solid var(--border2);font-size:10px;cursor:pointer;font-family:inherit;
+        background:${state.recentMode?'var(--teal)':'var(--bg3)'};color:${state.recentMode?'#fff':'var(--text2)'};">直近${state.recentDays||90}日</button>
+    </div>`;
+  }
 
+  html += `
   <!-- テキスト貼り付けエリア -->
   <div style="margin-bottom:12px;">
     <div style="font-size:10px;font-weight:600;letter-spacing:0.08em;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">
