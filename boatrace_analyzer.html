@@ -1908,12 +1908,12 @@ function calcRaceInput() {
     { key: "F", range: "+0.10〜" },
   ];
 
-  const d = (a, b, k) => (a && b) ? +(a[k] - b[k]).toFixed(1) : null;
+  const d = (a, b, k) => (a && b) ? Math.round(a[k] - b[k]) : null;
 
   const diffSpan = (v) => {
     if (v == null) return '<span style="font-size:10px;color:var(--text3)">−</span>';
     const cls = v > 0 ? "pos" : v < 0 ? "neg" : "neu";
-    return `<span class="cell-diff ${cls}">${v > 0 ? "+" : ""}${v.toFixed(1)}%</span>`;
+    return `<span class="cell-diff ${cls}">${v > 0 ? "+" : ""}${v}%</span>`;
   };
 
   const valCell = (r, key, base) => {
@@ -2307,9 +2307,9 @@ function renderPlayerProfile() {
 
 // mode: "both"(default) | "valOnly" | "diffOnly"
 function rateCell(val, baseVal, label, mode) {
-  const diff = (val != null && baseVal != null) ? +(val - baseVal).toFixed(1) : null;
+  const diff = (val != null && baseVal != null) ? Math.round(val - baseVal) : null;
   const diffCls = diff == null ? "na" : diff > 0 ? "pos" : diff < 0 ? "neg" : "neu";
-  const diffStr = diff == null ? "−" : (diff > 0 ? "+" : "") + diff.toFixed(1) + "%";
+  const diffStr = diff == null ? "−" : (diff > 0 ? "+" : "") + diff + "%";
   const dataLabel = label ? ` data-label="${label}"` : "";
   if (mode === "valOnly") {
     return `<td${dataLabel}><span class="cell-val">${val != null ? val.toFixed(1) + "%" : "−"}</span></td>`;

@@ -3066,201 +3066,204 @@ def main():
 
     try:
         while True:
-            time.sleep(CHECK_INTERVAL)
-            # 深夜帯は翌日付CSVも監視（_race_date_candidates()に従う）
-            curr_csv = {}
-            for _pat in [str(CSV_DIR / f"*{d}*.csv") for d in _race_date_candidates()]:
-                curr_csv.update(get_mtimes(_pat))
-            curr_tenji = get_mtimes(str(TENJI_DIR / "*.json"))
-            curr_comment = get_mtimes(str(COMMENT_DIR / "*.json")) if COMMENT_DIR.exists() else {}
-            curr_result  = get_mtimes(str(RESULT_DIR / "*.json")) if RESULT_DIR.exists() else {}
-            curr_odds    = get_mtimes(str(ODDS_DIR / "*.json")) if ODDS_DIR.exists() else {}
+          try:
+              time.sleep(CHECK_INTERVAL)
+              # 深夜帯は翌日付CSVも監視（_race_date_candidates()に従う）
+              curr_csv = {}
+              for _pat in [str(CSV_DIR / f"*{d}*.csv") for d in _race_date_candidates()]:
+                  curr_csv.update(get_mtimes(_pat))
+              curr_tenji = get_mtimes(str(TENJI_DIR / "*.json"))
+              curr_comment = get_mtimes(str(COMMENT_DIR / "*.json")) if COMMENT_DIR.exists() else {}
+              curr_result  = get_mtimes(str(RESULT_DIR / "*.json")) if RESULT_DIR.exists() else {}
+              curr_odds    = get_mtimes(str(ODDS_DIR / "*.json")) if ODDS_DIR.exists() else {}
 
-            changed = []
+              changed = []
 
-            # Excelマスタ変更チェック → 再ビルド＋MASTER ホットリロード
-            curr_xlsx_mtime = XLSX_PATH.stat().st_mtime if XLSX_PATH.exists() else None
-            if curr_xlsx_mtime and curr_xlsx_mtime != prev_xlsx_mtime:
-                if rebuild_master():
-                    prev_xlsx_mtime = curr_xlsx_mtime
+              # Excelマスタ変更チェック → 再ビルド＋MASTER ホットリロード
+              curr_xlsx_mtime = XLSX_PATH.stat().st_mtime if XLSX_PATH.exists() else None
+              if curr_xlsx_mtime and curr_xlsx_mtime != prev_xlsx_mtime:
+                  if rebuild_master():
+                      prev_xlsx_mtime = curr_xlsx_mtime
 
-            # CSV変更チェック
-            csv_changed = False
-            for p, mt in curr_csv.items():
-                if p not in prev_csv or prev_csv[p] != mt:
-                    changed.append(Path(p))
-                    log(f"  CSV変更: {Path(p).name}")
-                    csv_changed = True
+              # CSV変更チェック
+              csv_changed = False
+              for p, mt in curr_csv.items():
+                  if p not in prev_csv or prev_csv[p] != mt:
+                      changed.append(Path(p))
+                      log(f"  CSV変更: {Path(p).name}")
+                      csv_changed = True
 
-            # 展示情報JSON変更チェック
-            for p, mt in curr_tenji.items():
-                if p not in prev_tenji or prev_tenji[p] != mt:
-                    changed.append(Path(p))
-                    log(f"  展示情報変更: {Path(p).name}")
+              # 展示情報JSON変更チェック
+              for p, mt in curr_tenji.items():
+                  if p not in prev_tenji or prev_tenji[p] != mt:
+                      changed.append(Path(p))
+                      log(f"  展示情報変更: {Path(p).name}")
 
-            # コメントJSON変更チェック
-            for p, mt in curr_comment.items():
-                if p not in prev_comment or prev_comment[p] != mt:
-                    changed.append(Path(p))
-                    log(f"  コメント変更: {Path(p).name}")
+              # コメントJSON変更チェック
+              for p, mt in curr_comment.items():
+                  if p not in prev_comment or prev_comment[p] != mt:
+                      changed.append(Path(p))
+                      log(f"  コメント変更: {Path(p).name}")
 
-            # 結果JSON変更チェック
-            for p, mt in curr_result.items():
-                if p not in prev_result or prev_result[p] != mt:
-                    changed.append(Path(p))
-                    log(f"  結果変更: {Path(p).name}")
+              # 結果JSON変更チェック
+              for p, mt in curr_result.items():
+                  if p not in prev_result or prev_result[p] != mt:
+                      changed.append(Path(p))
+                      log(f"  結果変更: {Path(p).name}")
 
-            if changed:
-                # CSVが変わったらindex.jsonも再生成＆ALL_DATA再埋め込み
-                if csv_changed:
-                    # 出走表到着 → モーター情報を同期取得 → 展示情報をバックグラウンド取得
-                    changed_csv_paths = [p for p in changed if str(p).endswith(".csv")]
-                    if changed_csv_paths:
-                        log("  出走表更新 → モーター情報取得中...")
-                        fetch_motor_for_csv(changed_csv_paths)
-                        # 新規JSONが生成されたので prev_tenji を更新
-                        prev_tenji = get_mtimes(str(TENJI_DIR / "*.json"))
-                        # ★ 展示情報はバックグラウンドで取得
-                        # （取得完了後にメインループが tenji_data/*.json の変更を検知して push）
-                        # ★ 注意: fetch_tenji_for_csv は非同期のため、ここでは prev_tenji を
-                        #    更新しない。スレッド完了後に次の10秒ループで変更を検知する。
-                        fetch_tenji_for_csv(changed_csv_paths)
-                        # ★ 展開別残存ビューアの会場・選手名を更新
-                        if inject_race_entry_to_viewer(changed_csv_paths):
-                            changed.append(VIEWER_HTML)
-                    idx = make_csv_index()
-                    changed.append(idx)
-                    # ★ inject_all_data_to_html / inject_master_ext_to_html は廃止
-                    # → data.jsへの埋め込みをやめ、data/*.jsonへの書き出しのみ行う
+              if changed:
+                  # CSVが変わったらindex.jsonも再生成＆ALL_DATA再埋め込み
+                  if csv_changed:
+                      # 出走表到着 → モーター情報を同期取得 → 展示情報をバックグラウンド取得
+                      changed_csv_paths = [p for p in changed if str(p).endswith(".csv")]
+                      if changed_csv_paths:
+                          log("  出走表更新 → モーター情報取得中...")
+                          fetch_motor_for_csv(changed_csv_paths)
+                          # 新規JSONが生成されたので prev_tenji を更新
+                          prev_tenji = get_mtimes(str(TENJI_DIR / "*.json"))
+                          # ★ 展示情報はバックグラウンドで取得
+                          # （取得完了後にメインループが tenji_data/*.json の変更を検知して push）
+                          # ★ 注意: fetch_tenji_for_csv は非同期のため、ここでは prev_tenji を
+                          #    更新しない。スレッド完了後に次の10秒ループで変更を検知する。
+                          fetch_tenji_for_csv(changed_csv_paths)
+                          # ★ 展開別残存ビューアの会場・選手名を更新
+                          if inject_race_entry_to_viewer(changed_csv_paths):
+                              changed.append(VIEWER_HTML)
+                      idx = make_csv_index()
+                      changed.append(idx)
+                      # ★ inject_all_data_to_html / inject_master_ext_to_html は廃止
+                      # → data.jsへの埋め込みをやめ、data/*.jsonへの書き出しのみ行う
 
-                # ── fetch系（展示・コメント・結果）の変更を分類 ──
-                tenji_changed = any(
-                    "tenji" in str(p) and str(p).endswith(".json")
-                    for p in changed
-                )
-                comment_changed = any(
-                    "comment" in str(p) and str(p).endswith(".json")
-                    for p in changed
-                )
-                result_changed = any(
-                    "result" in str(p) and str(p).endswith(".json")
-                    for p in changed
-                )
+                  # ── fetch系（展示・コメント・結果）の変更を分類 ──
+                  tenji_changed = any(
+                      "tenji" in str(p) and str(p).endswith(".json")
+                      for p in changed
+                  )
+                  comment_changed = any(
+                      "comment" in str(p) and str(p).endswith(".json")
+                      for p in changed
+                  )
+                  result_changed = any(
+                      "result" in str(p) and str(p).endswith(".json")
+                      for p in changed
+                  )
 
-                # fetch系のみの変更（CSVなし）→ write_all_json_files をスキップして即 push
-                fetch_only = (tenji_changed or comment_changed or result_changed) and not csv_changed
+                  # fetch系のみの変更（CSVなし）→ write_all_json_files をスキップして即 push
+                  fetch_only = (tenji_changed or comment_changed or result_changed) and not csv_changed
 
-                tenji_push_done  = False
-                result_push_done = False
+                  tenji_push_done  = False
+                  result_push_done = False
 
-                if tenji_changed or comment_changed:
-                    # data/tenji_YYYYMMDD.json だけ書き直して即 push
-                    write_tenji_json_file()
-                    with _git_lock:
-                        for tj in DATA_DIR.glob("tenji_*.json"):
-                            _run_nolock(["git", "add", str(tj)])
-                        code2, out2 = _run_nolock(["git", "status", "--porcelain"])
-                        tracked2 = [l for l in out2.strip().splitlines() if not l.startswith("??")]
-                        if tracked2:
-                            tenji_summary = _summarize_push_targets(changed)
-                            msg2 = f"tenji update {datetime.now().strftime('%Y-%m-%d %H:%M')} [{tenji_summary}]"
-                            _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg2))
-                            log(f"  ✓ 展示情報 pushキューに追加 [{tenji_summary}]")
-                            tenji_push_done = True
+                  if tenji_changed or comment_changed:
+                      # data/tenji_YYYYMMDD.json だけ書き直して即 push
+                      write_tenji_json_file()
+                      with _git_lock:
+                          for tj in DATA_DIR.glob("tenji_*.json"):
+                              _run_nolock(["git", "add", str(tj)])
+                          code2, out2 = _run_nolock(["git", "status", "--porcelain"])
+                          tracked2 = [l for l in out2.strip().splitlines() if not l.startswith("??")]
+                          if tracked2:
+                              tenji_summary = _summarize_push_targets(changed)
+                              msg2 = f"tenji update {datetime.now().strftime('%Y-%m-%d %H:%M')} [{tenji_summary}]"
+                              _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg2))
+                              log(f"  ✓ 展示情報 pushキューに追加 [{tenji_summary}]")
+                              tenji_push_done = True
 
-                if result_changed and not csv_changed:
-                    # data/result_YYYYMMDD.json だけ書き直して即 push
-                    write_result_json()
-                    with _git_lock:
-                        for rj in DATA_DIR.glob("result_*.json"):
-                            _run_nolock(["git", "add", str(rj)])
-                        code3, out3 = _run_nolock(["git", "status", "--porcelain"])
-                        tracked3 = [l for l in out3.strip().splitlines() if not l.startswith("??")]
-                        if tracked3:
-                            result_summary = _summarize_push_targets(changed)
-                            msg3 = f"result update {datetime.now().strftime('%Y-%m-%d %H:%M')} [{result_summary}]"
-                            _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg3))
-                            log(f"  ✓ 結果情報 pushキューに追加 [{result_summary}]")
-                            result_push_done = True
+                  if result_changed and not csv_changed:
+                      # data/result_YYYYMMDD.json だけ書き直して即 push
+                      write_result_json()
+                      with _git_lock:
+                          for rj in DATA_DIR.glob("result_*.json"):
+                              _run_nolock(["git", "add", str(rj)])
+                          code3, out3 = _run_nolock(["git", "status", "--porcelain"])
+                          tracked3 = [l for l in out3.strip().splitlines() if not l.startswith("??")]
+                          if tracked3:
+                              result_summary = _summarize_push_targets(changed)
+                              msg3 = f"result update {datetime.now().strftime('%Y-%m-%d %H:%M')} [{result_summary}]"
+                              _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg3))
+                              log(f"  ✓ 結果情報 pushキューに追加 [{result_summary}]")
+                              result_push_done = True
 
-                # ── tenjihoseiplus.html（展示タイム分析ビュー）の再生成・push ──
-                # 展示情報 or 結果情報に変化があったときだけ呼ぶ（内部でも変化なしなら自動スキップする）
-                if maybe_update_tenjihoseiplus is not None and (tenji_changed or result_changed):
-                    try:
-                        # 締切時刻マップを構築（CSV優先→公式サイトfallback）。
-                        # _build_deadline_map() のキーは「会場名（日本語）」だが、
-                        # tenjihoseiplus.py 側は tenji JSON の venue（スラッグ、例: "heiwajima"）
-                        # で引くため、VENUE_SLUG でキーを変換してから渡す。
-                        _th_deadline_map = {}
-                        try:
-                            _venues_in_csv = get_venues_in_today_csvs()
-                            _dl_map_ja = _build_deadline_map(_venues_in_csv)
-                            _th_deadline_map = {
-                                VENUE_SLUG.get(v, v): m for v, m in _dl_map_ja.items()
-                            }
-                        except Exception as e:
-                            log(f"  [tenjihoseiplus] ⚠ 締切時刻マップ構築失敗: {e}")
+                  # ── tenjihoseiplus.html（展示タイム分析ビュー）の再生成・push ──
+                  # 展示情報 or 結果情報に変化があったときだけ呼ぶ（内部でも変化なしなら自動スキップする）
+                  if maybe_update_tenjihoseiplus is not None and (tenji_changed or result_changed):
+                      try:
+                          # 締切時刻マップを構築（CSV優先→公式サイトfallback）。
+                          # _build_deadline_map() のキーは「会場名（日本語）」だが、
+                          # tenjihoseiplus.py 側は tenji JSON の venue（スラッグ、例: "heiwajima"）
+                          # で引くため、VENUE_SLUG でキーを変換してから渡す。
+                          _th_deadline_map = {}
+                          try:
+                              _venues_in_csv = get_venues_in_today_csvs()
+                              _dl_map_ja = _build_deadline_map(_venues_in_csv)
+                              _th_deadline_map = {
+                                  VENUE_SLUG.get(v, v): m for v, m in _dl_map_ja.items()
+                              }
+                          except Exception as e:
+                              log(f"  [tenjihoseiplus] ⚠ 締切時刻マップ構築失敗: {e}")
 
-                        th_updated = maybe_update_tenjihoseiplus(
-                            results_csv_dir=RESULTS_CSV_DIR,
-                            tenji_dir=TENJI_DIR,
-                            player_map_path=PLAYER_ID_MAP,
-                            template_html=TENJIHOSEIPLUS_TEMPLATE,
-                            output_html=TENJIHOSEIPLUS_HTML,
-                            deadline_map=_th_deadline_map,
-                        )
-                    except Exception as e:
-                        th_updated = False
-                        log(f"  [tenjihoseiplus] ✕ 例外: {e}")
-                    if th_updated:
-                        with _git_lock:
-                            _run_nolock(["git", "add", str(TENJIHOSEIPLUS_HTML)])
-                            code4, out4 = _run_nolock(["git", "status", "--porcelain"])
-                            tracked4 = [l for l in out4.strip().splitlines() if not l.startswith("??")]
-                            if tracked4:
-                                msg4 = f"tenjihoseiplus update {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                                _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg4))
-                                log(f"  ✓ tenjihoseiplus.html pushキューに追加")
+                          th_updated = maybe_update_tenjihoseiplus(
+                              results_csv_dir=RESULTS_CSV_DIR,
+                              tenji_dir=TENJI_DIR,
+                              player_map_path=PLAYER_ID_MAP,
+                              template_html=TENJIHOSEIPLUS_TEMPLATE,
+                              output_html=TENJIHOSEIPLUS_HTML,
+                              deadline_map=_th_deadline_map,
+                          )
+                      except Exception as e:
+                          th_updated = False
+                          log(f"  [tenjihoseiplus] ✕ 例外: {e}")
+                      if th_updated:
+                          with _git_lock:
+                              _run_nolock(["git", "add", str(TENJIHOSEIPLUS_HTML)])
+                              code4, out4 = _run_nolock(["git", "status", "--porcelain"])
+                              tracked4 = [l for l in out4.strip().splitlines() if not l.startswith("??")]
+                              if tracked4:
+                                  msg4 = f"tenjihoseiplus update {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                                  _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg4))
+                                  log(f"  ✓ tenjihoseiplus.html pushキューに追加")
 
 
-                # race_index取得（CSV変更時のみ）
-                # → RACE_INDEX_DATA を埋め込んだ data.js は、tenji/odds/result の
-                #   緊急pushに埋もれて後回しにされ続けないよう、ここで即座に
-                #   urgent push する（CSV本体のpushは従来通り通常優先度のまま）。
-                if csv_changed:
-                    if fetch_and_inject_race_index():
-                        race_index_pushed = git_push([INDEX_HTML], urgent=True)
-                        if race_index_pushed:
-                            log("  ✓ RACE_INDEX_DATA(data.js) 緊急pushキューに追加")
+                  # race_index取得（CSV変更時のみ）
+                  # → RACE_INDEX_DATA を埋め込んだ data.js は、tenji/odds/result の
+                  #   緊急pushに埋もれて後回しにされ続けないよう、ここで即座に
+                  #   urgent push する（CSV本体のpushは従来通り通常優先度のまま）。
+                  if csv_changed:
+                      if fetch_and_inject_race_index():
+                          race_index_pushed = git_push([INDEX_HTML], urgent=True)
+                          if race_index_pushed:
+                              log("  ✓ RACE_INDEX_DATA(data.js) 緊急pushキューに追加")
 
-                # CSV変更 or fetch以外の変更がある場合 → 通常の全JSON書き出し＋push
-                # fetch系のみ変更の場合は上で個別push済みのためスキップ
-                if fetch_only:
-                    if tenji_push_done or result_push_done:
-                        log("  fetch系のみ変更 → 個別push済み・write_all_json_files スキップ")
-                    else:
-                        log("  fetch系のみ変更だが差分なし → pushスキップ")
-                else:
-                    # data/*.json を一括書き出し（data.jsへの埋め込みなし）
-                    write_all_json_files()
-                    git_push(changed)
+                  # CSV変更 or fetch以外の変更がある場合 → 通常の全JSON書き出し＋push
+                  # fetch系のみ変更の場合は上で個別push済みのためスキップ
+                  if fetch_only:
+                      if tenji_push_done or result_push_done:
+                          log("  fetch系のみ変更 → 個別push済み・write_all_json_files スキップ")
+                      else:
+                          log("  fetch系のみ変更だが差分なし → pushスキップ")
+                  else:
+                      # data/*.json を一括書き出し（data.jsへの埋め込みなし）
+                      write_all_json_files()
+                      git_push(changed)
 
-                prev_csv     = curr_csv
-                prev_tenji   = curr_tenji
-                prev_comment = curr_comment
-                prev_result  = curr_result
+                  prev_csv     = curr_csv
+                  prev_tenji   = curr_tenji
+                  prev_comment = curr_comment
+                  prev_result  = curr_result
 
-            # ── オッズJSON変更チェック（if changed: の外で独立検知）──────────────
-            # オッズだけが変わってCSV・展示・結果に変化がない場合、
-            # if changed: ブロックに入らず push が漏れるのを防ぐ。
-            odds_changed = any(
-                p not in prev_odds or prev_odds[p] != curr_odds.get(p)
-                for p in curr_odds
-            )
-            if odds_changed:
-                _write_and_push_odds_json()
-                log("  オッズ情報 pushキューに追加")
-            prev_odds = curr_odds
+              # ── オッズJSON変更チェック（if changed: の外で独立検知）──────────────
+              # オッズだけが変わってCSV・展示・結果に変化がない場合、
+              # if changed: ブロックに入らず push が漏れるのを防ぐ。
+              odds_changed = any(
+                  p not in prev_odds or prev_odds[p] != curr_odds.get(p)
+                  for p in curr_odds
+              )
+              if odds_changed:
+                  _write_and_push_odds_json()
+                  log("  オッズ情報 pushキューに追加")
+              prev_odds = curr_odds
+          except Exception as _loop_e:
+            log(f"[ループ異常] {_loop_e} → 継続")
 
     except KeyboardInterrupt:
         log("\n[終了]")
