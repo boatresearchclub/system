@@ -2214,7 +2214,7 @@ function renderBuy(rno){
                border-bottom:2px solid transparent;color:var(--green);font-family:'Noto Sans JP',sans-serif;
                display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.2;">
         <span>✨ EV買い</span>
-        <span style="font-size:9px;font-weight:400;color:var(--text3);">EV1.1以上</span>
+        <span style="font-size:9px;font-weight:400;color:var(--text3);">EV1.15以上</span>
       </button>
     </div>`;
 
@@ -2275,9 +2275,9 @@ function renderBuy(rno){
 function buildEvFilterPanel(buy3list, buy2list, resultSan3, resultNiren,
                              raceOdds3tEv, raceOdds2tEv, comboToBadges, normalizeCombo,
                              evThreshold) {
-  // [修正] ハードコードの1.1固定値をやめ、config.js側の EV_FILTER_THRESHOLD があれば優先採用。
-  // 呼び出し元から渡されなかった場合のみデフォルト1.10にフォールバックする。
-  const EV_THRESHOLD = evThreshold ?? (typeof EV_FILTER_THRESHOLD !== 'undefined' ? EV_FILTER_THRESHOLD : 1.10);
+  // [修正] TOPページの renderScenEVSection と基準を統一し、デフォルトを1.15に変更。
+  // config.js側の EV_FILTER_THRESHOLD があればそちらを優先採用。
+  const EV_THRESHOLD = evThreshold ?? (typeof EV_FILTER_THRESHOLD !== 'undefined' ? EV_FILTER_THRESHOLD : 1.15);
 
   // [修正] EV計算・フィルタリングは共通ピュア関数 filterCombosByExpectedValue に委譲。
   // オッズ欠損（特払い・欠場・データ欠損）の買い目は関数側で安全に除外される。
@@ -2290,9 +2290,14 @@ function buildEvFilterPanel(buy3list, buy2list, resultSan3, resultNiren,
   const ev3list = filterByEV(buy3list, raceOdds3tEv);
   const ev2list = filterByEV(buy2list, raceOdds2tEv);
 
+  // ★超妙味株（EV1.5以上）の判定閾値。TOPページの renderScenEVSection と統一。
+  const EV_SUPER_THRESHOLD = 1.5;
+
   function buildEvRows(list, resultSet) {
     if (list.length === 0) {
-      return `<div style="padding:12px 8px;color:var(--text3);font-size:12px;text-align:center">EV${EV_THRESHOLD.toFixed(1)}以上の買い目なし</div>`;
+      return `<div style="padding:16px 8px;color:var(--red);font-size:12px;text-align:center;font-weight:700;line-height:1.6">
+        【ケン（見送り推奨）】<br>期待値${EV_THRESHOLD.toFixed(2)}以上の買い目がありません
+      </div>`;
     }
     let html = '';
     list.forEach((r, idx) => {
@@ -2301,13 +2306,19 @@ function buildEvFilterPanel(buy3list, buy2list, resultSan3, resultNiren,
       const probPct = r.prob != null ? (r.prob * 100).toFixed(2) + '%' : '—';
       const oddsStr = r._odds != null ? r._odds.toFixed(1) : '—';
       const ev      = r._ev;
-      const evColor = ev >= 1.5 ? '#00c853' : 'var(--green)';
+      const isSuper = ev >= EV_SUPER_THRESHOLD;
+      const evColor = isSuper ? '#00c853' : 'var(--green)';
       const evHtml  = `<span style="font-size:11px;font-family:var(--mono);font-weight:700;color:${evColor};flex-shrink:0;min-width:4em;text-align:right">EV${ev.toFixed(2)}</span>`;
+      const superBadge = isSuper
+        ? '<span style="font-size:9px;font-weight:800;color:#00c853;background:#00c85320;border:1px solid #00c853;border-radius:3px;padding:1px 4px;flex-shrink:0">★超妙味株</span>'
+        : '';
       const rankColor = idx === 0 ? 'var(--gold)' : idx === 1 ? '#aaa' : 'var(--text3)';
-      html += `<div class="buy-row${isHit ? ' hit' : ''}" style="padding:6px 0">
+      html += `<div class="buy-row${isHit ? ' hit' : ''}${isSuper ? ' buy-row--super' : ''}"
+        style="padding:6px 0${isSuper ? ';border-left:3px solid #00c853;background:rgba(0,200,83,0.06)' : ''}">
         <div style="display:flex;align-items:center;gap:5px;flex-wrap:nowrap">
           <span style="font-size:9px;color:${rankColor};font-weight:700;min-width:14px;flex-shrink:0">${idx+1}</span>
           <span class="buy-combo" style="display:inline-flex;align-items:center;gap:0;letter-spacing:0;flex:1;min-width:0">${comboToBadges(r.c)}</span>
+          ${superBadge}
           <span style="font-size:10px;font-family:var(--mono);color:var(--text3);flex-shrink:0;min-width:3.5em;text-align:right">${probPct}</span>
           <span style="font-size:12px;font-family:var(--mono);font-weight:600;color:var(--text);flex-shrink:0;min-width:3.8em;text-align:right">${oddsStr}倍</span>
           ${evHtml}
@@ -2330,7 +2341,7 @@ function buildEvFilterPanel(buy3list, buy2list, resultSan3, resultNiren,
 
   return `<div id="buy-mode-ev" style="display:none">
     <div style="padding:6px 8px 4px;font-size:10px;color:var(--text3);line-height:1.5;background:rgba(0,200,83,0.06);border-bottom:1px solid var(--border)">
-      ✨ AI確率 × オッズ が <strong style="color:var(--green)">EV${EV_THRESHOLD.toFixed(1)}以上</strong> の買い目のみ（EV降順）
+      ✨ AI確率 × オッズ が <strong style="color:var(--green)">EV${EV_THRESHOLD.toFixed(2)}以上</strong> の買い目のみ（EV降順・EV1.5以上は★超妙味株）
     </div>
     <div class="buy-grid">
       <div class="buy-card">
@@ -4870,6 +4881,16 @@ function prefillScenEVCache(dateStr) {
       const flagHit  = buy3Hit.length > 0;
       const synthHit = flagHit ? _synthOdds(buy3Hit.map(r => r.c)) : null;
 
+      // ── [新規] renderScenEVSection の「買い目別EV」表示用の生データを保持 ──
+      // buy3Hit は { c: パターン文字列, prob: 的中確率(比率0-1) } の配列で、
+      // 個別買い目ごとの確率を持つ数少ないソースのためこれを採用する
+      // （scenCombos は文字列配列のみで個別確率を持たない）。
+      // _oddsSource（直前オッズ or 結果オッズのフォールバック）もそのまま
+      // スナップショットとして保持し、renderScenEVSection 側で
+      // filterCombosByExpectedValue に渡して EV 計算・フィルタ・ソートを行う。
+      const buyCombosSnapshot = buy3Hit;
+      const oddsMapSnapshot   = _oddsSource;
+
       // ── 回収重視: computeBuy3('rec') → 空なら未達 ──
       const buy3Rec  = computeBuy3(venue, vdata, rno, 'rec');
       const flagRec  = buy3Rec.length > 0;
@@ -4944,6 +4965,9 @@ function prefillScenEVCache(dateStr) {
           flagInNeg, negSynth,
           fp1: fp1Banner,
           venueAvg1: venueAvg1Banner,
+          // [新規] renderScenEVSection の買い目別EVフィルタリング用スナップショット
+          buyCombos: buyCombosSnapshot,
+          oddsMap  : oddsMapSnapshot,
         };
       } else {
         // 既存エントリのフラグだけ更新（ev/synth/hitRate/fp1/venueAvg1 は buildScenarioBuyPanel の精度が高いため保持）
@@ -4952,6 +4976,9 @@ function prefillScenEVCache(dateStr) {
         existing.flagRec   = flagRec;   existing.synthRec   = synthRec;
         existing.flagInTep = flagInTep; existing.tepSynth   = tepSynth;
         existing.flagInNeg = flagInNeg; existing.negSynth   = negSynth;
+        // [新規] オッズは更新頻度が高いため、既存エントリでも毎回最新スナップショットに置き換える
+        existing.buyCombos = buyCombosSnapshot;
+        existing.oddsMap   = oddsMapSnapshot;
         // ev == null はタブ未開封 → 簡易計算値で補完
         // ev != null は buildScenarioBuyPanel 書き込み済み → fp1/venueAvg1 も正確な値を保持
         if (existing.ev == null) {
@@ -4987,30 +5014,65 @@ function renderScenEVSection(){
   const el = document.getElementById('top-scen-ev-section');
   if(!el) return;
 
-  const EV_THRESHOLD = 1.1;
+  // ── 採用基準 ──────────────────────────────────────────────
+  // 期待値(EV) = 的中確率(%) ÷ 100 × 直前オッズ
+  // 1.15 未満（ガミる目・投資効率の悪い目）は自動的に除外する。
+  const EV_THRESHOLD       = 1.15;
+  // EV1.5以上は「★超妙味株」として特に目立たせる
+  const EV_SUPER_THRESHOLD = 1.5;
 
-  // キャッシュから期待値1.1のレースを抽出し、期待値降順でソート
-  const hits = Object.values(_scenEVCache)
-    .filter(r => r.ev != null && r.ev >= EV_THRESHOLD)
-    .sort((a, b) => b.ev - a.ev);
+  // ── 全レース分の買い目候補を1本のフラットな配列に集約 ──────
+  // _scenEVCache の各レースには prefillScenEVCache で保存した
+  //   buyCombos: [{ c: パターン文字列, prob: 的中確率(比率0-1), ... }, ...]
+  //   oddsMap  : { パターン文字列: 直前オッズ }（そのレース時点のスナップショット）
+  // が入っている。ここで共通ピュア関数 filterCombosByExpectedValue に通し、
+  // 「計算 → EV1.15未満を除外 → EV降順ソート」を行う。
+  // オッズが欠損している買い目（特払い・欠場・データ未取得等）は
+  // filterCombosByExpectedValue 側で安全にスキップされる。
+  let allEvCombos = [];
+  Object.values(_scenEVCache).forEach(r => {
+    if (!Array.isArray(r.buyCombos) || r.buyCombos.length === 0 || !r.oddsMap) return;
 
-  if(hits.length === 0){
-    el.innerHTML = `<div style="padding:12px 4px;color:var(--text3);font-size:12px;text-align:center">
-      現在、期待値1.1のレースはありません
+    let filtered;
+    try {
+      filtered = filterCombosByExpectedValue(r.buyCombos, r.oddsMap, EV_THRESHOLD, {
+        patternKey: 'c', probKey: 'prob', probIsPercentage: false,
+      });
+    } catch (e) {
+      // 想定外のデータ形式が来てもセクション全体を落とさない
+      filtered = [];
+    }
+
+    filtered.forEach(c => {
+      allEvCombos.push({ ...c, venue: r.venue, rno: r.rno, date: r.date });
+    });
+  });
+
+  // レースをまたいだランキングとして、全体をEV降順に再ソート
+  allEvCombos.sort((a, b) => b._ev - a._ev);
+
+  // ── 買い目が1つも残らない場合は「ケン」推奨を表示して終了 ──────
+  if (allEvCombos.length === 0) {
+    el.innerHTML = `<div class="scen-ev-empty" style="padding:16px 10px;color:var(--red);font-size:13px;line-height:1.6;text-align:center;font-weight:700;border:1px dashed var(--red);border-radius:8px;background:rgba(255,59,48,0.06)">
+      【ケン（見送り推奨）】期待値が基準を超える買い目がありません。
     </div>`;
     return;
   }
 
-  const boatBadge = n =>
-    `<span class="boat-circle b${n}" style="width:18px;height:18px;font-size:10px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;vertical-align:middle">${n}</span>`;
+  const cards = allEvCombos.map(r => {
+    const isSuper  = r._ev >= EV_SUPER_THRESHOLD;
+    const evColor  = isSuper ? '#00c853' : (r._ev >= 1.3 ? 'var(--green)' : 'var(--orange)');
+    const probStr  = r.prob  != null ? (r.prob * 100).toFixed(1) + '%' : '—';
+    const oddsStr  = r._odds != null ? r._odds.toFixed(1) + '倍'       : '—';
+    const comboHtml = (typeof comboToBadges === 'function') ? comboToBadges(r.c) : r.c;
 
-  const cards = hits.map(r => {
-    const evPct  = (r.ev * 100).toFixed(0);
-    const evColor = r.ev >= 1.3 ? 'var(--green)' : r.ev >= 1.1 ? 'var(--orange)' : 'var(--text2)';
-    const synthStr  = r.synth  != null ? r.synth.toFixed(2)          : '—';
-    const hitStr    = r.hitRate != null ? (r.hitRate*100).toFixed(1)  : '—';
+    // ★超妙味株（EV1.5以上）は枠線・シャドウで強調するクラス/スタイルを付与
+    const cardClass = 'scen-ev-card' + (isSuper ? ' scen-ev-card--super' : '');
+    const cardStyle = isSuper
+      ? 'cursor:pointer;border:2px solid #00c853;box-shadow:0 0 10px rgba(0,200,83,0.35);'
+      : 'cursor:pointer';
 
-    return `<div class="scen-ev-card" onclick="(function(){
+    return `<div class="${cardClass}" style="${cardStyle}" onclick="(function(){
       const dataFD = getDataForDate(viewDate);
       if(!dataFD['${r.venue}']) return;
       hideTopPage();
@@ -5024,26 +5086,26 @@ function renderScenEVSection(){
       TAB_NAMES.forEach(t=>{document.getElementById('tab-'+t).style.display=t==='detail2'?'':'none';});
       document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab==='detail2'));
       selectRace(${r.rno});
-    })()" style="cursor:pointer">
+    })()">
       <div class="scen-ev-card-header">
         <span class="scen-ev-venue">${r.venue}</span>
         <span class="scen-ev-race">${r.rno}R</span>
-        <span class="scen-ev-badge" style="background:${evColor}20;border:1px solid ${evColor};color:${evColor}">
-          期待値 <strong>${(r.ev).toFixed(2)}</strong>
+        ${isSuper ? `<span class="scen-ev-super-badge" style="font-weight:800;font-size:10px;padding:2px 6px;border-radius:4px;background:#00c85320;border:1px solid #00c853;color:#00c853;margin-left:auto">★超妙味株</span>` : ''}
+        <span class="scen-ev-badge" style="background:${evColor}20;border:1px solid ${evColor};color:${evColor}${isSuper ? '' : ';margin-left:auto'}">
+          期待値 <strong>${r._ev.toFixed(2)}</strong>
         </span>
       </div>
       <div class="scen-ev-card-body">
-        <div class="scen-ev-stat">
-          <span class="scen-ev-label">合成オッズ</span>
-          <span class="scen-ev-val" style="font-family:var(--mono)">${synthStr}倍</span>
+        <div class="scen-ev-stat" style="grid-column:1/-1">
+          <span class="scen-ev-combo">${comboHtml}</span>
         </div>
         <div class="scen-ev-stat">
-          <span class="scen-ev-label">想定的中率</span>
-          <span class="scen-ev-val" style="font-family:var(--mono)">${hitStr}%</span>
+          <span class="scen-ev-label">的中確率</span>
+          <span class="scen-ev-val" style="font-family:var(--mono)">${probStr}</span>
         </div>
         <div class="scen-ev-stat">
-          <span class="scen-ev-label">点数</span>
-          <span class="scen-ev-val" style="font-family:var(--mono)">${r.pts}点</span>
+          <span class="scen-ev-label">オッズ</span>
+          <span class="scen-ev-val" style="font-family:var(--mono)">${oddsStr}</span>
         </div>
       </div>
     </div>`;
