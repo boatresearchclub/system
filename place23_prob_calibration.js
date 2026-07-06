@@ -233,6 +233,16 @@
   // この関数内でバックフィルを実行するため、呼び出し元での前処理は不要。
   window._renderPlace23ProbCalibrationPanel = function (allResultsScenAll) {
     try {
+      // ── admin-mode ガード ──
+      // calibration.js の _renderCalibrationPanel と同じ権限チェックをここでも行う。
+      // このパネルは管理者専用のため、admin-mode でない場合は既存パネルを
+      // 削除して終了する（無料/有料ユーザーには一切表示しない）。
+      if (!document.body.classList.contains('admin-mode')) {
+        const existing = document.getElementById('place23-prob-calibration-panel');
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+        return;
+      }
+
       const all = allResultsScenAll || [];
       if (all.length === 0) {
         console.warn('[place23_prob_calibration] allResultsScenAll が空のためスキップ');
