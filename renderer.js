@@ -20,6 +20,107 @@ function comboToBadges(combo){
   }).join('');
 }
 
+// ── 期待値（EV）計算・フィルタリング共通ユーティリティ ──────────────
+// AI予想タブ（attachEV）・EVフィルタータブ（buildEvFilterPanel）など、
+// 「買い目 × オッズ」を扱う複数の描画関数から共通利用するためトップレベルに配置。
+//
+// 買い目オブジェクトのキー名は生成元によって異なる：
+//   - renderer.js 内部生成（buy3list/buy2list 等）: { c: "1-2-3", prob: 0.255 }（確率は比率0-1）
+//   - analyzer.js 由来の生データ                  : { pattern: "1-2-3", final_prob: 25.5 }（確率は%表記）
+// options でキー名・確率表記(%/比率)を吸収できる汎用設計にしている。
+// ※ 既存の attachEV / filterByEV はこのユーティリティに処理を委譲する形にリファクタ済み。
+
+/**
+ * 単一の買い目オブジェクトに odds（オッズ）と _ev（期待値）を付与した新しいオブジェクトを返す。
+ * ピュア関数（引数のオブジェクトは変更せず、新規オブジェクトを返す）。
+ * オッズが見つからない・不正な場合は _odds / _ev が null になるだけで、除外はしない
+ * （除外まで行いたい場合は filterCombosByExpectedValue を使用する）。
+ *
+ * @param {Object} combo
+ * @param {Object<string, number>} oddsData - 直前オッズ { パターン文字列: オッズ }
+ * @param {Object} [options]
+ * @param {string}   [options.patternKey='c']         買い目文字列のキー名
+ * @param {string}   [options.probKey='prob']         確率のキー名
+ * @param {boolean}  [options.probIsPercentage=false] 確率がパーセント表記(0-100)か比率(0-1)か
+ * @param {function} [options.normalizeCombo]         オッズ参照前にパターン文字列を正規化する関数
+ * @returns {Object} 元のcomboに _odds / _ev を加えた新しいオブジェクト
+ */
+function attachComboEV(combo, oddsData, options = {}) {
+  const {
+    patternKey = 'c',
+    probKey = 'prob',
+    probIsPercentage = false,
+    normalizeCombo: normalizeFn = normalizeCombo,
+  } = options;
+
+  if (!combo || typeof combo !== 'object') {
+    return { ...combo, _odds: null, _ev: null };
+  }
+
+  const patternRaw = combo[patternKey];
+  const probRaw     = combo[probKey];
+
+  const key  = typeof patternRaw === 'string' ? normalizeFn(patternRaw) : null;
+  const odds = (key != null && oddsData && typeof oddsData === 'object') ? (oddsData[key] ?? null) : null;
+
+  const validProb = typeof probRaw === 'number' && !Number.isNaN(probRaw);
+  const validOdds = typeof odds === 'number' && !Number.isNaN(odds) && odds > 0;
+
+  const probRatio = validProb ? (probIsPercentage ? probRaw / 100 : probRaw) : null;
+  const ev = (validProb && validOdds) ? probRatio * odds : null;
+
+  return {
+    ...combo,
+    _odds: validOdds ? odds : null,
+    _ev:   ev != null ? Number(ev.toFixed(4)) : null,
+  };
+}
+
+/**
+ * 買い目配列にオッズ・期待値を付与するだけの関数（フィルタリングは行わない）。
+ * 的中重視／回収重視モードのように EV 未達でも買い目自体は表示したい場合に使用する。
+ * ピュア関数（combos 配列・各要素は変更しない）。
+ */
+function attachEVToCombos(combos, oddsData, options = {}) {
+  if (!Array.isArray(combos)) return [];
+  return combos.map(c => attachComboEV(c, oddsData, options));
+}
+
+/**
+ * 買い目配列を期待値（EV）でフィルタリングするピュア関数。
+ *
+ *   期待値(EV) = 的中確率（比率） × オッズ
+ *
+ * オッズ未取得（特払い・欠場・データ欠損など）の買い目は、安全のため必ず除外する。
+ * 既存データ・処理を破壊しない（combos・oddsData はコピーして使うのみで書き換えない）。
+ *
+ * @param {Array<Object>} combos              - 買い目配列
+ * @param {Object<string, number>} oddsData   - 直前オッズ { パターン文字列: オッズ }
+ * @param {number} [threshold=1.10]           - 採用する期待値の下限（この値以上を採用）
+ * @param {Object} [options]                  - attachComboEV と同じオプション
+ *   @param {string}   [options.patternKey='c']
+ *   @param {string}   [options.probKey='prob']
+ *   @param {boolean}  [options.probIsPercentage=false]
+ *   @param {function} [options.normalizeCombo]
+ * @returns {Array<Object>} EV >= threshold の買い目配列（_odds, _ev 付与済み、EV降順ソート）
+ * @throws {TypeError} combos/oddsData/threshold の型が不正な場合
+ */
+function filterCombosByExpectedValue(combos, oddsData, threshold = 1.10, options = {}) {
+  if (!Array.isArray(combos)) {
+    throw new TypeError('filterCombosByExpectedValue: combos は配列である必要があります。');
+  }
+  if (typeof oddsData !== 'object' || oddsData === null) {
+    throw new TypeError('filterCombosByExpectedValue: oddsData はオブジェクトである必要があります。');
+  }
+  if (typeof threshold !== 'number' || Number.isNaN(threshold)) {
+    throw new TypeError('filterCombosByExpectedValue: threshold は数値である必要があります。');
+  }
+
+  return attachEVToCombos(combos, oddsData, options)
+    .filter(c => c._ev != null && c._ev >= threshold)
+    .sort((a, b) => b._ev - a._ev);
+}
+
 function weightDots(w, max=3){
   let s='';
   for(let i=0;i<max;i++) s+=`<span class="wdot${i<w?'':' empty'}"></span>`;
@@ -1894,12 +1995,11 @@ function renderBuy(rno){
   }
 
   // ── 各買い目にオッズを付与するヘルパー（EV表示用に残す）──
+  // [修正] EV計算ロジックは共通ユーティリティ attachEVToCombos に委譲（EVフィルタータブと同一ロジックを共有）。
+  // 的中重視／回収重視モードは EV未達でも買い目自体を表示したいため、ここではフィルタリングは行わない。
   function attachEV(list, oddsMap){
-    return list.map(r => {
-      const nc  = normalizeCombo(r.c);
-      const ov  = oddsMap[nc] ?? null;
-      const ev  = (r.prob != null && ov != null) ? r.prob * ov : null;
-      return { ...r, _odds: ov, _ev: ev };
+    return attachEVToCombos(list, oddsMap, {
+      patternKey: 'c', probKey: 'prob', probIsPercentage: false, normalizeCombo,
     });
   }
 
@@ -2173,19 +2273,18 @@ function renderBuy(rno){
 // ── 買い目モード切り替え ──
 // ── EVフィルタータブ: AI確率×オッズ が EV1.1以上の買い目のみ表示 ──
 function buildEvFilterPanel(buy3list, buy2list, resultSan3, resultNiren,
-                             raceOdds3tEv, raceOdds2tEv, comboToBadges, normalizeCombo) {
-  const EV_THRESHOLD = 1.1;
+                             raceOdds3tEv, raceOdds2tEv, comboToBadges, normalizeCombo,
+                             evThreshold) {
+  // [修正] ハードコードの1.1固定値をやめ、config.js側の EV_FILTER_THRESHOLD があれば優先採用。
+  // 呼び出し元から渡されなかった場合のみデフォルト1.10にフォールバックする。
+  const EV_THRESHOLD = evThreshold ?? (typeof EV_FILTER_THRESHOLD !== 'undefined' ? EV_FILTER_THRESHOLD : 1.10);
 
+  // [修正] EV計算・フィルタリングは共通ピュア関数 filterCombosByExpectedValue に委譲。
+  // オッズ欠損（特払い・欠場・データ欠損）の買い目は関数側で安全に除外される。
   function filterByEV(list, oddsMap) {
-    return list
-      .map(r => {
-        const nc = normalizeCombo(r.c);
-        const ov = oddsMap[nc] ?? null;
-        const ev = (r.prob != null && ov != null) ? r.prob * ov : null;
-        return { ...r, _odds: ov, _ev: ev };
-      })
-      .filter(r => r._ev != null && r._ev >= EV_THRESHOLD)
-      .sort((a, b) => b._ev - a._ev);
+    return filterCombosByExpectedValue(list, oddsMap, EV_THRESHOLD, {
+      patternKey: 'c', probKey: 'prob', probIsPercentage: false, normalizeCombo,
+    });
   }
 
   const ev3list = filterByEV(buy3list, raceOdds3tEv);
