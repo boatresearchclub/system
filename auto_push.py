@@ -775,12 +775,21 @@ def inject_comment_to_html(days_back=HISTORY_DAYS):
             return False
 
 
-def inject_flying_to_html():
-    """flying_YYYYMMDD.xlsx を読んで index.html の FLYING_DATA を書き換える"""
+def _flying_path_today() -> Path:
+    """本日分の flying_YYYYMMDD.xlsx のパスを返す。
+    フライングデータは他のデータ（tenji/comment/result等）と同じく、
+    auto_push.py 自身のフォルダ（SCRIPTS_DIR）ではなく、
+    データ収集フォルダ（DATA_COLLECT_DIR）に届く。
+    """
     # フライングデータは手動管理ファイルのため、today_str()（深夜補正あり）ではなく
     # 実際の今日の日付を使う
     today = datetime.now().strftime("%Y%m%d")
-    flying_path = SCRIPTS_DIR / f"flying_{today}.xlsx"
+    return DATA_COLLECT_DIR / f"flying_{today}.xlsx"
+
+
+def inject_flying_to_html():
+    """flying_YYYYMMDD.xlsx を読んで index.html の FLYING_DATA を書き換える"""
+    flying_path = _flying_path_today()
     if not flying_path.exists():
         log(f"  ⚠ {flying_path.name} が見つかりません → FLYING_DATA埋め込みスキップ")
         return False
@@ -3005,6 +3014,22 @@ def main():
     prev_result  = get_mtimes(str(RESULT_DIR / "*.json")) if RESULT_DIR.exists() else {}
     prev_odds    = get_mtimes(str(ODDS_DIR / "*.json")) if ODDS_DIR.exists() else {}
     prev_xlsx_mtime = XLSX_PATH.stat().st_mtime if XLSX_PATH.exists() else None
+    _flying_path_init = _flying_path_today()
+    prev_flying_mtime = None  # 起動時は必ず一度読み込ませるため未設定のままにする
+
+    # 起動時: flyingファイルがあれば無条件で一度読み込んで反映する
+    # （起動時点のmtimeを基準にしてしまうと、その後ファイルが更新されない限り
+    #   ループ内の変更検知が一切発火せず FLYING_DATA が永久に空になるため）
+    if _flying_path_init.exists():
+        if inject_flying_to_html():
+            prev_flying_mtime = _flying_path_init.stat().st_mtime
+            log("  ✓ 起動時 FLYING_DATA 反映完了")
+            _flying_startup_target = DATA_JS if DATA_JS.exists() else INDEX_HTML
+            git_push([_flying_startup_target], urgent=True)
+        else:
+            log("  ⚠ 起動時 FLYING_DATA 反映失敗（詳細は直前のログ参照）")
+    else:
+        log(f"  起動時: {_flying_path_init.name} が見つからないため FLYING_DATA 反映スキップ")
 
     # 起動時: 当日CSVがあればindex.jsonを生成してpush
     today_csvs = get_today_csvs()
@@ -3084,6 +3109,26 @@ def main():
               if curr_xlsx_mtime and curr_xlsx_mtime != prev_xlsx_mtime:
                   if rebuild_master():
                       prev_xlsx_mtime = curr_xlsx_mtime
+
+              # フライングExcel変更チェック → FLYING_DATA再埋め込み＋push
+              _flying_path_curr = _flying_path_today()
+              curr_flying_mtime = _flying_path_curr.stat().st_mtime if _flying_path_curr.exists() else None
+              if curr_flying_mtime and curr_flying_mtime != prev_flying_mtime:
+                  log(f"  フライング情報変更: {_flying_path_curr.name}")
+                  if inject_flying_to_html():
+                      prev_flying_mtime = curr_flying_mtime
+                      with _git_lock:
+                          _flying_target = DATA_JS if DATA_JS.exists() else INDEX_HTML
+                          _run_nolock(["git", "add", str(_flying_target)])
+                          _code_fly, _out_fly = _run_nolock(["git", "status", "--porcelain"])
+                          _tracked_fly = [l for l in _out_fly.strip().splitlines() if not l.startswith("??")]
+                          if _tracked_fly:
+                              _msg_fly = f"flying update {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                              _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, _msg_fly))
+                              log("  ✓ フライング情報 pushキューに追加")
+                  else:
+                      # 読込失敗時も無限リトライしないよう mtime だけは更新しておく
+                      prev_flying_mtime = curr_flying_mtime
 
               # CSV変更チェック
               csv_changed = False

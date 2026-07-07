@@ -756,15 +756,15 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
   const boatCircle = (n) =>
     `<span class="boat-circle b${n}" style="width:20px;height:20px;font-size:10px;line-height:20px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${n}</span>`;
 
-  // ── 艇ごとに全決まり手の確率を合算し、final_prob上位3艇を選出 ──
+  // ── 艇ごとに全決まり手の確率を合算し、全艇分を選出 ──
   // 各艇の「代表決まり手」= その艇のscenarioProbが最大のkimari
   // 右端合計 = final_prob と一致する
+  // [2026-07-08 修正] 上位3艇のみの表示から全艇表示に変更（.slice(0, 3)を撤廃）
   const top3Scenarios = ranked2
     .filter(winner => {
       const total = kimariTypes.reduce((s, k) => s + (scenarioProb[winner.boat]?.[k] ?? 0), 0);
       return total > 0.001;
     })
-    .slice(0, 3)
     .map(winner => {
       // 代表決まり手: このwinner艇でscenarioProbが最大のkimari
       let bestKimari = kimariTypes[0];
