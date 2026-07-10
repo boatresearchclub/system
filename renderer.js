@@ -918,8 +918,29 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     ${scenarioBlocks}
   </div>`;
 }
+
 // ── renderBuy ──
 function renderBuy(rno){
+  // ★★★ 修正⑤: MASTER_EXT がロードされるまで待機（最大500ms×3回）★★★
+  if (!MASTER_EXT || !MASTER_EXT.venue_kimari) {
+    if (!_renderBuyRetry) {
+      _renderBuyRetry = true;
+      console.log('[renderBuy] MASTER_EXT 未ロード → 300ms後に再試行');
+      setTimeout(() => {
+        _renderBuyRetry = false;
+        renderBuy(rno);
+      }, 300);
+      return;
+    }
+    // 2回目以降はフォールバックで続行（無限ループ防止）
+    console.warn('[renderBuy] MASTER_EXT 未ロードのまま強行（2回目）');
+  }
+
+  // ★★★ 修正⑦: データ事前解決（スナップショットを取得）★★★
+  const _masterSnapshot = MASTER_EXT ? JSON.parse(JSON.stringify(MASTER_EXT)) : null;
+  const _venueKimariSnapshot = _masterSnapshot?.venue_kimari?.[DATA.venue] || null;
+  const _innDataSnapshot = DATA.inn_data ? JSON.parse(JSON.stringify(DATA.inn_data)) : null;
+
   _ensureTenjiCache();
   const rd = DATA.races[String(rno)];
   if(!rd) return;
@@ -933,13 +954,13 @@ function renderBuy(rno){
       const _detail2El = document.getElementById('detail2-panel');
       if (_buyEl)     _buyEl.innerHTML     = _cached.buy;
       if (_detail2El) _detail2El.innerHTML = _cached.detail2;
-      // 初期表示モードを復元
       const _scenEl = document.getElementById('buy-mode-scen');
       if (_scenEl) _scenEl.style.display = 'block';
       updatePersistentBanners(rno);
       return;
     }
   }
+
   const arek     = rd.arek ?? 54.7;
   const rawBoats = rd.boats;
 
@@ -962,7 +983,19 @@ function renderBuy(rno){
   const _slug_ext  = VENUE_SLUG_MAP[DATA.venue] || DATA.venue;
   const _tKey_ext  = tenjiKey(_slug_ext, DATA.date, rno);
   const _tData_ext = _tenjiCache[_tKey_ext] || null;
-  const ranked     = calcTenkaiProbsExtended(rawBoats, arek, _tData_ext, DATA.venue);
+
+  // ★★★ 修正⑦: 解決済みデータを明示的に渡す ★★★
+  const ranked = calcTenkaiProbsExtended(
+    rawBoats,
+    arek,
+    _tData_ext,
+    DATA.venue,
+    {
+      masterExt: _masterSnapshot,
+      venueKimari: _venueKimariSnapshot,
+      innData: _innDataSnapshot,
+    }
+  );
 
   // ─ STEP2: 3スコア独立計算 → 加重合成（base:50% / tenkai:30% / tenji:20%）──
   //
@@ -2897,13 +2930,47 @@ function calcScenarioComboProb(comboStr, winnerBoat, sd) {
 let _pickupRaceTagType = null;
 
 function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo, rno){
+
+  // ★★★ sd が undefined または valid=false の場合は再計算 ★★★
+  let resolvedSd = sd;
+  if (!resolvedSd || !resolvedSd.valid) {
+    // ★ 修正⑧: calcScenarioData に masterExt を明示渡し
+    const _masterSnapshot = MASTER_EXT ? JSON.parse(JSON.stringify(MASTER_EXT)) : null;
+    const _venueKimariSnapshot = _masterSnapshot?.venue_kimari?.[DATA.venue] || null;
+    const _innDataSnapshot = DATA.inn_data ? JSON.parse(JSON.stringify(DATA.inn_data)) : null;
+
+    // rawBoats を ranked2 から復元
+    const _rawBoats = DATA?.races?.[String(rno)]?.boats || [];
+    const _tenjiScoreMap = null; // 必要に応じて calcTenjiScore を呼ぶ
+    resolvedSd = calcScenarioData(
+      ranked2,
+      _rawBoats,
+      _tenjiScoreMap,
+      DATA.venue,
+      DATA,
+      {
+        masterExt: _masterSnapshot,
+        venueKimari: _venueKimariSnapshot,
+        innData: _innDataSnapshot,
+      }
+    );
+  }
+
+  // sd が未定義の場合は早期リターン
+  if (!resolvedSd || !resolvedSd.valid) {
+    return `<div id="buy-mode-scen" style="display:none">
+      <div style="padding:16px;color:var(--text3);font-size:12px">展開シナリオデータを生成できませんでした</div>
+    </div>`;
+  }
+
+  // 以降、resolvedSd を使用
+  const { scenarioPlace2, scenarioProb, merged3rdMap, kimariTypes } = resolvedSd;
+
   if(!ranked2 || ranked2.length < 2){
     return `<div id="buy-mode-scen" style="display:none">
       <div style="padding:16px;color:var(--text3);font-size:12px">データ不足のためシナリオ買いを生成できません</div>
     </div>`;
   }
-
-  const { scenarioPlace2 } = sd || {};
 
   // ── タグ種別（ピックアップ連動）──
   const _tagType = _pickupRaceTagType;  // 'in_neg' | 'in_tetsup' | null
@@ -2937,7 +3004,7 @@ function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBad
     : ranked2[0]?.boat;
 
   function calcHHI(winnerBoat) {
-    const probs = sd?.kimariTypes?.map(k => sd.scenarioProb?.[winnerBoat]?.[k] ?? 0) ?? [];
+    const probs = kimariTypes?.map(k => scenarioProb?.[winnerBoat]?.[k] ?? 0) ?? [];
     const total = probs.reduce((s, p) => s + p, 0);
     if (total <= 0) return 0;
     return probs.reduce((s, p) => s + (p / total) ** 2, 0);
@@ -3010,7 +3077,7 @@ function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBad
     const totals = {};
     let weightSum = 0;
     for(const [kimari, list] of Object.entries(scenarioPlace2[winnerBoat])){
-      const scenProb = sd.scenarioProb?.[winnerBoat]?.[kimari] ?? 0;
+      const scenProb = scenarioProb?.[winnerBoat]?.[kimari] ?? 0;
       weightSum += scenProb;
       (list || []).forEach(x => {
         totals[x.boat] = (totals[x.boat] ?? 0) + x.p2 * scenProb;
@@ -3048,7 +3115,7 @@ function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBad
   function getPlace3Ranking(winnerBoat, secondBoat){
     // 展開シナリオタブと同一の merged3rdMap を参照（修正: 旧実装は final_prob 順で
     // 展開タブの3着と食い違いが生じていた。merged3rdMap を使うことで完全一致させる）
-    const thirdAll = sd.merged3rdMap?.[winnerBoat]?.[secondBoat] || [];
+    const thirdAll = merged3rdMap?.[winnerBoat]?.[secondBoat] || [];
     if(thirdAll.length > 0){
       return thirdAll
         .filter(x => x.boat !== winnerBoat && x.boat !== secondBoat)
@@ -3209,7 +3276,7 @@ function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBad
   let _hitRateKnown = 0;
   allCombos.forEach(c => {
     const winner = parseInt(c.split('-')[0]);
-    const p = calcScenarioComboProb(c, winner, sd);
+    const p = calcScenarioComboProb(c, winner, resolvedSd);
     if (p != null) { _hitRateSum += p; _hitRateKnown++; }
   });
   const _hitRatePct   = _hitRateSum * 100;
@@ -5145,4 +5212,3 @@ function renderScenEVSection(){
   });
   obs.observe(topPage, { attributes: true, attributeFilter: ['style'] });
 })();
-

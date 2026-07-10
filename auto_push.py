@@ -1811,6 +1811,108 @@ _push_queue_thread = _threading.Thread(target=_push_queue_worker, daemon=True)
 _push_queue_thread.start()
 
 
+# ── 展示情報 専用pushキュー ──────────────────────────────────────────
+# ★ [2026-07-10 追加] 展示情報は「締切直前でも確実にリアルタイム反映したい」
+#   最優先データだが、従来は結果・オッズ・フライング等と同じ _push_queue を
+#   共有していたため、他系統のpush（特にpush失敗時のfetch+force-with-lease
+#   リトライ：sleep(3)＋git通信を最大3回）が詰まると、その後ろに並んだ展示
+#   pushまで巻き添えで数十秒〜数分待たされることがあった。
+#   → 展示情報だけ別キュー・別スレッドに分離し、他系統のpush処理状況に
+#     一切左右されずに即push・即リトライできるようにする。
+#   → git自体はリポジトリが1つなので index.lock 競合を避けるため、
+#     add/commit/pushの実行自体は引き続き共通の _git_lock で直列化するが、
+#     「順番待ち」は展示専用キュー内の展示pushどうしだけになる。
+#   → デプロイ待ち（_DEPLOY_WAIT_SEC）は元々展示pushには適用していなかった
+#     ため、この専用キューでも常にスキップ（待機なし）で処理する。
+_tenji_push_queue: queue.Queue = queue.Queue()
+
+def _enqueue_tenji_push(msg: str) -> None:
+    """展示情報の変更を専用pushキューに追加する（他系統pushと競合しない）。"""
+    _tenji_push_queue.put((next(_push_seq), "raw", None, msg))
+
+
+def _tenji_push_queue_worker():
+    """
+    展示情報専用のpushキューを処理する専用スレッド。
+    デプロイ待ちは行わず、常に即push（_push_queue_worker の priority=0 相当）。
+    """
+    while True:
+        try:
+            item = _tenji_push_queue.get(timeout=5)
+        except queue.Empty:
+            continue
+
+        if item is None:  # 終了シグナル
+            break
+
+        _seq, kind, files, msg = item
+        log(f"  [TenjiPushQueue] ⚡ 展示情報push開始 ({msg})")
+
+        try:
+            with _git_lock:
+                if kind == "files" and files:
+                    for f in files:
+                        _run_nolock(["git", "add", str(f)])
+
+                code, out = _run_nolock(["git", "status", "--porcelain"])
+                tracked = [l for l in out.strip().splitlines() if not l.startswith("??")]
+                if not tracked:
+                    log(f"  [TenjiPushQueue] 差分なし → スキップ ({msg})")
+                    _tenji_push_queue.task_done()
+                    continue
+
+                _run_nolock(["git", "commit", "-m", msg])
+
+                branch = "main"
+                code, push_out = _run_nolock(["git", "push", "origin", branch])
+                if code != 0:
+                    code2, _ = _run_nolock(["git", "push", "origin", "master"])
+                    if code2 == 0:
+                        branch = "master"
+                        code = 0
+
+            MAX_RETRY = 3
+            for attempt in range(1, MAX_RETRY + 1):
+                if code == 0:
+                    break
+                log(f"  [TenjiPushQueue] ⚠ push失敗（{attempt}回目）→ fetch して force-with-lease で再push...")
+                time.sleep(3)
+
+                with _git_lock:
+                    rebase_merge_dir = Path(SCRIPTS_DIR) / ".git" / "rebase-merge"
+                    rebase_apply_dir = Path(SCRIPTS_DIR) / ".git" / "rebase-apply"
+                    if rebase_merge_dir.exists() or rebase_apply_dir.exists():
+                        log(f"  [TenjiPushQueue] 残存rebaseを検出 → abort...")
+                        _run_nolock(["git", "rebase", "--abort"])
+                        import shutil as _shutil3
+                        if rebase_merge_dir.exists():
+                            _shutil3.rmtree(str(rebase_merge_dir), ignore_errors=True)
+                        if rebase_apply_dir.exists():
+                            _shutil3.rmtree(str(rebase_apply_dir), ignore_errors=True)
+
+                    _run_nolock(["git", "fetch", "origin", branch])
+                    code, push_out = _run_nolock(
+                        ["git", "push", "--force-with-lease", "origin", branch]
+                    )
+                    if code != 0:
+                        log(f"  [TenjiPushQueue] ✕ force-with-lease push失敗（{attempt}回目）: {push_out.strip()[:200]}")
+
+            if code == 0:
+                log(f"  [TenjiPushQueue] ✓ push完了: {msg}")
+            else:
+                log(f"  [TenjiPushQueue] ✕✕✕ push失敗（リトライ上限到達）: {msg}")
+                log(f"  [TenjiPushQueue] ⚠️ 認証切れ・SSH疎通不可等の可能性 → 手元PCでの確認が必要です")
+
+        except Exception as e:
+            log(f"  [TenjiPushQueue] ✕ 例外: {e}")
+
+        _tenji_push_queue.task_done()
+
+# 展示専用ワーカースレッドを起動
+_tenji_push_queue_thread = _threading.Thread(target=_tenji_push_queue_worker, daemon=True)
+_tenji_push_queue_thread.start()
+
+
 
 # data.js に必要なプレースホルダー宣言一覧
 _DATA_JS_REQUIRED_VARS = [
@@ -2315,8 +2417,8 @@ def fetch_tenji_for_csv(csv_paths: list):
                 _tracked_t = [_l for _l in _out_t.strip().splitlines() if not _l.startswith("??")]
                 if _tracked_t:
                     _msg_t = f"tenji update {datetime.now().strftime('%Y-%m-%d %H:%M')} [bg fetch完了]"
-                    _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, _msg_t))
-                    log("  [BG展示] tenji_YYYYMMDD.json pushキューに追加")
+                    _enqueue_tenji_push(_msg_t)
+                    log("  [BG展示] tenji_YYYYMMDD.json 展示専用pushキューに追加")
                 else:
                     log("  [BG展示] 差分なし → pushスキップ")
         except Exception as _e:
@@ -3210,8 +3312,8 @@ def main():
                           if tracked2:
                               tenji_summary = _summarize_push_targets(changed)
                               msg2 = f"tenji update {datetime.now().strftime('%Y-%m-%d %H:%M')} [{tenji_summary}]"
-                              _push_queue.put((PUSH_URGENT, next(_push_seq), "raw", None, msg2))
-                              log(f"  ✓ 展示情報 pushキューに追加 [{tenji_summary}]")
+                              _enqueue_tenji_push(msg2)
+                              log(f"  ✓ 展示情報 展示専用pushキューに追加 [{tenji_summary}]")
                               tenji_push_done = True
 
                   if result_changed and not csv_changed:

@@ -3,7 +3,7 @@
 //
 // 設計方針:
 //   - 埋め込み変数（RESULT_DATA / ALL_DATA_HISTORY）はそのまま残す
-//     → 埋め込み済みデータが既にあれば即座に表示できる
+//     → 埋め込み済みデータが既あれば即座に表示できる
 //   - fetch完了後に変数へマージ → 過去日数が増えても HTML は軽量
 //   - fetch失敗しても埋め込みデータで動作継続（フォールバック保証）
 //   - IS_SERVER 環境では fetch を行わない（ローカルサーバーのAPIを使うため）
@@ -132,6 +132,7 @@ let currentVenue = '';
 
 const _tenjiCache = {};
 let _tenjiCacheReady = false;
+let _renderBuyRetry = false; // ★追加: renderBuyのリトライ制御
 
 // ══════════════════════════════════════════════════════════════════
 // レンダーキャッシュ（改善①）
@@ -139,7 +140,7 @@ let _tenjiCacheReady = false;
 // キー: "{venue}_{date}_{rno}" — データ更新時に invalidateRenderCache() で一括破棄。
 // _RENDER_CACHE_VER: 表示ロジック変更時にインクリメントしてキャッシュを強制無効化。
 // ══════════════════════════════════════════════════════════════════
-const _RENDER_CACHE_VER = 2; // 買い目昇順ソート・被り目除去対応
+const _RENDER_CACHE_VER = 3; // ★バージョンアップ（MASTER_EXT待機対応）
 const _renderCache = {};
 
 /**

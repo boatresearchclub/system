@@ -521,17 +521,9 @@ function calcTenkaiProbs(boats, arek){
 // ══════════════════════════════════════════════════════════════════
 //  calcTenkaiProbsExtended — スリット隊形・展示タイム・気象補正 拡張版
 //
-//  【ゼロサム保証の数理設計】
-//
-//  ① vKimari パイの再配分（スリット補正A・気象補正B-2）
-//     adjustedVKimari[k] *= slitMul[k] * windBoost[k]
-//     → 乗算後に Σ で再正規化 → 合計が常に 1.0 に保たれる
-//
-//  ② personalAdaptation への展示乖離加算（展示補正B-1）
-//     personalAdaptation[b] += tenjiDev[b]
-//     adaptTotal も同時に増減するため、
-//     adaptShare = personalAdaptation[b] / adaptTotal は正規化されたまま
-//
+//  【外部注入対応】options で masterExt / venueKimari / innData を
+//  明示的に渡せるように拡張。これにより MASTER_EXT のロードタイミングに
+//  依存せず、同じ引数なら常に同じ結果を返す純粋関数として動作する。
 // ══════════════════════════════════════════════════════════════════
 
 /**
@@ -719,13 +711,24 @@ function calcTenjiDeviation(boats, tenjiData) {
  * @param {number}      arek       荒れ指数
  * @param {object|null} tenjiData  展示キャッシュ（省略可）
  * @param {string}      venue      会場名（省略可）
+ * @param {object}      options    外部注入オプション
+ *   @param {object}   masterExt   マスターデータ（省略時はグローバル）
+ *   @param {object}   venueKimari 事前解決済みの会場決まり手分布
+ *   @param {object}   innData     事前解決済みの inn_data
  * @returns {object[]}  tenkai_prob / tenkai_score / final_prob / layer2_modifier / layer3_modifier 付き配列
  */
-function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
+function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, options = {}) {
+  const {
+    masterExt = MASTER_EXT,
+    venueKimari = null,
+    innData = DATA?.inn_data,
+    raceIndexData = RACE_INDEX_DATA,
+  } = options;
+
   const resolvedVenue = venue ?? DATA?.venue ?? '';
 
   // ── MASTER_EXT なし / 会場データなし → フォールバック ──
-  if (!MASTER_EXT || !MASTER_EXT.venue_kimari) {
+  if (!masterExt || !masterExt.venue_kimari) {
     return [...boats].map(b => ({
       ...b,
       tenkai_prob:      b.prob,
@@ -735,7 +738,9 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
       layer3_modifier:  1.0,
     })).sort((a, b) => b.tenkai_prob - a.tenkai_prob);
   }
-  const vKimariRaw = MASTER_EXT.venue_kimari[resolvedVenue];
+
+  // ★ 事前解決済みの venueKimari があればそれを使用
+  const vKimariRaw = venueKimari ?? masterExt.venue_kimari[resolvedVenue];
   if (!vKimariRaw) {
     return [...boats].map(b => ({
       ...b,
@@ -746,6 +751,9 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
       layer3_modifier:  1.0,
     })).sort((a, b) => b.tenkai_prob - a.tenkai_prob);
   }
+
+  // ★ innData も引数で渡されたものを優先
+  const resolvedInnData = innData ?? DATA?.inn_data;
 
   // ══════════════════════════════════════════════════════
   // 【第2層】展開補正係数の算出
@@ -1043,7 +1051,7 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null) {
   //   reliable=false (n<500) → 0.15
   // パターン未一致・テーブルなし → 何もしない（既存ロジックのまま）
   // ══════════════════════════════════════════════════════════════════
-  const v2Table = MASTER_EXT?.v2_pattern_table;
+  const v2Table = masterExt?.v2_pattern_table;
   let v2NigeOverride       = null;  // null = 補正なし
   let v2ForceBoat          = null;
   let v2ForceShareOverride = null;
@@ -1329,37 +1337,33 @@ function combo2(a,b){ return `${Math.min(a,b)}＝${Math.max(a,b)}`; }
 
 // ── 展開シナリオ計算（純粋関数）──
 //
-// 買い目生成・HTML表示の両方から参照する共通計算。
-// 戻り値:
-//   {
-//     scenarioProb  : {boat: {kimari: 発生確率}},
-//     scenarioPlace2: {boat: {kimari: [{boat, p2}]}},  // 正規化済み2着リスト（展示係数補正済み）
-//     kimariTypes   : string[],
-//     inn2Place     : object,
-//     top3          : ranked2の上位3艇,
-//     valid         : boolean  // MASTERなし等で計算不可の場合 false
-//   }
+// 【外部注入対応】options で masterExt / venueKimari / innData を
+// 明示的に渡せるように拡張。
 //
-// tenjiScoreMap: calcTenjiScore の戻り値（展示データなし時は null）
-//   __coef_N（平均=1.0基準）を 2着確率の補正に使用。
-//   null の場合は補正なし（係数=1.0 として扱う）。
-//   補正強度は TENJI_P2_COEF_CLIP でクリップ（過補正防止）。
-//
-function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdataOverride){
-  if(!MASTER_EXT || !MASTER_EXT.venue_kimari){
+function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdataOverride, options = {}) {
+  const {
+    masterExt = MASTER_EXT,
+    venueKimari = null,
+    innData = null,
+  } = options;
+
+  const venue = venueOverride || DATA?.venue;
+
+  if (!masterExt || !masterExt.venue_kimari) {
     return { valid: false };
   }
-  // venueOverride / vdataOverride が渡された場合はそちらを優先（過去日集計など DATA が当日以外のケース）
-  const venue   = venueOverride || DATA?.venue;
-  const vKimari = MASTER_EXT.venue_kimari[venue];
-  if(!vKimari) return { valid: false };
 
-  // inn_2place: inn_data に直接入っていれば使用、なければ venue_stats から取得
-  const _vdata = vdataOverride || DATA;
+  const vKimari = venueKimari ?? masterExt.venue_kimari[venue];
+  if (!vKimari) return { valid: false };
+
+  // inn2Place も引数で渡されたものを優先
   const inn2Place = (() => {
-    const v = (_vdata?.inn_data || {}).inn_2place;
-    if(v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0) return v;
-    return MASTER_EXT?.venue_stats?.[venue]?.inn_2place || {};
+    if (innData?.inn_2place && Object.keys(innData.inn_2place).length > 0) {
+      return innData.inn_2place;
+    }
+    const v = (vdataOverride?.inn_data || DATA?.inn_data || {}).inn_2place;
+    if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0) return v;
+    return masterExt?.venue_stats?.[venue]?.inn_2place || {};
   })();
 
   const KIMARI_HARD_EXCLUDE = {
@@ -1466,11 +1470,11 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
 
   // ── 各シナリオの2着リストを計算して scenarioPlace2 に格納 ──
   const tenkaiRem = (() => {
-    const vLocal = MASTER_EXT?.venue_stats?.[venue]?.tenkai_remaining;
+    const vLocal = masterExt?.venue_stats?.[venue]?.tenkai_remaining;
     if(vLocal && typeof vLocal === 'object' && Object.keys(vLocal).length > 0) return vLocal;
-    return MASTER_EXT?.tenkai_remaining || {};
+    return masterExt?.tenkai_remaining || {};
   })();
-  const winnerCO = MASTER_EXT?.winner_course_order || {};
+  const winnerCO = masterExt?.winner_course_order || {};
 
   // ══════════════════════════════════════════════════════════════════
   // [2026-06-25 新規追加] kimariタイプ別 2着コース出現バイアステーブル
@@ -1849,5 +1853,3 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
   result.sort((a, b) => b.score - a.score);
   return result;
 }
-
-//
