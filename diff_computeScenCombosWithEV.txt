@@ -1,0 +1,37 @@
+--- /mnt/user-data/uploads/computeScenCombosWithEV.js	2026-07-10 16:08:56.412108000 +0000
++++ computeScenCombosWithEV.js	2026-07-10 22:33:12.174062104 +0000
+@@ -726,7 +726,33 @@
+         const _slug    = VENUE_SLUG_MAP[venue] || venue;
+         const _memKey  = `${_slug}_${vdata.date}_${rno}`;
+         const _cached  = _scenComboCache[_memKey];
+-        if (Array.isArray(_cached) && _cached.length > 0) {
++
++        // ══════════════════════════════════════════════════════════
++        // [2026-07-11 修正] 結果未確定レースへのキャッシュ誤適用を防止
++        //
++        // 背景: このキャッシュは venue/date/rno のみをキーにしており、
++        //   ロジック版・データ更新時刻を含まない。そのため結果が未確定
++        //   （＝オッズ・展示情報が更新され続けている当日レース）でも
++        //   無条件に適用され、「そのユーザーが最初にそのレースを開いた
++        //   時点」の古い計算結果が端末ごとに固定化され、ユーザー間で
++        //   数値が食い違う原因になっていた。
++        //
++        // 対策: RESULT_DATA に確定結果（三連単配当）が存在するレース、
++        //   つまりもう値が変わり得ない過去レースに限りキャッシュを
++        //   信頼する。結果未確定のレースは毎回最新データで再計算し、
++        //   全ユーザーが常に同じ値を見るようにする。
++        //   判定に失敗した場合は安全側（再計算）に倒す。
++        // ══════════════════════════════════════════════════════════
++        let _isFinalized = false;
++        try {
++          if (typeof RESULT_DATA !== 'undefined' && typeof resultKey === 'function') {
++            const _rKey = resultKey(_slug, vdata.date, rno);
++            const _rd0  = RESULT_DATA[_rKey];
++            _isFinalized = !!(_rd0 && _rd0.sanrentan && _rd0.sanrentan.length > 0);
++          }
++        } catch(_eFin) { _isFinalized = false; }
++
++        if (_isFinalized && Array.isArray(_cached) && _cached.length > 0) {
+           // キャッシュ命中 → combos は確定値として使い、hitProbEst だけ計算して返す
+           // [2026-06-03 修正] 旧実装は hitProbEst=null で早期 return していたため
+           //   キャッシュあり（直近数日の表示済みレース）の ev がすべて null になり

@@ -1053,6 +1053,51 @@
     }
   };
 
+  // ── 公開: 補正テーブルをJSONダウンロード ──
+  // ボタンから window._downloadCalibPointsJSON() として呼ばれる。
+  // ダウンロードした calib_points.json を scripts/data/ 直下に置くと、
+  // auto_push.py が次回push時に data/*.json を自動でgit addするため、
+  // 特別な対応なしに配布される（DATA_DIR.glob("*.json") で拾われる）。
+  //
+  // 【これで解決すること】
+  //   CALIB_POINTS 等はこれまで各端末の localStorage で独立に学習され、
+  //   admin の複数端末間・premiumユーザー間で「独自補正 最終確率」が
+  //   食い違う原因になっていた。この JSON を data/ に配布し、
+  //   computeScenCombosWithEV.js 側が起動時に fetch して全端末に同一の
+  //   テーブルを適用することで、最終確率が常に同じ値になる。
+  window._downloadCalibPointsJSON = function () {
+    try {
+      const missing = [];
+      if (typeof window.CALIB_POINTS === 'undefined') missing.push('CALIB_POINTS');
+      if (typeof window.COURSE1_CALIB_POINTS === 'undefined') missing.push('COURSE1_CALIB_POINTS');
+      if (typeof window.COURSE_OTHER_CALIB_POINTS === 'undefined') missing.push('COURSE_OTHER_CALIB_POINTS');
+      if (missing.length > 0) {
+        alert(`補正テーブルが読み込まれていません: ${missing.join(', ')}\ncomputeScenCombosWithEV.js が正しく読み込まれているか確認してください。`);
+        return;
+      }
+      const payload = {
+        CALIB_POINTS: window.CALIB_POINTS,
+        COURSE1_CALIB_POINTS: window.COURSE1_CALIB_POINTS,
+        COURSE_OTHER_CALIB_POINTS: window.COURSE_OTHER_CALIB_POINTS,
+        updatedAt: new Date().toISOString(),
+      };
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'calib_points.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert('calib_points.json をダウンロードしました。\nscripts/data/ フォルダに上書き保存すると、次回のpushで全端末に配布されます。');
+    } catch (e) {
+      console.warn('[calibration] calib_points.json 出力エラー:', e);
+      alert('JSON出力に失敗しました: ' + e.message);
+    }
+  };
+
   // ── DOM への描画 ──
   function _ensureContainer() {
     let el = document.getElementById('top-ai-calibration-panel');
@@ -1181,6 +1226,9 @@
       container.innerHTML = `
         <div class="ai-stats-card" style="margin-bottom:0.6rem">
           <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+            <button onclick="window._downloadCalibPointsJSON()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;margin-right:6px">
+              🔄 補正テーブルをJSON保存（全端末配布用）
+            </button>
             <button onclick="window._downloadCalibrationCSV()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">
               📥 全パネルをCSV保存
             </button>

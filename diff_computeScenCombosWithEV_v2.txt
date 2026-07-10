@@ -1,0 +1,142 @@
+--- /mnt/user-data/uploads/computeScenCombosWithEV.js	2026-07-10 16:08:56.412108000 +0000
++++ computeScenCombosWithEV.js	2026-07-10 23:35:31.127281235 +0000
+@@ -143,6 +143,7 @@
+     [0.00, 0.00],
+     [1.00, 1.00],
+   ];
++  window.CALIB_POINTS = CALIB_POINTS; // calibration.js のJSON書き出しボタンから参照するため公開
+ 
+   /**
+    * 区分線形補間でキャリブレーション補正を適用する。
+@@ -221,6 +222,7 @@
+     [0.747, 0.608],
+     [1.00, 0.608], // 右端は最後の実測水準でフラット外挿（100%への収束は仮定しない）
+   ];
++  window.COURSE1_CALIB_POINTS = COURSE1_CALIB_POINTS; // calibration.js のJSON書き出しボタンから参照するため公開
+ 
+   /**
+    * 1号艇の nigeProb を実測ベースで補正する。
+@@ -382,6 +384,7 @@
+     5: [[0.00, 0.00], [1.00, 1.00]],
+     6: [[0.00, 0.00], [1.00, 1.00]],
+   };
++  window.COURSE_OTHER_CALIB_POINTS = COURSE_OTHER_CALIB_POINTS; // calibration.js のJSON書き出しボタンから参照するため公開
+ 
+   /**
+    * 2〜6号艇の final_prob を実測ベースで補正する（区分線形補間）。
+@@ -544,6 +547,80 @@
+     }
+   };
+ 
++  // ─────────────────────────────────────────────────────────────────────────
++  // § 1.7  サーバー配布キャリブレーションJSONの適用（端末間の不一致解消）
++  //
++  //   【背景】CALIB_POINTS / COURSE1_CALIB_POINTS / COURSE_OTHER_CALIB_POINTS は
++  //   これまで各端末の localStorage で独立に学習されており、
++  //     ・admin の複数端末間で学習履歴が異なる
++  //     ・premiumユーザーの端末では admin-mode 限定の学習処理が一度も走らず、
++  //       ソースコード埋め込みのデフォルト値（無補正 y=x 等）のまま固定される
++  //   という理由で「独自補正 最終確率」列が端末ごとに食い違う原因になっていた。
++  //
++  //   【方針】calibration.js（admin専用パネル）で学習・確定した値を
++  //   data/calib_points.json として auto_push.py 経由で配布し、
++  //   全端末がページ読み込み時にこれをfetchして「権威あるテーブル」として
++  //   上書き適用する。fetch失敗時は従来通り localStorage → デフォルトに
++  //   フォールバックする（可用性を落とさない）。
++  //
++  //   admin端末での学習（updateCalibPoints等）は従来通り localStorage にも
++  //   書き込まれ、その場ではすぐ反映されるが、他端末・次回リロードでの
++  //   「正」は data/calib_points.json 側になる。
++  // ─────────────────────────────────────────────────────────────────────────
++  (function _applyServerCalibPoints() {
++    try {
++      if (typeof fetch !== 'function') return;
++      const base = (typeof DATA_BASE_URL !== 'undefined')
++        ? DATA_BASE_URL
++        : location.href.replace(/\/[^\/]*$/, '') + '/data';
++
++      fetch(`${base}/calib_points.json`, { cache: 'default' })
++        .then(res => (res && res.ok) ? res.json() : null)
++        .then(json => {
++          if (!json || typeof json !== 'object') return;
++          let applied = false;
++
++          if (_isSaneCalibPoints(json.CALIB_POINTS)) {
++            CALIB_POINTS.length = 0;
++            json.CALIB_POINTS.forEach(pt => CALIB_POINTS.push(pt));
++            try { localStorage.setItem(_CALIB_LS_KEY, JSON.stringify(CALIB_POINTS)); } catch (_e) {}
++            applied = true;
++          }
++          if (_isSaneCalibPoints(json.COURSE1_CALIB_POINTS)) {
++            COURSE1_CALIB_POINTS.length = 0;
++            json.COURSE1_CALIB_POINTS.forEach(pt => COURSE1_CALIB_POINTS.push(pt));
++            try { localStorage.setItem(_COURSE1_CALIB_LS_KEY, JSON.stringify(COURSE1_CALIB_POINTS)); } catch (_e) {}
++            applied = true;
++          }
++          if (json.COURSE_OTHER_CALIB_POINTS && typeof json.COURSE_OTHER_CALIB_POINTS === 'object') {
++            OTHER_COURSES.forEach(c => {
++              if (_isSaneCalibPoints(json.COURSE_OTHER_CALIB_POINTS[c])) {
++                COURSE_OTHER_CALIB_POINTS[c] = json.COURSE_OTHER_CALIB_POINTS[c];
++                applied = true;
++              }
++            });
++            if (applied) {
++              try { localStorage.setItem(_COURSE_OTHER_CALIB_LS_KEY, JSON.stringify(COURSE_OTHER_CALIB_POINTS)); } catch (_e) {}
++            }
++          }
++
++          // 既にキャッシュ済みの表示・事前計算結果を破棄し、新しいテーブルで
++          // 再計算させる（fetch完了が遅れて先に古い値で描画されていた場合の保険）。
++          if (applied) {
++            try { if (typeof invalidateRenderCache === 'function') invalidateRenderCache(); } catch (_e) {}
++            try {
++              if (typeof _scenEVCache === 'object' && _scenEVCache) {
++                Object.keys(_scenEVCache).forEach(k => delete _scenEVCache[k]);
++              }
++            } catch (_e) {}
++            try { if (typeof _triggerPrefill === 'function') _triggerPrefill(); } catch (_e) {}
++            console.info('[computeScenCombosWithEV] data/calib_points.json を適用しました（全端末共通の補正テーブル）。');
++          }
++        })
++        .catch(() => { /* fetch失敗時は従来のlocalStorage/デフォルトのまま動作継続 */ });
++    } catch (_e) { /* 何らかの理由で失敗しても致命的にしない */ }
++  })();
++
+ 
+   // ─────────────────────────────────────────────────────────────────────────
+   // § 2  加重確率ベースの 2着 / 3着 順位算出
+@@ -726,7 +803,33 @@
+         const _slug    = VENUE_SLUG_MAP[venue] || venue;
+         const _memKey  = `${_slug}_${vdata.date}_${rno}`;
+         const _cached  = _scenComboCache[_memKey];
+-        if (Array.isArray(_cached) && _cached.length > 0) {
++
++        // ══════════════════════════════════════════════════════════
++        // [2026-07-11 修正] 結果未確定レースへのキャッシュ誤適用を防止
++        //
++        // 背景: このキャッシュは venue/date/rno のみをキーにしており、
++        //   ロジック版・データ更新時刻を含まない。そのため結果が未確定
++        //   （＝オッズ・展示情報が更新され続けている当日レース）でも
++        //   無条件に適用され、「そのユーザーが最初にそのレースを開いた
++        //   時点」の古い計算結果が端末ごとに固定化され、ユーザー間で
++        //   数値が食い違う原因になっていた。
++        //
++        // 対策: RESULT_DATA に確定結果（三連単配当）が存在するレース、
++        //   つまりもう値が変わり得ない過去レースに限りキャッシュを
++        //   信頼する。結果未確定のレースは毎回最新データで再計算し、
++        //   全ユーザーが常に同じ値を見るようにする。
++        //   判定に失敗した場合は安全側（再計算）に倒す。
++        // ══════════════════════════════════════════════════════════
++        let _isFinalized = false;
++        try {
++          if (typeof RESULT_DATA !== 'undefined' && typeof resultKey === 'function') {
++            const _rKey = resultKey(_slug, vdata.date, rno);
++            const _rd0  = RESULT_DATA[_rKey];
++            _isFinalized = !!(_rd0 && _rd0.sanrentan && _rd0.sanrentan.length > 0);
++          }
++        } catch(_eFin) { _isFinalized = false; }
++
++        if (_isFinalized && Array.isArray(_cached) && _cached.length > 0) {
+           // キャッシュ命中 → combos は確定値として使い、hitProbEst だけ計算して返す
+           // [2026-06-03 修正] 旧実装は hitProbEst=null で早期 return していたため
+           //   キャッシュあり（直近数日の表示済みレース）の ev がすべて null になり

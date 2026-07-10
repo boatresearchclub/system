@@ -2833,13 +2833,35 @@ def _git_add_locked(changed_files):
         else:
             _run_nolock(["git", "add", str(TOP_PAGE_JS_OBF)])
 
-    # calibration.js / dynamic_inn2place.js / computeScenCombosWithEV.js（難読化済みをpush）
-    if CALIBRATION_JS_OBF.exists():
-        _run_nolock(["git", "add", str(CALIBRATION_JS_OBF)])
-    if DYNAMIC_INN2PLACE_JS_OBF.exists():
-        _run_nolock(["git", "add", str(DYNAMIC_INN2PLACE_JS_OBF)])
-    if COMPUTE_SCEN_JS_OBF.exists():
-        _run_nolock(["git", "add", str(COMPUTE_SCEN_JS_OBF)])
+    # calibration.js の難読化
+    if CALIBRATION_JS.exists():
+        calib_changed = any(Path(str(f)).resolve() == CALIBRATION_JS.resolve() for f in changed_files)
+        if calib_changed or not CALIBRATION_JS_OBF.exists():
+            obf_calib = obfuscate_js(CALIBRATION_JS, CALIBRATION_JS_OBF)
+            update_cache_version()
+            _run_nolock(["git", "add", str(obf_calib)])
+        else:
+            _run_nolock(["git", "add", str(CALIBRATION_JS_OBF)])
+
+    # dynamic_inn2place.js の難読化
+    if DYNAMIC_INN2PLACE_JS.exists():
+        dip_changed = any(Path(str(f)).resolve() == DYNAMIC_INN2PLACE_JS.resolve() for f in changed_files)
+        if dip_changed or not DYNAMIC_INN2PLACE_JS_OBF.exists():
+            obf_dip = obfuscate_js(DYNAMIC_INN2PLACE_JS, DYNAMIC_INN2PLACE_JS_OBF)
+            update_cache_version()
+            _run_nolock(["git", "add", str(obf_dip)])
+        else:
+            _run_nolock(["git", "add", str(DYNAMIC_INN2PLACE_JS_OBF)])
+
+    # computeScenCombosWithEV.js の難読化
+    if COMPUTE_SCEN_JS.exists():
+        cs_changed = any(Path(str(f)).resolve() == COMPUTE_SCEN_JS.resolve() for f in changed_files)
+        if cs_changed or not COMPUTE_SCEN_JS_OBF.exists():
+            obf_cs = obfuscate_js(COMPUTE_SCEN_JS, COMPUTE_SCEN_JS_OBF)
+            update_cache_version()
+            _run_nolock(["git", "add", str(obf_cs)])
+        else:
+            _run_nolock(["git", "add", str(COMPUTE_SCEN_JS_OBF)])
 
     # sample.js の難読化: sample.js 自体が変更された時だけ実行（毎回は重すぎる）
     if JS_FILE.exists():
