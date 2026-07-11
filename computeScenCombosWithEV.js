@@ -574,7 +574,10 @@
         ? DATA_BASE_URL
         : location.href.replace(/\/[^\/]*$/, '') + '/data';
 
-      fetch(`${base}/calib_points.json`, { cache: 'default' })
+      // [2026-07-11] index.json と同様、常に最新を確認する（no-cache）。
+      // 'default' のままだと、push直後もブラウザキャッシュにより古い
+      // calib_points.json を掴み続ける端末が発生しうる（①と同種の問題）。
+      fetch(`${base}/calib_points.json`, { cache: 'no-cache' })
         .then(res => (res && res.ok) ? res.json() : null)
         .then(json => {
           if (!json || typeof json !== 'object') return;
