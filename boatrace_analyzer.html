@@ -2008,10 +2008,9 @@ function calcRaceInput() {
     { key: "F", range: "+0.10〜" },
   ];
 
-  // n(サンプル数)が10未満の場合はハイフン表記にする
-  const nDisp = (n) => (n == null || n < 10) ? "−" : n;
-
-  const d = (a, b, k) => (a && b) ? Math.round(a[k] - b[k]) : null;
+  // n(サンプル数)が10未満の場合は信頼度が低いため、加減数値(差分)をハイフン表記にする
+  const N_RELIABLE_MIN = 10;
+  const d = (a, b, k) => (a && b && a.n >= N_RELIABLE_MIN) ? Math.round(a[k] - b[k]) : null;
 
   const diffSpan = (v) => {
     if (v == null) return '<span style="font-size:10px;color:var(--text3)">−</span>';
@@ -2053,7 +2052,7 @@ function calcRaceInput() {
       </td>
       <td style="padding:4px 3px;max-width:5.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <div style="font-weight:600;font-size:11px;">${r.name || "−"}</div>
-        ${r.rAll ? `<div style="font-size:9px;color:var(--text3);">通算${nDisp(r.rAll.n)}回</div>` : '<div style="font-size:9px;color:var(--text3);">データなし</div>'}
+        ${r.rAll ? `<div style="font-size:9px;color:var(--text3);">通算${r.rAll.n}回</div>` : '<div style="font-size:9px;color:var(--text3);">データなし</div>'}
       </td>
       <td style="padding:4px 3px;text-align:center;">
         <span style="font-size:11px;font-weight:600;color:var(--text);">${timeLabel}</span><br>
@@ -2100,7 +2099,7 @@ function calcRaceInput() {
     const places = db ? (pcdCourse[db.key] || []) : [];
     const pr = db ? calcRates(places) : null;
     const binSub = db && pr
-      ? `<div style="font-size:9px;color:var(--orange);font-weight:700;">${db.key} ${db.range} <span style="color:var(--text3);font-weight:400;">n=${nDisp(pr.n)}</span></div>`
+      ? `<div style="font-size:9px;color:var(--orange);font-weight:700;">${db.key} ${db.range} <span style="color:var(--text3);font-weight:400;">n=${pr.n}</span></div>`
       : `<div style="font-size:9px;color:var(--text3);">${r.reg ? "ビンなし" : "データなし"}</div>`;
 
     return `<td style="padding:4px 3px;">
@@ -2109,7 +2108,7 @@ function calcRaceInput() {
       </td>
       <td style="padding:4px 3px;max-width:5.5em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <div style="font-weight:600;font-size:11px;">${r.name || "−"}</div>
-        ${r.rAll ? `<div style="font-size:9px;color:var(--text3);">通算${nDisp(r.rAll.n)}回</div>` : '<div style="font-size:9px;color:var(--text3);">データなし</div>'}
+        ${r.rAll ? `<div style="font-size:9px;color:var(--text3);">通算${r.rAll.n}回</div>` : '<div style="font-size:9px;color:var(--text3);">データなし</div>'}
       </td>
       <td style="padding:4px 3px;text-align:center;">
         <span style="font-size:11px;font-weight:600;color:var(--text);">${timeLabel}</span><br>
