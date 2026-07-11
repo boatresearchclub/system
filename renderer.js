@@ -1095,11 +1095,63 @@ function renderBuy(rno){
     b._tenkaiDiff   = tenkaiDiff;   // ボーナス計算で実際に使う値（差分ベース）
     b._tenjiCoef    = tenjiCoef;
     b._wTenjiCourse = wTenjiCourse;
-    b.display_base   = baseNorm + tenkaiDiff;  // 基準＋展開補正を加味した値（Σ=1を維持）
     b.display_tenkai = useMaster ? tenkaiCoef : null;
     b.display_tenji  = hasTenji  ? tenjiCoef  : null;
     b.display_slit   = null;
   });
+
+  // ── [2026-07-12 修正] 基準列にキャリブレーションを追加適用 ──
+  //
+  // 【背景】
+  //   従来の display_base = baseNorm + tenkaiDiff は、final_prob が最終的に通す
+  //   ①wTenkaiによる展開ボーナスの重み付け ②コース別キャリブレーション
+  //   (calibrateCourse1Prob / calibrateOtherCourseProb) を一切通していなかった。
+  //   そのため「基準」列と「展開シナリオ」の1着率（= final_prob ベース）が
+  //   展示データが来る前の段階でも食い違って見える原因になっていた。
+  //
+  // 【方針】
+  //   基準列は「展示・スリット補正を含まない final_prob」として計算する。
+  //   → 展示データが無い間は tenjiBonus=slitBonus=0 のため final_prob と完全一致する。
+  //   → 展示データが来た後は、展示・スリットの影響を含まない「その手前の値」として
+  //     独立した意味を保ち、展示補正・スリット補正・最終確率の各列と役割が重複しない。
+  {
+    const TENKAI_DIFF_GAIN = 1.0;
+    const baseScores = {};
+    ranked.forEach(b => {
+      const tenkaiBonus = TENKAI_DIFF_GAIN * b._tenkaiDiff * wTenkai;
+      baseScores[b.boat] = Math.max(0.001, b._baseNorm + tenkaiBonus);
+    });
+    const baseScoreTotal = Object.values(baseScores).reduce((s, v) => s + v, 0) || 1;
+    ranked.forEach(b => { b.display_base = baseScores[b.boat] / baseScoreTotal; });
+
+    // final_prob と同一のキャリブレーション関数を、同じ手順で適用する
+    try {
+      const _boat1b = ranked.find(b => b.boat === 1);
+      if (_boat1b && typeof calibrateCourse1Prob === 'function') {
+        const _raw1b = _boat1b.display_base;
+        const _cal1b = calibrateCourse1Prob(_raw1b, _boat1b.name ?? null);
+        if (_cal1b != null && !isNaN(_cal1b) && Math.abs(_cal1b - _raw1b) > 1e-9) {
+          const _othersB = ranked.filter(b => b.boat !== 1);
+          const _othersBTotal = _othersB.reduce((s, b) => s + b.display_base, 0) || 1;
+          const _remainB = Math.max(0, 1 - _cal1b);
+          _othersB.forEach(b => { b.display_base = _remainB * (b.display_base / _othersBTotal); });
+          _boat1b.display_base = _cal1b;
+        }
+      }
+      if (typeof calibrateOtherCourseProb === 'function') {
+        ranked.forEach(b => {
+          if (b.boat == null || b.boat === 1 || b.display_base == null) return;
+          const _rawOb = b.display_base;
+          const _calOb = calibrateOtherCourseProb(_rawOb, b.boat);
+          if (_calOb != null && !isNaN(_calOb)) b.display_base = _calOb;
+        });
+        const _renormB = ranked.reduce((s, b) => s + (b.display_base || 0), 0);
+        if (_renormB > 0 && Math.abs(_renormB - 1) > 1e-9) {
+          ranked.forEach(b => { b.display_base = b.display_base / _renormB; });
+        }
+      }
+    } catch (_ccb) { /* 補正失敗時は無補正のまま続行（フォールバック） */ }
+  }
 
   // ══════════════════════════════════════════════════════════════════
   // STEP2: 【刷新】6艇一括スリット相対評価 + 加算ボーナス方式で final_prob を確定
@@ -1833,7 +1885,7 @@ function renderBuy(rno){
         <thead><tr>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">枠</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
-          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobに展開補正を加味し正規化した1着率（合計100%）">基準</th>
+          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobに展開補正を加味して正規化し、コース別キャリブレーションまで適用した1着率（展示・スリット補正は含まない／合計100%）">基準</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
