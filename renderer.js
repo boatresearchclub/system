@@ -1745,6 +1745,15 @@ function renderBuy(rno){
     const finalProb = bt.final_prob ?? bt.tenkai_prob;
     const finalPct  = (finalProb * 100).toFixed(1);
 
+    // 場平均（会場コース別1着率）からの加減値を（）で併記
+    const venueAvg    = cRates_buy[bt.boat] ?? null;
+    const diffPt      = venueAvg != null ? (finalProb - venueAvg) * 100 : null;
+    const diffCell    = diffPt == null
+      ? `<span style="font-size:10px;color:var(--text3)">（—）</span>`
+      : Math.abs(diffPt) < 0.05
+        ? `<span style="font-size:10px;color:var(--text3)">（±0.0）</span>`
+        : `<span style="font-size:10px;font-weight:600;color:${diffPt >= 0 ? 'var(--green)' : 'var(--red)'}">（${diffPt >= 0 ? '+' : '−'}${Math.abs(diffPt).toFixed(1)}）</span>`;
+
     // 期待値セル
     const evCell = `<span class="ev-cell" data-boat="${bt.boat}" data-fp="${finalProb.toFixed(4)}" style="font-size:11px;color:var(--text3)">—</span>`;
 
@@ -1752,10 +1761,10 @@ function renderBuy(rno){
       <td style="text-align:center;padding:4px 3px"><span class="boat-circle b${bt.boat}" style="width:22px;height:22px;font-size:11px;line-height:22px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span></td>
       <td class="col-name" style="padding:4px 4px;font-size:0.82rem;text-align:center">${bt.name}</td>
       <td style="padding:4px 4px;text-align:center;font-family:var(--mono);font-size:0.82rem;color:var(--text3)">${basePct}%</td>
-      <td style="padding:4px 3px;text-align:center;font-size:0.82rem">${relCorrCell}</td>
-      <td style="padding:4px 3px;text-align:center;font-size:0.82rem">${tenjiCorrCell}</td>
-      <td style="padding:4px 3px;text-align:center;font-size:0.82rem">${slitCorrCell}</td>
-      <td style="padding:4px 4px;text-align:center;font-family:var(--mono);font-size:0.82rem;font-weight:700;color:var(--accent2)">${finalPct}%</td>
+      <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${relCorrCell}</td>
+      <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${tenjiCorrCell}</td>
+      <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${slitCorrCell}</td>
+      <td style="padding:4px 4px;text-align:center;font-family:var(--mono);font-size:0.82rem;font-weight:700;color:var(--accent2)">${finalPct}%${diffCell}</td>
     </tr>`;
   }).join('');
 
@@ -1848,9 +1857,9 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">枠</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobを正規化した相対1着率（合計100%）">基準</th>
-          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展開噛み合いスコア: 1号艇の弱点×各艇の攻撃力の積。脅威が低ければフラット(±0%)、攻め手が強い艇のみ上昇。1号艇は被圧力合計(負値)">展開補正</th>
-          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
-          <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展開噛み合いスコア: 1号艇の弱点×各艇の攻撃力の積。脅威が低ければフラット(±0%)、攻め手が強い艇のみ上昇。1号艇は被圧力合計(負値)">展開補正</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
         </tr></thead>
         <tbody>${probRows}</tbody>
