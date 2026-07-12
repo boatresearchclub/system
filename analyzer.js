@@ -1765,18 +1765,36 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             } else if(baseTR != null){
               p2 = baseTR;
             } else {
-              // [2026-06-25] finalProb按分を平滑化
+              // [2026-07-12 追加] tenkai_remainingのrate2が欠損している場合、
+              // place2_dist（dynamic_inn2place.jsが会場×勝ち艇別に実績集計した
+              // 決まり手非依存の粗い実測分布）があれば優先的に使う。
+              // 決まり手別ではないためtenkai_remainingより精度は劣るが、
+              // 実績を一切見ないfinalProb按分よりは改善が期待できる。
+              // 安全策: 値が無ければ従来通りfinalProb按分にフォールバック（挙動変化なし）。
+              const p2Dynamic = masterExt?.venue_stats?.[venue]?.place2_dist?.[wc]?.[sc] ?? null;
+              if(p2Dynamic != null){
+                p2 = p2Dynamic;
+              } else {
+                // [2026-06-25] finalProb按分を平滑化
+                const bt = ranked2.find(r => r.boat === b.boat);
+                const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
+                const eqShare = 1.0 / (rawBoats.length - 1 || 1);
+                p2 = 0.25 * eqShare + 0.75 * fpShare;
+              }
+            }
+          } else {
+            // [2026-07-12 追加] tenkai_remaining自体が欠損している場合も同様に
+            // place2_distを優先フォールバックとして使う。
+            const p2Dynamic = masterExt?.venue_stats?.[venue]?.place2_dist?.[wc]?.[sc] ?? null;
+            if(p2Dynamic != null){
+              p2 = p2Dynamic;
+            } else {
+              // [2026-06-25] finalProb按分を平滑化（tenkai_remainingデータなし）
               const bt = ranked2.find(r => r.boat === b.boat);
               const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
               const eqShare = 1.0 / (rawBoats.length - 1 || 1);
               p2 = 0.25 * eqShare + 0.75 * fpShare;
             }
-          } else {
-            // [2026-06-25] finalProb按分を平滑化（tenkai_remainingデータなし）
-            const bt = ranked2.find(r => r.boat === b.boat);
-            const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
-            const eqShare = 1.0 / (rawBoats.length - 1 || 1);
-            p2 = 0.25 * eqShare + 0.75 * fpShare;
           }
 
           // avg_rank補正を適用（3.5を中央値とし、平均着順が良いほど上方修正）
