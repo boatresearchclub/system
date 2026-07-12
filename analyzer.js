@@ -1832,12 +1832,16 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
         5: [0.75, 1.28],  // （旧1.40→1.28）
         6: [0.78, 1.25],  // （旧1.35→1.25）
       };
+      // [2026-07-12 修正] 乗算方式→加算方式に変更（final_prob側の1着補正と統一）。
+      // クリップ幅(TENJI_P2_CLIP_BY_COURSE)自体は旧・乗算方式で調整された値をそのまま
+      // 流用しているため、加算方式での実際の影響度は乗算時と異なる可能性がある。
+      // 本番投入前にバックテストで確認すること。
       if(tenjiScoreMap){
         place2List.forEach(x => {
           const [lo, hi] = TENJI_P2_CLIP_BY_COURSE[x.boat] ?? [0.75, 1.35];
           const rawCoef = tenjiScoreMap[`__coef2_${x.boat}`] ?? tenjiScoreMap[`__coef_${x.boat}`] ?? 1.0;
           const coef    = Math.min(hi, Math.max(lo, rawCoef));
-          x.p2 *= coef;
+          x.p2 = Math.max(0.0001, x.p2 + (coef - 1.0));
         });
       }
 
@@ -1981,8 +1985,10 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
       const tenjiCoef = tenjiScoreMap ? (tenjiScoreMap[`__coef3_${b.boat}`] ?? tenjiScoreMap[`__coef_${b.boat}`] ?? 1.0) : 1.0;
       const [c3lo, c3hi] = CLIP3_BY_COURSE[b.boat] ?? [0.75, 1.35];
       const clipped = Math.min(c3hi, Math.max(c3lo, tenjiCoef));
-      // ① avgRank補正を最終スコアに乗算
-      const score = baseScore * clipped * rankCoef;
+      // [2026-07-12 修正] 乗算方式→加算方式に変更（1着・2着補正と統一）。
+      // CLIP3_BY_COURSEは旧・乗算方式で調整された値をそのまま流用しているため、
+      // 加算方式での実際の影響度は乗算時と異なる可能性がある。バックテスト要確認。
+      const score = Math.max(0.0001, baseScore * rankCoef + (clipped - 1.0));
 
       return { boat: b.boat, name: b.name, r3, score };
     });
