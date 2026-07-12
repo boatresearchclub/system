@@ -118,6 +118,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__diff_${b.boat}`]  = diff;  // バッジ表示用
       // p3r ±10% 以上で軸/切フラグ
       map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
+      map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;   // 正規化スコア（均等）
     });
     map.__isSuminoe = true;  // buildScenarioSectionのバッジ判定用
@@ -149,6 +150,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__diff_${b.boat}`]  = diff;
       // p3r ±10% 以上で軸/切フラグ
       map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
+      map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
     map.__isSuminoe = true;  // バッジ表示を住之江と共通化
@@ -182,6 +184,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__diff_${b.boat}`]  = diff;
       // p3r ±10% 以上で軸/切フラグ
       map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
+      map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
     map.__isSuminoe = true;  // バッジ表示を住之江と共通化
@@ -215,6 +218,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__diff_${b.boat}`]  = diff;
       // p3r ±10% 以上で軸/切フラグ
       map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
+      map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
     map.__isSuminoe = true;  // バッジ表示・1着直接乗算判定を住之江と共通化

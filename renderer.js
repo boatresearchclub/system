@@ -1827,6 +1827,27 @@ function renderBuy(rno){
     // 期待値セル
     const evCell = `<span class="ev-cell" data-boat="${bt.boat}" data-fp="${finalProb.toFixed(4)}" style="font-size:11px;color:var(--text3)">—</span>`;
 
+    // ── 3連対率セル（管理者限定）──
+    // 基準値: 出走表と同じ MASTER_EXT.player_index[name].annual_place3（年間3連対率）
+    // 実測テーブル会場（住之江/常滑/蒲郡/三国）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
+    // それ以外の会場は実測デルタを持たないため基準値のみ表示（根拠のない加算はしない）。
+    let place3rCell;
+    {
+      const base3r = MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // 0〜1 の割合、なければ null
+      if(base3r == null){
+        place3rCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
+      } else if(isMeasuredTenjiVenue && hasTenji && tenjiScoreMap){
+        const deltaPt = tenjiScoreMap[`__p3r_${bt.boat}`] ?? 0; // %pt単位（例: +6 → +6%pt）
+        const adjusted = Math.max(0, Math.min(1, base3r + deltaPt / 100));
+        const deltaStr = Math.abs(deltaPt) < 0.5
+          ? ''
+          : `<span style="font-size:9px;color:${deltaPt >= 0 ? 'var(--green)' : 'var(--red)'}">（${deltaPt >= 0 ? '+' : '−'}${Math.abs(deltaPt).toFixed(1)}）</span>`;
+        place3rCell = `<span style="font-family:var(--mono)">${(adjusted * 100).toFixed(1)}%</span>${deltaStr}`;
+      } else {
+        place3rCell = `<span style="font-family:var(--mono)">${(base3r * 100).toFixed(1)}%</span>`;
+      }
+    }
+
     return `<tr>
       <td style="text-align:center;padding:4px 3px"><span class="boat-circle b${bt.boat}" style="width:22px;height:22px;font-size:11px;line-height:22px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span></td>
       <td class="col-name" style="padding:4px 4px;font-size:0.82rem;text-align:center">${bt.name}</td>
@@ -1834,6 +1855,7 @@ function renderBuy(rno){
       <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${tenjiCorrCell}</td>
       <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${slitCorrCell}</td>
       <td style="padding:4px 4px;text-align:center;font-family:var(--mono);font-size:0.82rem;font-weight:700;color:var(--accent2)">${finalCell}${diffCell}</td>
+      <td class="admin-only" style="padding:4px 4px;text-align:center;font-size:0.82rem">${place3rCell}</td>
     </tr>`;
   }).join('');
 
@@ -1929,6 +1951,7 @@ function renderBuy(rno){
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示">3連対率</th>
         </tr></thead>
         <tbody>${probRows}</tbody>
       </table>
