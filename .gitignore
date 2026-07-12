@@ -25,3 +25,7 @@ pipeline_prototype.py
 out
 start_all
 diff
+
+start.bat
+ev_engine.js
+ev_calculator.html
