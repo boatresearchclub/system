@@ -1902,6 +1902,31 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
 // 2着率: 逃げ(1コース1着)→inn_2place, それ以外→tenkai_remaining+winner_course_order
 // 3着率: tenkai_remaining.rate3 × winner_course_order.rate3 個人補正ブレンド
 // ── トップレベル関数（buildScenarioSection・renderBuy 両方から参照）──
+// ── [2026-07-12 計装追加] calc3rdScores フォールバック分岐の内訳計測用カウンタ ──
+// 目的: r3 決定ロジックがどの分岐(①base+個人 ②baseのみ ③個人のみ
+//       ④a avg_3rd_rate ④b 固定テーブル)にどれだけ落ちているかを可視化する。
+// 安全策:
+//   - 既存の計算式・戻り値には一切影響しない（読み取り専用の計数のみ）
+//   - try/catch で囲み、カウンタ処理自体が失敗しても本体計算は継続する
+//   - var 宣言のため analyzer.js が二重読込されても再宣言エラーにならない
+if (typeof _CALC3RD_FALLBACK_STATS === 'undefined') {
+  var _CALC3RD_FALLBACK_STATS = { total: 0, branch1: 0, branch2: 0, branch3: 0, branch4a: 0, branch4b: 0 };
+}
+function _resetCalc3rdFallbackStats() {
+  _CALC3RD_FALLBACK_STATS = { total: 0, branch1: 0, branch2: 0, branch3: 0, branch4a: 0, branch4b: 0 };
+}
+function _printCalc3rdFallbackStats() {
+  const s = _CALC3RD_FALLBACK_STATS;
+  if (!s.total) { console.log('[calc3rd計装] データなし'); return s; }
+  const pct = n => (n / s.total * 100).toFixed(1) + '%';
+  console.log(
+    `[calc3rd計装] total=${s.total} ` +
+    `①base+個人=${pct(s.branch1)} ②baseのみ=${pct(s.branch2)} ③個人のみ=${pct(s.branch3)} ` +
+    `④a avg_3rd_rate=${pct(s.branch4a)} ④b 固定テーブル=${pct(s.branch4b)}`
+  );
+  return s;
+}
+
 function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
   // [2026-06-01 修正] venue はグローバル変数ではなく DATA.venue から取得する。
   // computeBuy3 / computeRanked2AndSd などから呼ばれる際、DATA = vdata（venue付き）が
@@ -1952,12 +1977,15 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         const wNat    = (1 - personTrust);   // 修正: trTrust * (1-personTrust) → (1-personTrust)
         const wTot    = wPerson + wNat;       // 常に1.0
         r3 = (personR3 * wPerson + baseR3 * wNat) / wTot;
+        try { _CALC3RD_FALLBACK_STATS.total++; _CALC3RD_FALLBACK_STATS.branch1++; } catch(_e) {}
       } else if(baseR3 != null){
         // ②ベースのみ
         r3 = baseR3;
+        try { _CALC3RD_FALLBACK_STATS.total++; _CALC3RD_FALLBACK_STATS.branch2++; } catch(_e) {}
       } else if(personR3 != null && personTrust > 0.3){
         // ③個人のみ（ベースなし）
         r3 = personR3;
+        try { _CALC3RD_FALLBACK_STATS.total++; _CALC3RD_FALLBACK_STATS.branch3++; } catch(_e) {}
       } else {
         // ④フォールバック: コース別全国平均3着率テーブルを優先使用
         // [修正 2026-07-05] avgR3 も無い場合に final_prob 相対比へ逃げる
@@ -1969,6 +1997,11 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
                    ?? MASTER_EXT?.avg_3rd_rate?.[String(b.boat)]
                    ?? null;
         r3 = avgR3 ?? (FIXED_3RD_RATE_BY_COURSE[b.boat] ?? FIXED_3RD_RATE_DEFAULT);
+        try {
+          _CALC3RD_FALLBACK_STATS.total++;
+          if (avgR3 != null) _CALC3RD_FALLBACK_STATS.branch4a++;
+          else _CALC3RD_FALLBACK_STATS.branch4b++;
+        } catch(_e) {}
       }
 
       // [修正 2026-07-05] r3 は上記のいずれかの分岐で必ず値が入るため、
