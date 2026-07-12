@@ -188,6 +188,39 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
     return map;
   }
 
+  // ── [2026-07-12 追加] 三国専用: 実測補正テーブルから __coef を生成 ──
+  // diff = 1周 + 回り足 + 展示（直線は含まない）。住之江と同じ構成。
+  if(venue === '三国'){
+    const lap1Vals   = fieldRawVals(boats, tenjiData, 'lap1');
+    const mawariVals = fieldRawVals(boats, tenjiData, 'mawari');
+    const tenjiVals  = fieldRawVals(boats, tenjiData, 'tenji');
+    if(!tenjiVals) return null;
+
+    const sums = boats.map((b, i) => {
+      let s = tenjiVals[i];
+      if(lap1Vals)   s += lap1Vals[i];
+      if(mawariVals) s += mawariVals[i];
+      return s;
+    });
+    const rawAvg = sums.reduce((a, v) => a + v, 0) / sums.length;
+    const avg = Math.round(rawAvg * 100) / 100;
+
+    const map = {};
+    boats.forEach((b, i) => {
+      const diff = Math.round((avg - sums[i]) * 100) / 100; // 速い=プラス
+      const row  = _mikuniTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
+      map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
+      map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
+      map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
+      map[`__diff_${b.boat}`]  = diff;
+      // p3r ±10% 以上で軸/切フラグ
+      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
+      map[b.boat] = 1 / boats.length;
+    });
+    map.__isSuminoe = true;  // バッジ表示・1着直接乗算判定を住之江と共通化
+    return map;
+  }
+
   const cfg = VENUE_TENJI_CONFIG[venue] || VENUE_TENJI_CONFIG["_default"];
 
   // ① 項目別の生タイム値を取得

@@ -1171,9 +1171,38 @@ function renderBuy(rno){
   //
   // ══════════════════════════════════════════════════════════════════
   const BONUS_BASE_TENKAI = 0.15;  // [2026-06-27] 旧・比率方式専用の定数。差分方式(TENKAI_DIFF_GAIN)に移行したため現在は未使用（_tenkaiCoef表示用の互換計算にのみ間接的に名残あり）。
-  const BONUS_BASE_TENJI  = 0.15;  // 展示補正の加算強度
+  const BONUS_BASE_TENJI  = 0.15;  // 展示補正の加算強度（実測テーブル非対応会場でのみ使用）
   const SLIT_BONUS_BASE   = 0.15;  // スリット補正の加算強度
   const SLIT_REL_CLIP     = 0.08;  // スリット乖離ボーナスの上下限（±8%ポイント）
+
+  // [2026-07-12 追加] 実測テーブル会場（住之江/常滑/蒲郡/三国）専用: 1着補正クリップ表
+  //
+  // 【背景】
+  //   従来、全会場共通で tenjiBonus = BONUS_BASE_TENJI(0.15) × (coef-1) × wTenji(0.5固定)
+  //   という加算方式だったため、住之江等が持つ実測 p1 デルタ（例: 4号艇0.6秒差で+6%等）を
+  //   使っていても、最終的な final_prob への影響は最大でも±2%pt程度しか出ず、
+  //   「展示補正を入れている意味がない」状態だった。
+  //
+  //   一方2着・3着補正（TENJI_P2_CLIP_BY_COURSE / CLIP3_BY_COURSE）は実測係数を直接乗算
+  //   しており、体感できる強さで機能している。1着だけ蚊帳の外だった。
+  //
+  // 【方針】
+  //   実測テーブルを持つ会場に限り、1着も2着・3着と同じ「係数を直接乗算」方式に変更する。
+  //   ただし [2026-05-13] の教訓（wTenji=1.0で1号艇が過剰強化され回収率▼20%）を踏まえ、
+  //   1号艇（既に確率が高い艇）のクリップ幅は特に狭くし、過剰強化を構造的に防ぐ。
+  //   3〜6号艇は展示の影響が実際に大きいコースのため、2着用クリップに準じた幅を持たせる。
+  //
+  // ⚠️ この初期値はバックテスト未実施の暫定値。[2026-05-13]と同様の副作用
+  //    （鉄板1号艇レースがさらに鉄板化し回収率が下がる）が起きていないか、
+  //    導入後は必ず回収率ベースで検証すること。
+  const TENJI_P1_CLIP_BY_COURSE = {
+    1: [0.94, 1.06],  // 最重要: 1号艇の過剰強化を構造的に防ぐ（2026-05-13教訓）
+    2: [0.90, 1.12],
+    3: [0.85, 1.20],
+    4: [0.80, 1.25],
+    5: [0.85, 1.20],
+    6: [0.88, 1.15],
+  };
 
   // ── スリット総合スコアを6艇一括で算出 ──
   //
@@ -1263,25 +1292,36 @@ function renderBuy(rno){
     ranked.forEach(b => { b._slitRelDev = 0; });
   }
 
-  // 2パス目: 加算ボーナス方式で final_prob を確定
+  // 実測テーブル会場（住之江/常滑/蒲郡/三国）かどうか（calcTenjiScoreが __isSuminoe を立てる）
+  const isMeasuredTenjiVenue = !!(tenjiScoreMap && tenjiScoreMap.__isSuminoe);
+
+  // 2パス目: final_prob を確定
+  //   実測テーブル会場: 展示係数を「直接乗算」（2着・3着と同方式、コース別クリップ付き）
+  //   それ以外:         従来通り加算ボーナス方式（BONUS_BASE_TENJI × wTenji で希釈）
   ranked.forEach(b => {
     // [2026-06-27 修正] tenkaiBonus は旧 (tenkaiCoef-1)*BONUS_BASE_TENKAI 方式から
     // 差分(_tenkaiDiff)を直接使う方式に変更。TENKAI_DIFF_GAIN は旧方式との
     // スケール整合用の感応度係数（実測データで再チューニング可能な値として分離）。
     const TENKAI_DIFF_GAIN = 1.0;
     const tenkaiBonus = TENKAI_DIFF_GAIN * b._tenkaiDiff * wTenkai;
-    const tenjiBonus  = BONUS_BASE_TENJI  * (b._tenjiCoef  - 1.0) * b._wTenjiCourse;
 
     // スリットボーナス: 6艇相対乖離率 × 重み（クリップ付き）
     const clippedSlitDev = Math.min(SLIT_REL_CLIP, Math.max(-SLIT_REL_CLIP, b._slitRelDev ?? 0));
     const slitBonus = SLIT_BONUS_BASE * clippedSlitDev * wSlit;
 
-    b._multi_score = Math.max(0.001,
-      b._baseNorm
-      + tenkaiBonus
-      + tenjiBonus
-      + slitBonus
-    );
+    const preTenjiScore = Math.max(0.001, b._baseNorm + tenkaiBonus + slitBonus);
+
+    if(isMeasuredTenjiVenue){
+      // ── 直接乗算方式（実測根拠あり）──
+      const [lo, hi] = TENJI_P1_CLIP_BY_COURSE[b.boat] ?? [0.85, 1.20];
+      const clippedCoef = Math.min(hi, Math.max(lo, b._tenjiCoef));
+      b._multi_score = preTenjiScore * clippedCoef;
+      b._tenjiCoefApplied = clippedCoef; // デバッグ・表示用
+    } else {
+      // ── 従来の加算ボーナス方式（実測根拠なし会場）──
+      const tenjiBonus = BONUS_BASE_TENJI * (b._tenjiCoef - 1.0) * b._wTenjiCourse;
+      b._multi_score = Math.max(0.001, preTenjiScore + tenjiBonus);
+    }
 
     // display_slit: 1.0基準の係数として保存（表示用）
     if(hasTenji){
