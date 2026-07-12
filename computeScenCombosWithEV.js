@@ -1531,6 +1531,20 @@
         }
       });
 
+      // [2026-07-13 追加] 予測決まり手（全 winner×kimari の中で最大確率のペア）。
+      // calibration.js の決まり手キャリブレーション（predKimari vs actualKimari）用。
+      // 既存の買い目生成・EV計算・boatProbs等には一切影響しない（読み取り専用の追加計算）。
+      let topKimariBoat = null;
+      let topKimariType = null;
+      try {
+        let _bestP = -1;
+        Object.entries(sd.scenarioProb || {}).forEach(([boatStr, kMap]) => {
+          Object.entries(kMap || {}).forEach(([kimari, p]) => {
+            if (p > _bestP) { _bestP = p; topKimariBoat = parseInt(boatStr, 10); topKimariType = kimari; }
+          });
+        });
+      } catch(_e) { /* 予測決まり手の計算失敗は無視（既存機能に影響なし） */ }
+
       return {
         combos      : allCombos,
         hitProbEst,             // キャリブレーション補正済み
@@ -1549,6 +1563,9 @@
         // ここでは返さない（actual が不明なため）
         pred2ndRank : null,
         pred3rdRank : null,
+        // [2026-07-13 追加] 予測決まり手（呼び出し側で actualKimari と突き合わせる）
+        topKimariBoat,
+        topKimariType,
       };
 
     } catch (e) {
@@ -1557,6 +1574,7 @@
         combos: [], hitProbEst: null, synthOdds: null, ev: null,
         pred2ndRank: null, pred3rdRank: null,
         weighted2nd: {}, weighted3rd: {},
+        topKimariBoat: null, topKimariType: null,
       };
     }
   };

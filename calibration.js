@@ -115,6 +115,38 @@
     return { rank1Rate: rank1/total, top2Rate: top2/total, top3Rate: top3/total, missRate: miss/total, total };
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // 決まり手 calibration [2026-07-13 追加]
+  // ──────────────────────────────────────────────────────────────────
+  // predKimariBoat/predKimariType: computeScenCombosWithEV が返す
+  //   「全winner×kimariの中で最大確率のペア」（top_stats.js が転記）。
+  // actualKimari: renderer.js の結果表示由来（rd.kimari）。
+  // actual1st と predKimariBoat が一致する時のみ「決まり手そのものの的中率」
+  // を比較する（軸艇が違うと決まり手の比較自体に意味がないため）。
+  function calcKimariCalibration(results) {
+    const valid = results.filter(r =>
+      r.actualKimari != null && r.predKimariType != null && r.predKimariBoat != null && r.actual1st != null
+    );
+    const total = valid.length;
+    if (total === 0) return null;
+    const boatMatch = valid.filter(r => r.predKimariBoat === r.actual1st);
+    const boatMatchTotal = boatMatch.length;
+    const typeMatch = boatMatch.filter(r => r.predKimariType === r.actualKimari);
+    const boatMatchRate = boatMatchTotal / total;
+    const typeAccuracyGivenBoatMatch = boatMatchTotal > 0 ? typeMatch.length / boatMatchTotal : null;
+
+    // 決まり手別 混同行列（軸艇一致時のみ集計。実際の決まり手 → 予測の決まり手 の件数）
+    const confusion = {};
+    boatMatch.forEach(r => {
+      const a = r.actualKimari;
+      const p = r.predKimariType;
+      if (!confusion[a]) confusion[a] = {};
+      confusion[a][p] = (confusion[a][p] ?? 0) + 1;
+    });
+
+    return { total, boatMatchTotal, boatMatchRate, typeAccuracyGivenBoatMatch, confusion };
+  }
+
   // ── 2着・3着 calibration HTML生成 ──
   function buildPlace2CalibHTML(p2, p3) {
     function barRow(label, rate, threshGood, threshWarn, note) {
@@ -1020,6 +1052,31 @@
       Object.entries(byRno2)
         .sort((a, b) => a[1].rno - b[1].rno)
         .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
+    }
+
+    // ── ⑥ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）──
+    const kimariStats = calcKimariCalibration(all);
+    if (kimariStats) {
+      section('⑥ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
+      push(['件数(実績・予測とも取得できたレース)', kimariStats.total]);
+      push(['軸艇一致件数(predKimariBoat=actual1st)', kimariStats.boatMatchTotal, _pctStr(kimariStats.boatMatchRate)]);
+      push(['軸艇一致時の決まり手的中率', kimariStats.typeAccuracyGivenBoatMatch != null ? _pctStr(kimariStats.typeAccuracyGivenBoatMatch) : '(軸艇一致0件)']);
+
+      const KIMARI_ORDER = ['逃げ', '差し', 'まくり', 'まくり差し', '恵まれ', '抜き'];
+      const allTypes = new Set(KIMARI_ORDER);
+      Object.keys(kimariStats.confusion).forEach(k => {
+        allTypes.add(k);
+        Object.keys(kimariStats.confusion[k]).forEach(p => allTypes.add(p));
+      });
+      const typeList = KIMARI_ORDER.filter(k => allTypes.has(k))
+        .concat([...allTypes].filter(k => !KIMARI_ORDER.includes(k)));
+
+      blank();
+      push(['混同行列（軸艇一致時のみ・行=実際／列=予測）', '実際\\予測', ...typeList]);
+      typeList.forEach(actualK => {
+        const row = kimariStats.confusion[actualK] || {};
+        push(['', actualK, ...typeList.map(predK => row[predK] ?? 0)]);
+      });
     }
 
     return '\uFEFF' + lines.join('\r\n'); // BOM付き（Excelで文字化けしないように）
