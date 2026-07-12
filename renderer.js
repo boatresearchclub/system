@@ -1029,9 +1029,9 @@ function renderBuy(rno){
   const probTotal = ranked.reduce((s, b) => s + b.prob, 0) || 1;
   const useMaster = hasMasterExt() && !!MASTER_EXT.venue_kimari[DATA.venue];
 
-  // arek連動動的重みを取得（荒れ会場ほどwTenkai増・wBase減、wSlit増）
-  // [2026-05-20 修正] wSlit を calcDynamicWeights から受け取り、renderBuy内で wSlit の代わりに使用
-  const { wBase, wTenkai, wTenji, wSlit } = calcDynamicWeights(arek);
+  // arek連動動的重みを取得（荒れ会場ほどwTenkai増・wBase減）
+  // [2026-07-12] wSlit はスリット補正撤廃に伴い受け取り・使用を停止（calcDynamicWeights自体は互換のため残置）
+  const { wBase, wTenkai, wTenji } = calcDynamicWeights(arek);
 
   // 各艇の展開係数・展示係数を算出
   const tenkaiOnlyTotal = ranked.reduce((s, x) => s + (x.tenkai_score ?? x.tenkai_prob), 0) || 1;
@@ -1172,8 +1172,7 @@ function renderBuy(rno){
   // ══════════════════════════════════════════════════════════════════
   const BONUS_BASE_TENKAI = 0.15;  // [2026-06-27] 旧・比率方式専用の定数。差分方式(TENKAI_DIFF_GAIN)に移行したため現在は未使用（_tenkaiCoef表示用の互換計算にのみ間接的に名残あり）。
   const BONUS_BASE_TENJI  = 0.15;  // 展示補正の加算強度（実測テーブル非対応会場でのみ使用）
-  const SLIT_BONUS_BASE   = 0.15;  // スリット補正の加算強度
-  const SLIT_REL_CLIP     = 0.08;  // スリット乖離ボーナスの上下限（±8%ポイント）
+  // [2026-07-12 削除] SLIT_BONUS_BASE / SLIT_REL_CLIP はスリット補正撤廃に伴い削除。
 
   // [2026-07-12 追加] 実測テーブル会場（住之江/常滑/蒲郡/三国）専用: 1着補正クリップ表
   //
@@ -1204,100 +1203,18 @@ function renderBuy(rno){
     6: [0.88, 1.15],
   };
 
-  // ── スリット総合スコアを6艇一括で算出 ──
-  //
-  // コース特性: スロー枠（1〜3）は回り足重視、ダッシュ枠（4〜6）は直線重視。
-  // 気象補正: 追い風→直線有利（外枠UP）、向かい風→回り足有利（インUP）。
-  // 補正は連続値として実装し、ゼロワン評価を廃止する。
-  //
-  const slitScores = {};  // boat番号 → スリット総合スコア（小さいほど速い）
+  // [2026-07-12 削除] スリット補正（前艇比較のラップタイム評価）は撤廃。
+  // 「スリット補正」の表示スロットは、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島）の
+  // タイム由来1着率(p1)加算値を表示する用途に転用する（下のfinal_prob確定ループ内で設定）。
 
-  if(hasTenji && wSlit > 0){
-    // 風向気象補正を取得（tenjiData から）
-    const windSpeed = tenjiData?.__wind_speed ?? 0;
-    const windType  = (() => {
-      const slug2 = VENUE_SLUG_MAP[DATA.venue] || DATA.venue;
-      // tenjiData から風向を取得（buildWeatherBar と同じフィールド）
-      const windNum = tenjiData?.__wind_direction ?? null;
-      if(windNum == null || windSpeed < 1) return null;
-      // SL_DIR は buildWeatherBar 内ローカルなので、ここではヘルパーで近似
-      // 簡略化: 追い風=tail/向かい風=head/横風=cross を wind_direction_text から判断
-      const wText = tenjiData?.__wind_direction_text ?? '';
-      if(/追い/.test(wText)) return 'tail';
-      if(/向かい/.test(wText)) return 'head';
-      if(/横/.test(wText)) return 'cross';
-      return null;
-    })();
-
-    // 気象係数: 追い風→直線（外枠）+1、向かい風→回り足（イン）+1、無風→0
-    const windTailBonus = (windType === 'tail')  ?  Math.min(windSpeed / 5, 1.0) : 0;
-    const windHeadBonus = (windType === 'head')  ?  Math.min(windSpeed / 5, 1.0) : 0;
-
-    // コース特性重み（スロー=回り足重視、ダッシュ=直線重視）
-    const COURSE_MAWARI_W  = { 1:0.7, 2:0.6, 3:0.5, 4:0.3, 5:0.2, 6:0.1 };
-    const COURSE_CHOKU_W   = { 1:0.3, 2:0.4, 3:0.5, 4:0.7, 5:0.8, 6:0.9 };
-
-    ranked.forEach(b => {
-      const bn = b.boat;
-      const td = tenjiData[String(bn)] ?? tenjiData[bn] ?? null;
-      if(!td){ slitScores[bn] = null; return; }
-
-      const tTenji   = (typeof td.tenji   === 'number') ? td.tenji   : null;
-      const tMawari  = (typeof td.mawari  === 'number') ? td.mawari  : null;
-      const tChoku   = (typeof td.chokusen === 'number') ? td.chokusen : null;
-      const stRank   = getCourseMaster(b.name, String(bn))?.st_rank ?? null;
-
-      if(tTenji == null){ slitScores[bn] = null; return; }
-
-      // コース特性重みに気象補正を加算（連続値）
-      const mawariW = (COURSE_MAWARI_W[bn] ?? 0.4) + windHeadBonus * 0.2;
-      const chokuW  = (COURSE_CHOKU_W[bn]  ?? 0.6) + windTailBonus  * 0.2;
-      const wTotal  = mawariW + chokuW || 1;
-
-      // 合成展示スコア（小さいほど速い）
-      let compositeTenji = tTenji;
-      if(tMawari != null && tChoku != null){
-        compositeTenji = tTenji * 0.6 + (tMawari * mawariW + tChoku * chokuW) / wTotal * 0.4;
-      } else if(tMawari != null){
-        compositeTenji = tTenji * 0.7 + tMawari * 0.3;
-      } else if(tChoku != null){
-        compositeTenji = tTenji * 0.7 + tChoku * 0.3;
-      }
-
-      // ST順位を秒換算して加算（ST順1位差 ≒ 0.02秒）
-      const stAdj = stRank != null ? stRank * 0.02 : 0;
-      slitScores[bn] = compositeTenji + stAdj;
-    });
-
-    // 有効値の平均を基準に乖離率を算出
-    const validSlitEntries = ranked.filter(b => slitScores[b.boat] != null);
-    if(validSlitEntries.length >= 2){
-      const slitAvg = validSlitEntries.reduce((s, b) => s + slitScores[b.boat], 0) / validSlitEntries.length;
-      if(slitAvg > 0){
-        ranked.forEach(b => {
-          if(slitScores[b.boat] != null){
-            // 乖離率: 正値 = 自艇が平均より速い（スリット優位）
-            b._slitRelDev = (slitAvg - slitScores[b.boat]) / slitAvg;
-          } else {
-            b._slitRelDev = 0;
-          }
-        });
-      } else {
-        ranked.forEach(b => { b._slitRelDev = 0; });
-      }
-    } else {
-      ranked.forEach(b => { b._slitRelDev = 0; });
-    }
-  } else {
-    ranked.forEach(b => { b._slitRelDev = 0; });
-  }
-
-  // 実測テーブル会場（住之江/常滑/蒲郡/三国）かどうか（calcTenjiScoreが __isSuminoe を立てる）
+  // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島）かどうか
+  // （calcTenjiScoreが __isSuminoe を立てる）
   const isMeasuredTenjiVenue = !!(tenjiScoreMap && tenjiScoreMap.__isSuminoe);
 
   // 2パス目: final_prob を確定
-  //   実測テーブル会場: 展示係数を「直接乗算」（2着・3着と同方式、コース別クリップ付き）
-  //   それ以外:         従来通り加算ボーナス方式（BONUS_BASE_TENJI × wTenji で希釈）
+  //   実測テーブル会場: タイム由来1着率(p1)を「直接加算」（コース別クリップで過補正防止）
+  //                     [2026-07-12] 乗算方式・スリット補正から変更。表示は「スリット補正」枠を流用。
+  //   それ以外:         従来通り加算ボーナス方式（BONUS_BASE_TENJI × wTenji で希釈）。スリット分は撤廃。
   ranked.forEach(b => {
     // [2026-06-27 修正] tenkaiBonus は旧 (tenkaiCoef-1)*BONUS_BASE_TENKAI 方式から
     // 差分(_tenkaiDiff)を直接使う方式に変更。TENKAI_DIFF_GAIN は旧方式との
@@ -1305,27 +1222,22 @@ function renderBuy(rno){
     const TENKAI_DIFF_GAIN = 1.0;
     const tenkaiBonus = TENKAI_DIFF_GAIN * b._tenkaiDiff * wTenkai;
 
-    // スリットボーナス: 6艇相対乖離率 × 重み（クリップ付き）
-    const clippedSlitDev = Math.min(SLIT_REL_CLIP, Math.max(-SLIT_REL_CLIP, b._slitRelDev ?? 0));
-    const slitBonus = SLIT_BONUS_BASE * clippedSlitDev * wSlit;
-
-    const preTenjiScore = Math.max(0.001, b._baseNorm + tenkaiBonus + slitBonus);
+    const preScore = Math.max(0.001, b._baseNorm + tenkaiBonus);
 
     if(isMeasuredTenjiVenue){
-      // ── 直接乗算方式（実測根拠あり）──
+      // ── タイム由来1着率(p1)を直接加算（実測根拠あり）──
       const [lo, hi] = TENJI_P1_CLIP_BY_COURSE[b.boat] ?? [0.85, 1.20];
-      const clippedCoef = Math.min(hi, Math.max(lo, b._tenjiCoef));
-      b._multi_score = preTenjiScore * clippedCoef;
-      b._tenjiCoefApplied = clippedCoef; // デバッグ・表示用
+      const clippedCoef = Math.min(hi, Math.max(lo, b._tenjiCoef)); // 1.0基準の係数としてクリップ
+      const tenjiAddend = clippedCoef - 1.0; // 加算するデルタ（例: +0.08 = +8%pt）
+      b._multi_score = Math.max(0.001, preScore + tenjiAddend);
+      // 「スリット補正」表示スロットを、このP1加算係数の表示に転用
+      b.display_slit = clippedCoef;
     } else {
       // ── 従来の加算ボーナス方式（実測根拠なし会場）──
       const tenjiBonus = BONUS_BASE_TENJI * (b._tenjiCoef - 1.0) * b._wTenjiCourse;
-      b._multi_score = Math.max(0.001, preTenjiScore + tenjiBonus);
-    }
-
-    // display_slit: 1.0基準の係数として保存（表示用）
-    if(hasTenji){
-      b.display_slit = Math.min(2.0, Math.max(0.5, 1.0 + clippedSlitDev * wSlit * 2));
+      b._multi_score = Math.max(0.001, preScore + tenjiBonus);
+      // 実測データがない会場は「スリット補正」表示なし（根拠のない値を出さない）
+      b.display_slit = null;
     }
   });
 
@@ -1793,7 +1705,7 @@ function renderBuy(rno){
       tenjiCorrCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
     }
 
-    // スリット補正列: 係数表示（▲1.08 / ▼0.82 形式）展示データありの場合のみ表示
+    // スリット補正列: [2026-07-12〜] 実測テーブル会場のタイム由来1着率(p1)加算係数を表示（▲1.08 / ▼0.82 形式）
     let slitCorrCell;
     if(hasTenji && bt.display_slit != null){
       const coef = bt.display_slit;
@@ -1949,7 +1861,7 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobに展開補正を加味して正規化し、コース別キャリブレーションまで適用した1着率（展示・スリット補正は含まない／合計100%）">基準</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）">展示補正</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="前艇とのST差・展示タイム差から捲り優位を判定（展示データありの場合のみ）">スリット補正</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-12〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島）のみ、タイム由来1着率(p1)の加算係数を表示。それ以外の会場は—">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示">3連対率</th>
         </tr></thead>
