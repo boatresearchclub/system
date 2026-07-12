@@ -1762,8 +1762,10 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
               const wNat    = (1 - personTrust);  // ② 修正: trTrust二重適用を排除
               const wTot    = wPerson + wNat;      // 常に1.0
               p2 = (personRate2 * wPerson + baseTR * wNat) / wTot;
+              try { _CALC2ND_FALLBACK_STATS.total++; _CALC2ND_FALLBACK_STATS.branchTRPerson++; } catch(_e) {}
             } else if(baseTR != null){
               p2 = baseTR;
+              try { _CALC2ND_FALLBACK_STATS.total++; _CALC2ND_FALLBACK_STATS.branchTROnly++; } catch(_e) {}
             } else {
               // [2026-07-12 追加] tenkai_remainingのrate2が欠損している場合、
               // place2_dist（dynamic_inn2place.jsが会場×勝ち艇別に実績集計した
@@ -1774,12 +1776,14 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
               const p2Dynamic = masterExt?.venue_stats?.[venue]?.place2_dist?.[wc]?.[sc] ?? null;
               if(p2Dynamic != null){
                 p2 = p2Dynamic;
+                try { _CALC2ND_FALLBACK_STATS.total++; _CALC2ND_FALLBACK_STATS.branchDynamic++; } catch(_e) {}
               } else {
                 // [2026-06-25] finalProb按分を平滑化
                 const bt = ranked2.find(r => r.boat === b.boat);
                 const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
                 const eqShare = 1.0 / (rawBoats.length - 1 || 1);
                 p2 = 0.25 * eqShare + 0.75 * fpShare;
+                try { _CALC2ND_FALLBACK_STATS.total++; _CALC2ND_FALLBACK_STATS.branchPure++; } catch(_e) {}
               }
             }
           } else {
@@ -1788,12 +1792,14 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             const p2Dynamic = masterExt?.venue_stats?.[venue]?.place2_dist?.[wc]?.[sc] ?? null;
             if(p2Dynamic != null){
               p2 = p2Dynamic;
+              try { _CALC2ND_FALLBACK_STATS.total++; _CALC2ND_FALLBACK_STATS.branchDynamic++; } catch(_e) {}
             } else {
               // [2026-06-25] finalProb按分を平滑化（tenkai_remainingデータなし）
               const bt = ranked2.find(r => r.boat === b.boat);
               const fpShare = bt ? (bt.final_prob ?? bt.tenkai_prob) / othersTotal : 0;
               const eqShare = 1.0 / (rawBoats.length - 1 || 1);
               p2 = 0.25 * eqShare + 0.75 * fpShare;
+              try { _CALC2ND_FALLBACK_STATS.total++; _CALC2ND_FALLBACK_STATS.branchPure++; } catch(_e) {}
             }
           }
 
@@ -1929,6 +1935,26 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
 //   - var 宣言のため analyzer.js が二重読込されても再宣言エラーにならない
 if (typeof _CALC3RD_FALLBACK_STATS === 'undefined') {
   var _CALC3RD_FALLBACK_STATS = { total: 0, branch1: 0, branch2: 0, branch3: 0, branch4a: 0, branch4b: 0 };
+}
+// [2026-07-13 計装追加] 2着計算(scenarioPlace2)の分岐内訳計測用カウンタ
+// branchTRPerson: tenkai_remaining+個人ブレンド / branchTROnly: tenkai_remainingのみ
+// branchDynamic: place2_distフォールバック使用 / branchPure: finalProb按分のみ(実測データ皆無)
+if (typeof _CALC2ND_FALLBACK_STATS === 'undefined') {
+  var _CALC2ND_FALLBACK_STATS = { total: 0, branchTRPerson: 0, branchTROnly: 0, branchDynamic: 0, branchPure: 0 };
+}
+function _resetCalc2ndFallbackStats() {
+  _CALC2ND_FALLBACK_STATS = { total: 0, branchTRPerson: 0, branchTROnly: 0, branchDynamic: 0, branchPure: 0 };
+}
+function _printCalc2ndFallbackStats() {
+  const s = _CALC2ND_FALLBACK_STATS;
+  if (!s.total) { console.log('[calc2nd計装] データなし'); return s; }
+  const pct = n => (n / s.total * 100).toFixed(1) + '%';
+  console.log(
+    `[calc2nd計装] total=${s.total} ` +
+    `TR+個人=${pct(s.branchTRPerson)} TRのみ=${pct(s.branchTROnly)} ` +
+    `place2_dist使用=${pct(s.branchDynamic)} finalProb按分のみ=${pct(s.branchPure)}`
+  );
+  return s;
 }
 function _resetCalc3rdFallbackStats() {
   _CALC3RD_FALLBACK_STATS = { total: 0, branch1: 0, branch2: 0, branch3: 0, branch4a: 0, branch4b: 0 };
