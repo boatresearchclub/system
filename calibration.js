@@ -1196,7 +1196,46 @@
       push([s.course, s.count, _pctStr(s.estAvg), _pctStr(s.actual), diff != null ? _pctStr(diff) : '']);
     });
 
-    // ── ④ 30〜40%帯 過大評価 内訳調査 ──
+    // ── ④ 会場×コース別 1着率の精度（予測 vs 実績）──
+    const venueCourseStats = calcCalibrationByVenueCourse(all);
+    section('④ 会場×コース別 1着率の精度（予測 vs 実績）');
+    Object.keys(venueCourseStats).sort().forEach(v => {
+      blank();
+      push([v]);
+      push(['枠', '件数', '推定', '実績', '差']);
+      venueCourseStats[v].forEach(s => {
+        push([s.course, s.count, _pctStr(s.estAvg), _pctStr(s.actual), s.diff != null ? _pctStr(s.diff) : '']);
+      });
+    });
+
+    // ── ⑤ 1着枠番別 2着・3着 予測精度 ──
+    const place23ByCourse = calcPlace23ByWinningCourse(all);
+    section('⑤ 1着枠番別 2着・3着 予測精度（その枠が1着だった時に限定）');
+    push(['1着枠', '区分', '件数', '1位的中', '2位以内', '3位以内', '買い目外']);
+    [1, 2, 3, 4, 5, 6].forEach(c => {
+      const s2 = place23ByCourse.place2[c];
+      const s3 = place23ByCourse.place3[c];
+      push([c, '2着', s2 ? s2.total : '', s2 ? _pctStr(s2.rank1Rate) : '', s2 ? _pctStr(s2.top2Rate) : '', s2 ? _pctStr(s2.top3Rate) : '', s2 ? _pctStr(s2.missRate) : '']);
+      push([c, '3着', s3 ? s3.total : '', s3 ? _pctStr(s3.rank1Rate) : '', s3 ? _pctStr(s3.top2Rate) : '', s3 ? _pctStr(s3.top3Rate) : '', s3 ? _pctStr(s3.missRate) : '']);
+    });
+
+    // ── ⑥ 会場別×1着枠番別 2着・3着 予測精度 ──
+    const place23ByVenue = calcPlace23ByVenueCourse(all);
+    section('⑥ 会場別×1着枠番別 2着・3着 予測精度');
+    Object.keys(place23ByVenue).sort().forEach(v => {
+      blank();
+      push([v]);
+      push(['1着枠', '区分', '件数', '1位的中', '2位以内', '3位以内', '買い目外']);
+      const { place2, place3 } = place23ByVenue[v];
+      [1, 2, 3, 4, 5, 6].forEach(c => {
+        const s2 = place2[c];
+        const s3 = place3[c];
+        push([c, '2着', s2 ? s2.total : '', s2 ? _pctStr(s2.rank1Rate) : '', s2 ? _pctStr(s2.top2Rate) : '', s2 ? _pctStr(s2.top3Rate) : '', s2 ? _pctStr(s2.missRate) : '']);
+        push([c, '3着', s3 ? s3.total : '', s3 ? _pctStr(s3.rank1Rate) : '', s3 ? _pctStr(s3.top2Rate) : '', s3 ? _pctStr(s3.top3Rate) : '', s3 ? _pctStr(s3.missRate) : '']);
+      });
+    });
+
+    // ── ⑦ 30〜40%帯 過大評価 内訳調査 ──
     const band = all.filter(r => r.hitProbEst != null && r.hitProbEst >= 0.30 && r.hitProbEst < 0.40);
     if (band.length > 0) {
       const totalBand = band.length;
@@ -1224,7 +1263,7 @@
         if (r.isHit) evMap[key].hits++;
       });
 
-      section('④ 30〜40%帯 過大評価 内訳調査');
+      section('⑦ 30〜40%帯 過大評価 内訳調査');
       push(['推定30〜40%の件数', totalBand, '実績的中率', _pctStr(hitsBand / totalBand), '目標', '35%']);
       blank();
       push(['会場別', '件数', '実績']);
@@ -1245,11 +1284,11 @@
       });
     }
 
-    // ── ⑤ 2着・3着 データvs買い目 切り分け診断 ──
+    // ── ⑧ 2着・3着 データvs買い目 切り分け診断 ──
     const valid2 = all.filter(r => r.actual2nd != null && r.pred2ndRank != null);
     const valid3 = all.filter(r => r.actual3rd != null && r.pred3rdRank != null);
     if (valid2.length > 0 || valid3.length > 0) {
-      section('⑤ 2着・3着 データvs買い目 切り分け診断');
+      section('⑧ 2着・3着 データvs買い目 切り分け診断');
 
       function rankDist(arr, rankField) {
         const dist = {};
@@ -1309,10 +1348,10 @@
         .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
     }
 
-    // ── ⑥ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）──
+    // ── ⑨ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）──
     const kimariStats = calcKimariCalibration(all);
     if (kimariStats) {
-      section('⑥ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
+      section('⑨ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
       push(['件数(実績・予測とも取得できたレース)', kimariStats.total]);
       push(['軸艇一致件数(predKimariBoat=actual1st)', kimariStats.boatMatchTotal, _pctStr(kimariStats.boatMatchRate)]);
       push(['軸艇一致時の決まり手的中率', kimariStats.typeAccuracyGivenBoatMatch != null ? _pctStr(kimariStats.typeAccuracyGivenBoatMatch) : '(軸艇一致0件)']);
