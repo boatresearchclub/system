@@ -1082,6 +1082,22 @@
     return '\uFEFF' + lines.join('\r\n'); // BOM付き（Excelで文字化けしないように）
   }
 
+  // ── [2026-07-13 追加] デバッグ用: predKimari確認 ──
+  // _lastAllResults はこのIIFE内のローカル変数のためコンソールから直接見えない。
+  // 確認用に1件サンプルを返す公開関数を追加（既存ロジックには無関係）。
+  window._debugKimariSample = function () {
+    if (!_lastAllResults || _lastAllResults.length === 0) {
+      console.log('[calibration] _lastAllResults が空です。先にパネルを描画してください。');
+      return null;
+    }
+    const sample = _lastAllResults.find(r => r.predKimariType != null);
+    const total = _lastAllResults.length;
+    const withPred = _lastAllResults.filter(r => r.predKimariType != null).length;
+    console.log(`[calibration] 全${total}件中 predKimariType あり: ${withPred}件`);
+    console.log(sample || '（predKimariType を持つレースが1件もありません）');
+    return sample;
+  };
+
   // ── 公開: CSVダウンロードを実行 ──
   // ボタンから window._downloadCalibrationCSV() として呼ばれる。
   // 引数なし＝常に「直近に描画したパネルのデータ」を書き出す。
