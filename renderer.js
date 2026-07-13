@@ -1231,20 +1231,28 @@ function renderBuy(rno){
       // ── タイム由来1着率(p1)を直接加算（実測根拠あり）──
       const [lo, hi] = TENJI_P1_CLIP_BY_COURSE[b.boat] ?? [0.85, 1.20];
       const rawCoef      = b._tenjiCoef; // クリップ前（テーブル参照時の[0.5,2.0]クランプのみ済み）
-      const clippedCoef  = Math.min(hi, Math.max(lo, rawCoef)); // コース別クリップ適用後
-      const tenjiAddend  = clippedCoef - 1.0; // 加算するデルタ（例: +0.08 = +8%pt）
+      // [2026-07-13 修正] クリップ判定をpt空間で直接行う。
+      //   旧実装は係数空間(1+p1/100)でクリップしてから(-1)*100で戻していたため、
+      //   浮動小数点の往復誤差でクリップ非発動時でも表示が生値と1桁ズレる不具合があった
+      //   （例: rawP1=11.75 → 展示補正=11.7 / スリット補正=11.8 に見えてしまう）。
+      //   pt空間で完結させることで、非クリップ時は raw と完全に同じ値になることを保証する。
+      const rawPt        = b._tenjiRawP1 ?? ((rawCoef - 1.0) * 100);
+      const loPt         = (lo - 1.0) * 100;
+      const hiPt         = (hi - 1.0) * 100;
+      const clippedPt    = Math.min(hiPt, Math.max(loPt, rawPt)); // コース別クリップ適用後（pt）
+      const tenjiAddend  = clippedPt / 100; // 加算するデルタ（確率空間）
       b._multi_score = Math.max(0.001, preScore + tenjiAddend);
       // 「スリット補正」表示スロットを、コース別クリップでどれだけ削られたかの診断表示に転用
       // （展示補正の（）が既にclippedCoef由来の実効値を出しているため、ここは重複させず
       //   「クリップされていなければ本来いくつだったか」という別情報のみ持たせる）
-      b.display_slit = clippedCoef; // 既存互換用に保持（内部利用のみ）
-      const clipTrimPt = (rawCoef - clippedCoef) * 100; // 正=クリップで下振れ抑制／負=クリップで下限持ち上げ
+      b.display_slit = 1.0 + tenjiAddend; // 既存互換用に保持（内部利用のみ）
+      const clipTrimPt = rawPt - clippedPt; // 正=クリップで下振れ抑制／負=クリップで下限持ち上げ
       b.display_tenji_clip_pt   = clipTrimPt;
       b.display_tenji_raw_coef  = rawCoef;
       // [2026-07-13] テーブル参照直後の生の加減値(pt)。[0.5,2.0]クランプすら通っていない真の実測値。
-      b.display_tenji_table_pt  = b._tenjiRawP1;
+      b.display_tenji_table_pt  = rawPt;
       // 展示補正セルに（）併記する実際の1着率加減値（renorm前のpt換算・目安値）
-      b.display_tenji_addend_pt = tenjiAddend * 100;
+      b.display_tenji_addend_pt = clippedPt;
     } else {
       // ── 従来の加算ボーナス方式（実測根拠なし会場）──
       const tenjiBonus = BONUS_BASE_TENJI * (b._tenjiCoef - 1.0) * b._wTenjiCourse;
