@@ -582,83 +582,6 @@
     return out;
   }
 
-  // コース別勝率キャリブレーション HTML生成
-  function buildCoursCalibHTML(courseStats, totalAll) {
-    const maxBar = 100; // px（バーの最大幅px）
-    const maxProb = 0.7; // バーのスケール最大値（70%で満幅）
-    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
-    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
-
-    const rows = courseStats.map(s => {
-      if (s.count === 0) {
-        return `
-          <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:4px 6px;white-space:nowrap">
-              <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${courseBg[s.course]};color:${courseText[s.course]};font-size:10px;font-weight:700">${s.course}</span>
-            </td>
-            <td colspan="4" style="padding:4px 6px;font-size:10px;color:var(--text3);text-align:center">—</td>
-          </tr>`;
-      }
-
-      const actPct  = s.actual  != null ? (s.actual  * 100).toFixed(1) + '%' : '—';
-      const estPct  = s.estAvg  != null ? (s.estAvg  * 100).toFixed(1) + '%' : '—';
-      const actWidth = s.actual  != null ? Math.round(Math.min(s.actual  / maxProb, 1) * maxBar) : 0;
-      const estWidth = s.estAvg  != null ? Math.round(Math.min(s.estAvg  / maxProb, 1) * maxBar) : 0;
-      const diff    = (s.actual != null && s.estAvg != null) ? s.actual - s.estAvg : null;
-      const diffStr = diff != null
-        ? (diff >= 0 ? '+' : '') + (diff * 100).toFixed(1) + '%'
-        : '—';
-      const diffColor = diff == null           ? 'var(--text3)'
-                      : Math.abs(diff) <= 0.03  ? 'var(--green)'
-                      : Math.abs(diff) <= 0.07  ? 'var(--orange)'
-                      : 'var(--red,#e05)';
-      const lowN = s.count < 50;
-      // 実績 > 推定なら過小評価（緑）、実績 < 推定なら過大評価（橙）
-      const barColor = (diff == null || Math.abs(diff) < 0.01) ? 'var(--green)'
-                     : diff > 0 ? 'var(--green)' : 'var(--orange)';
-
-      return `
-        <tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:4px 6px;white-space:nowrap">
-            <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${courseBg[s.course]};color:${courseText[s.course]};font-size:10px;font-weight:700">${s.course}</span>
-            <span style="font-size:9px;color:var(--text3);margin-left:2px">${s.count}R</span>
-          </td>
-          <td style="padding:4px 6px;min-width:${maxBar}px">
-            <div style="position:relative;height:14px;background:var(--bg2);border-radius:2px;overflow:hidden">
-              <div style="position:absolute;left:0;top:0;height:100%;width:${estWidth}px;background:var(--border);border-radius:2px;opacity:0.7"></div>
-              <div style="position:absolute;left:0;top:0;height:100%;width:${actWidth}px;background:${barColor};border-radius:2px;opacity:0.85"></div>
-            </div>
-          </td>
-          <td style="padding:4px 6px;text-align:right;font-size:10px;color:var(--text3)">${estPct}</td>
-          <td style="padding:4px 6px;text-align:right;font-size:11px;font-weight:700;color:var(--text)">${actPct}${lowN ? '<span style="font-size:9px;color:var(--text3)">*</span>' : ''}</td>
-          <td style="padding:4px 6px;text-align:right;font-size:10px;font-weight:700;color:${diffColor}">${diffStr}</td>
-        </tr>`;
-    }).join('');
-
-    return `
-      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
-        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🚤 コース別 勝率キャリブレーション</div>
-        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">枠番別 予測勝率 vs 実際の勝率（計${totalAll}件）</div>
-        <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr style="border-bottom:1px solid var(--border)">
-                <th style="padding:3px 6px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">枠</th>
-                <th style="padding:3px 6px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">バー</th>
-                <th style="padding:3px 6px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">推定</th>
-                <th style="padding:3px 6px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">実績</th>
-                <th style="padding:3px 6px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">差</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <div style="font-size:9px;color:var(--text3);margin-top:4px">
-          灰バー=推定勝率、色バー=実勝率　緑=過小評価、橙=過大評価　* N&lt;50の参考値
-        </div>
-      </div>`;
-  }
-
   // ── [2026-07-13 追加] 会場×コース別 1着率の精度 HTML生成 ──
   function buildVenueCourseHTML(venueCourseStats) {
     const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
@@ -726,60 +649,6 @@
         </div>
         <div style="font-size:9px;color:var(--text3);margin-top:4px">
           緑=差±3%以内、橙=±7%以内、赤=それ以上　* N&lt;30の参考値
-        </div>
-      </div>`;
-  }
-
-  // ── [2026-07-13 追加] 1着枠番別 2着・3着予測精度 HTML生成 ──
-  function buildPlace23ByCourseHTML(place23) {
-    const { place2, place3 } = place23;
-    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
-    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
-
-    function pctOrDash(v) { return v != null ? (v * 100).toFixed(0) + '%' : '—'; }
-
-    function rowsFor(stats) {
-      return [1,2,3,4,5,6].map(c => {
-        const s = stats[c];
-        const badge = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>`;
-        if (!s) {
-          return `<tr style="border-bottom:1px solid var(--border)"><td style="padding:3px 5px">${badge}</td><td colspan="4" style="padding:3px 5px;font-size:10px;color:var(--text3);text-align:center">データ不足</td></tr>`;
-        }
-        return `
-          <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:3px 5px;white-space:nowrap">${badge} <span style="font-size:9px;color:var(--text3)">${s.total}R</span></td>
-            <td style="padding:3px 5px;text-align:right;font-size:10px;font-weight:700;color:var(--text)">${pctOrDash(s.rank1Rate)}</td>
-            <td style="padding:3px 5px;text-align:right;font-size:10px;color:var(--text2)">${pctOrDash(s.top2Rate)}</td>
-            <td style="padding:3px 5px;text-align:right;font-size:10px;color:var(--text2)">${pctOrDash(s.top3Rate)}</td>
-            <td style="padding:3px 5px;text-align:right;font-size:10px;color:var(--text3)">${pctOrDash(s.missRate)}</td>
-          </tr>`;
-      }).join('');
-    }
-
-    function tableFor(title, stats) {
-      return `
-        <div style="font-size:10px;font-weight:700;color:var(--text3);margin:6px 0 2px">${title}</div>
-        <table style="width:100%;border-collapse:collapse">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border)">
-              <th style="padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">1着枠</th>
-              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">1位的中</th>
-              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">2位以内</th>
-              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">3位以内</th>
-              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">買い目外</th>
-            </tr>
-          </thead>
-          <tbody>${rowsFor(stats)}</tbody>
-        </table>`;
-    }
-
-    return `
-      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
-        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🎯 1着枠番別 2着・3着予測精度</div>
-        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:6px">「その枠番が1着だった時」に限定した予測精度</div>
-        <div style="overflow-x:auto">
-          ${tableFor('2着予測', place2)}
-          ${tableFor('3着予測', place3)}
         </div>
       </div>`;
   }
@@ -1003,35 +872,8 @@
     const diag2 = diagnose(disc2, r2_1, '2着');
     const diag3 = diagnose(disc3, r3_1, '3着');
 
-    // ── 1着コース別の2着1位的中率 ──
-    // 逃げ（1着=1枠）とそれ以外で分けて見る
-    function courseGroup(r) {
-      if (!r.actualResult) return null;
-      const first = parseInt((r.actualResult + '').split(/[-－−]/)[0]);
-      return first === 1 ? '1コース(逃げ系)' : `${first}コース`;
-    }
-    const byWinner2 = {};
-    valid2.forEach(r => {
-      const g = courseGroup(r);
-      if (!g) return;
-      if (!byWinner2[g]) byWinner2[g] = { total: 0, rank1: 0 };
-      byWinner2[g].total++;
-      if (r.pred2ndRank === 1) byWinner2[g].rank1++;
-    });
-    const courseRows2 = Object.entries(byWinner2)
-      .sort((a, b) => b[1].total - a[1].total)
-      .slice(0, 6)
-      .map(([g, s]) => {
-        const rate = s.rank1 / s.total;
-        const color = rate >= 0.40 ? 'var(--green)' : rate >= 0.28 ? 'var(--orange)' : 'var(--red,#e05)';
-        return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:3px 5px;font-size:10px">${g}</td>
-          <td style="padding:3px 5px;font-size:10px;text-align:right;color:var(--text3)">${s.total}件</td>
-          <td style="padding:3px 5px;font-size:10px;text-align:right;font-weight:700;color:${color}">${(rate*100).toFixed(0)}%</td>
-        </tr>`;
-      }).join('');
-
     // ── レース番号別の2着1位的中率 ──
+    // （1着コース別の内訳は 🎯 会場別×1着枠番別 パネルに統合済みのためここでは廃止）
     const byRno2 = {};
     valid2.forEach(r => {
       const g = r.rno != null ? `${r.rno}R` : null;
@@ -1103,30 +945,17 @@
             </div>
           </div>
 
-          <!-- 1着コース別・レース番号別 -->
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div>
-              <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:4px">1着コース別 2着1位的中率</div>
-              <table style="width:100%;border-collapse:collapse">
-                <thead><tr>
-                  <th style="${thStyle}">1着</th>
-                  <th style="${thStyle};text-align:right">件数</th>
-                  <th style="${thStyle};text-align:right">的中率</th>
-                </tr></thead>
-                <tbody>${courseRows2}</tbody>
-              </table>
-            </div>
-            <div>
-              <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:4px">レース番号別 2着1位的中率</div>
-              <table style="width:100%;border-collapse:collapse">
-                <thead><tr>
-                  <th style="${thStyle}">R</th>
-                  <th style="${thStyle};text-align:right">件数</th>
-                  <th style="${thStyle};text-align:right">的中率</th>
-                </tr></thead>
-                <tbody>${rnoRows2}</tbody>
-              </table>
-            </div>
+          <!-- レース番号別 -->
+          <div>
+            <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:4px">レース番号別 2着1位的中率</div>
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th style="${thStyle}">R</th>
+                <th style="${thStyle};text-align:right">件数</th>
+                <th style="${thStyle};text-align:right">的中率</th>
+              </tr></thead>
+              <tbody>${rnoRows2}</tbody>
+            </table>
           </div>
 
           <div style="font-size:9px;color:var(--text3);margin-top:6px">
@@ -1187,18 +1016,9 @@
     push(['3位以内', p2 ? _pctStr(p2.top3Rate)  : '', p3 ? _pctStr(p3.top3Rate)  : '']);
     push(['買い目外', p2 ? _pctStr(p2.missRate) : '', p3 ? _pctStr(p3.missRate) : '']);
 
-    // ── ③ コース別勝率キャリブレーション ──
-    const courseStats = calcCalibrationByCourse(all);
-    section('③ コース別 勝率キャリブレーション（枠番別 予測勝率 vs 実際の勝率）');
-    push(['枠', '件数', '推定', '実績', '差']);
-    courseStats.forEach(s => {
-      const diff = (s.actual != null && s.estAvg != null) ? s.actual - s.estAvg : null;
-      push([s.course, s.count, _pctStr(s.estAvg), _pctStr(s.actual), diff != null ? _pctStr(diff) : '']);
-    });
-
-    // ── ④ 会場×コース別 1着率の精度（予測 vs 実績）──
+    // ── ③ 会場×コース別 1着率の精度（予測 vs 実績）──
     const venueCourseStats = calcCalibrationByVenueCourse(all);
-    section('④ 会場×コース別 1着率の精度（予測 vs 実績）');
+    section('③ 会場×コース別 1着率の精度（予測 vs 実績）');
     Object.keys(venueCourseStats).sort().forEach(v => {
       blank();
       push([v]);
@@ -1208,20 +1028,9 @@
       });
     });
 
-    // ── ⑤ 1着枠番別 2着・3着 予測精度 ──
-    const place23ByCourse = calcPlace23ByWinningCourse(all);
-    section('⑤ 1着枠番別 2着・3着 予測精度（その枠が1着だった時に限定）');
-    push(['1着枠', '区分', '件数', '1位的中', '2位以内', '3位以内', '買い目外']);
-    [1, 2, 3, 4, 5, 6].forEach(c => {
-      const s2 = place23ByCourse.place2[c];
-      const s3 = place23ByCourse.place3[c];
-      push([c, '2着', s2 ? s2.total : '', s2 ? _pctStr(s2.rank1Rate) : '', s2 ? _pctStr(s2.top2Rate) : '', s2 ? _pctStr(s2.top3Rate) : '', s2 ? _pctStr(s2.missRate) : '']);
-      push([c, '3着', s3 ? s3.total : '', s3 ? _pctStr(s3.rank1Rate) : '', s3 ? _pctStr(s3.top2Rate) : '', s3 ? _pctStr(s3.top3Rate) : '', s3 ? _pctStr(s3.missRate) : '']);
-    });
-
-    // ── ⑥ 会場別×1着枠番別 2着・3着 予測精度 ──
+    // ── ④ 会場別×1着枠番別 2着・3着 予測精度 ──
     const place23ByVenue = calcPlace23ByVenueCourse(all);
-    section('⑥ 会場別×1着枠番別 2着・3着 予測精度');
+    section('④ 会場別×1着枠番別 2着・3着 予測精度');
     Object.keys(place23ByVenue).sort().forEach(v => {
       blank();
       push([v]);
@@ -1235,7 +1044,7 @@
       });
     });
 
-    // ── ⑦ 30〜40%帯 過大評価 内訳調査 ──
+    // ── ⑤ 30〜40%帯 過大評価 内訳調査 ──
     const band = all.filter(r => r.hitProbEst != null && r.hitProbEst >= 0.30 && r.hitProbEst < 0.40);
     if (band.length > 0) {
       const totalBand = band.length;
@@ -1263,7 +1072,7 @@
         if (r.isHit) evMap[key].hits++;
       });
 
-      section('⑦ 30〜40%帯 過大評価 内訳調査');
+      section('⑤ 30〜40%帯 過大評価 内訳調査');
       push(['推定30〜40%の件数', totalBand, '実績的中率', _pctStr(hitsBand / totalBand), '目標', '35%']);
       blank();
       push(['会場別', '件数', '実績']);
@@ -1284,11 +1093,11 @@
       });
     }
 
-    // ── ⑧ 2着・3着 データvs買い目 切り分け診断 ──
+    // ── ⑥ 2着・3着 データvs買い目 切り分け診断 ──
     const valid2 = all.filter(r => r.actual2nd != null && r.pred2ndRank != null);
     const valid3 = all.filter(r => r.actual3rd != null && r.pred3rdRank != null);
     if (valid2.length > 0 || valid3.length > 0) {
-      section('⑧ 2着・3着 データvs買い目 切り分け診断');
+      section('⑥ 2着・3着 データvs買い目 切り分け診断');
 
       function rankDist(arr, rankField) {
         const dist = {};
@@ -1312,27 +1121,8 @@
                           total3 ? c3 : '', total3 ? _pctStr(c3 / total3) : '']);
       });
 
-      // 1着コース別 2着1位的中率
-      function courseGroup(r) {
-        if (!r.actualResult) return null;
-        const first = parseInt((r.actualResult + '').split(/[-－−]/)[0]);
-        return first === 1 ? '1コース(逃げ系)' : `${first}コース`;
-      }
-      const byWinner2 = {};
-      valid2.forEach(r => {
-        const g = courseGroup(r);
-        if (!g) return;
-        if (!byWinner2[g]) byWinner2[g] = { total: 0, rank1: 0 };
-        byWinner2[g].total++;
-        if (r.pred2ndRank === 1) byWinner2[g].rank1++;
-      });
-      blank();
-      push(['1着コース別 2着1位的中率', '件数', '的中率']);
-      Object.entries(byWinner2)
-        .sort((a, b) => b[1].total - a[1].total)
-        .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
-
       // レース番号別 2着1位的中率
+      // （1着コース別の内訳は③④の会場×コース系パネルに統合済みのためここでは廃止）
       const byRno2 = {};
       valid2.forEach(r => {
         const g = r.rno != null ? `${r.rno}R` : null;
@@ -1348,10 +1138,10 @@
         .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
     }
 
-    // ── ⑨ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）──
+    // ── ⑦ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）──
     const kimariStats = calcKimariCalibration(all);
     if (kimariStats) {
-      section('⑨ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
+      section('⑦ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
       push(['件数(実績・予測とも取得できたレース)', kimariStats.total]);
       push(['軸艇一致件数(predKimariBoat=actual1st)', kimariStats.boatMatchTotal, _pctStr(kimariStats.boatMatchRate)]);
       push(['軸艇一致時の決まり手的中率', kimariStats.typeAccuracyGivenBoatMatch != null ? _pctStr(kimariStats.typeAccuracyGivenBoatMatch) : '(軸艇一致0件)']);
@@ -1589,11 +1379,10 @@
       const violations = countMonotonicViolations(winProbBinStats);
       const p2stats    = calcPlace2Calibration(all);
       const p3stats    = calcPlace3Calibration(all);
-      // コース別キャリブレーション（パネル表示用：補正済み値）
-      const courseStats = calcCalibrationByCourse(all);
-      // [2026-07-13 追加] 会場×コース別1着率、1着枠番別2/3着予測精度
+      // [2026-07-13 追加] 会場×コース別1着率、会場別×1着枠番別2/3着予測精度
+      // （コース単体版・1着枠番単体版パネルは会場分割版に統合したため表示は廃止。
+      //   ただし calcCalibrationByCourse は下の補正テーブル更新で引き続き使用）
       const venueCourseStats = calcCalibrationByVenueCourse(all);
-      const place23ByCourse  = calcPlace23ByWinningCourse(all);
       const place23ByVenue   = calcPlace23ByVenueCourse(all);
 
       // ―― ③ コース別補正テーブル更新には1号艇の「生の推定値」を使用する ――
@@ -1643,8 +1432,6 @@
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
             ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
             ${buildPlace2CalibHTML(p2stats, p3stats)}
-            <div class="admin-only">${buildCoursCalibHTML(courseStats, all.length)}</div>
-            <div class="admin-only">${buildPlace23ByCourseHTML(place23ByCourse)}</div>
             <div class="admin-only">${buildPlace23VenueCourseHTML(place23ByVenue)}</div>
             <div class="admin-only">${buildVenueCourseHTML(venueCourseStats)}</div>
           </div>
