@@ -69,11 +69,16 @@
    */
   function _isSaneCalibPoints(points) {
     if (!Array.isArray(points) || points.length < 3) return false;
-    for (const pt of points) {
+    for (let i = 0; i < points.length; i++) {
+      const pt = points[i];
       if (!Array.isArray(pt) || pt.length < 2) return false;
       const [x, y] = pt;
       if (typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y)) return false;
       if (x < 0 || x > 1 || y < 0 || y > 1) return false;
+      // [2026-07-14 修正] 先頭・末尾は [0,0] / [1, 実測値] のフラット外挿点であり、
+      // 末尾は必ず x=1 になるため崩壊判定の対象から除外する（判定は実測点のみ）。
+      const isEndpoint = (i === 0 || i === points.length - 1);
+      if (isEndpoint) continue;
       // 高確率帯で実績が崩壊している点が含まれていたらテーブル全体を不採用にする
       if (x >= HIGH_PROB_BIN_MIN && y <= EXTREME_LOW_ACTUAL_THRESH) return false;
     }

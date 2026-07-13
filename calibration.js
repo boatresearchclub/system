@@ -1410,11 +1410,6 @@
         // calibrateCourse1Prob 側が全国平均に自動フォールバックする）。
         const venueCourseStatsRaw = calcCalibrationByVenueCourse(allRawCourse);
         if (typeof updateVenueCourse1CalibPoints === 'function') updateVenueCourse1CalibPoints(venueCourseStatsRaw);
-
-        // [2026-07-13 追加] 会場別 2〜6号艇コース補正テーブルの学習。
-        // 1コースと同じ venueCourseStatsRaw（会場×コース単位の生値集計）を再利用し、
-        // course===2〜6 の要素で VENUE_COURSE_OTHER_CALIB_POINTS を更新する。
-        if (typeof updateVenueCourseOtherCalibPoints === 'function') updateVenueCourseOtherCalibPoints(venueCourseStatsRaw);
       } catch (_ccErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
 
       // ―― ④ 2〜6号艇の補正テーブル更新には各艇の「生の推定値」を使用する ――
@@ -1435,6 +1430,14 @@
         });
         const courseBinStatsRaw = calcWinProbCalibrationByCourse(allRawOther);
         if (typeof updateCourseOtherCalibPoints === 'function') updateCourseOtherCalibPoints(courseBinStatsRaw);
+
+        // [2026-07-14 修正] 会場別 2〜6号艇コース補正テーブルの学習。
+        // ③ブロックでは allRawCourse（1コースのみ生値化）を誤って再利用しており、
+        // 2〜6号艇が既に全国補正済みの値から学習する二重補正バグになっていた。
+        // 正しくは、このブロックで作られている allRawOther（2〜6号艇も生値化）を
+        // 会場×コース単位で集計し直して使う。
+        const venueCourseStatsOtherRaw = calcCalibrationByVenueCourse(allRawOther);
+        if (typeof updateVenueCourseOtherCalibPoints === 'function') updateVenueCourseOtherCalibPoints(venueCourseStatsOtherRaw);
       } catch (_ccoErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
 
       container.innerHTML = `
