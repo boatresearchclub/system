@@ -116,6 +116,53 @@
   }
 
   // ══════════════════════════════════════════════════════════════════
+  // [2026-07-13 追加] 会場×コース別 1着率
+  // ──────────────────────────────────────────────────────────────────
+  // 戻り値: { 会場名: [ {course, count, total, actual}, ... course1〜6 ], ... }
+  function calcCalibrationByVenueCourse(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const venueMap = {};
+    (results || []).forEach(r => {
+      const winner = _getWinnerCourse(r);
+      if (winner == null) return;
+      const v = r.venue || '不明';
+      if (!venueMap[v]) {
+        venueMap[v] = { _total: 0 };
+        courses.forEach(c => venueMap[v][c] = 0);
+      }
+      venueMap[v][winner] = (venueMap[v][winner] || 0) + 1;
+      venueMap[v]._total++;
+    });
+
+    const out = {};
+    Object.entries(venueMap).forEach(([v, courseMap]) => {
+      const total = courseMap._total || 0;
+      out[v] = courses.map(c => {
+        const count = courseMap[c] || 0;
+        return { course: c, count, total, actual: total > 0 ? count / total : null };
+      });
+    });
+    return out;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-13 追加] コース別（1着艇の枠番別）2着・3着 予測精度
+  // ──────────────────────────────────────────────────────────────────
+  // calcPlace2/3Calibration を「1着になった枠番」ごとに分割したもの。
+  // 例: 1号艇が1着だったレースだけを集めて、2着予測が当たっていたか集計。
+  // 戻り値: { place2: {1:{...},...,6:{...}}, place3: {同様} }
+  function calcPlace23ByWinningCourse(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const out2 = {}, out3 = {};
+    courses.forEach(c => {
+      const subset = (results || []).filter(r => r.actual1st === c);
+      out2[c] = calcPlace2Calibration(subset);
+      out3[c] = calcPlace3Calibration(subset);
+    });
+    return { place2: out2, place3: out3 };
+  }
+
+  // ══════════════════════════════════════════════════════════════════
   // 決まり手 calibration [2026-07-13 追加]
   // ──────────────────────────────────────────────────────────────────
   // predKimariBoat/predKimariType: computeScenCombosWithEV が返す
@@ -581,6 +628,112 @@
         </div>
         <div style="font-size:9px;color:var(--text3);margin-top:4px">
           灰バー=推定勝率、色バー=実勝率　緑=過小評価、橙=過大評価　* N&lt;50の参考値
+        </div>
+      </div>`;
+  }
+
+  // ── [2026-07-13 追加] 会場×コース別 1着率 HTML生成 ──
+  function buildVenueCourseHTML(venueCourseStats) {
+    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
+    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
+    const venues = Object.keys(venueCourseStats).sort();
+    if (venues.length === 0) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center">🏟️ 会場×コース別 1着率</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.5rem 0">データ不足</div>
+        </div>`;
+    }
+
+    const headCells = [1,2,3,4,5,6].map(c =>
+      `<th style="padding:3px 5px;text-align:center;font-size:9px;color:var(--text3);font-weight:500">
+         <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>
+       </th>`).join('');
+
+    const rows = venues.map(v => {
+      const rows6 = venueCourseStats[v];
+      const total = rows6[0]?.total || 0;
+      const cells = rows6.map(s => {
+        const pct = s.actual != null ? (s.actual * 100).toFixed(1) + '%' : '—';
+        return `<td style="padding:3px 5px;text-align:center;font-size:10px;font-weight:${s.course === 1 ? 700 : 500};color:var(--text)">${pct}</td>`;
+      }).join('');
+      return `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 5px;font-size:10px;white-space:nowrap">${v}</td>
+          <td style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3)">${total}R</td>
+          ${cells}
+        </tr>`;
+    }).join('');
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🏟️ 会場×コース別 1着率</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">会場ごとの枠番別勝率</div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">会場</th>
+                <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">件数</th>
+                ${headCells}
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  // ── [2026-07-13 追加] 1着枠番別 2着・3着予測精度 HTML生成 ──
+  function buildPlace23ByCourseHTML(place23) {
+    const { place2, place3 } = place23;
+    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
+    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
+
+    function pctOrDash(v) { return v != null ? (v * 100).toFixed(0) + '%' : '—'; }
+
+    function rowsFor(stats) {
+      return [1,2,3,4,5,6].map(c => {
+        const s = stats[c];
+        const badge = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>`;
+        if (!s) {
+          return `<tr style="border-bottom:1px solid var(--border)"><td style="padding:3px 5px">${badge}</td><td colspan="4" style="padding:3px 5px;font-size:10px;color:var(--text3);text-align:center">データ不足</td></tr>`;
+        }
+        return `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:3px 5px;white-space:nowrap">${badge} <span style="font-size:9px;color:var(--text3)">${s.total}R</span></td>
+            <td style="padding:3px 5px;text-align:right;font-size:10px;font-weight:700;color:var(--text)">${pctOrDash(s.rank1Rate)}</td>
+            <td style="padding:3px 5px;text-align:right;font-size:10px;color:var(--text2)">${pctOrDash(s.top2Rate)}</td>
+            <td style="padding:3px 5px;text-align:right;font-size:10px;color:var(--text2)">${pctOrDash(s.top3Rate)}</td>
+            <td style="padding:3px 5px;text-align:right;font-size:10px;color:var(--text3)">${pctOrDash(s.missRate)}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    function tableFor(title, stats) {
+      return `
+        <div style="font-size:10px;font-weight:700;color:var(--text3);margin:6px 0 2px">${title}</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+              <th style="padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">1着枠</th>
+              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">1位的中</th>
+              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">2位以内</th>
+              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">3位以内</th>
+              <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">買い目外</th>
+            </tr>
+          </thead>
+          <tbody>${rowsFor(stats)}</tbody>
+        </table>`;
+    }
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🎯 1着枠番別 2着・3着予測精度</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:6px">「その枠番が1着だった時」に限定した予測精度</div>
+        <div style="overflow-x:auto">
+          ${tableFor('2着予測', place2)}
+          ${tableFor('3着予測', place3)}
         </div>
       </div>`;
   }
@@ -1186,6 +1339,36 @@
     return el;
   }
 
+  // ── デバッグ用: コンソールから確認する ──
+  // 使い方: window._checkVenueCourse(allResultsScenAll)
+  //         window._checkPlace23ByCourse(allResultsScenAll)
+  window._checkVenueCourse = function (results) {
+    const data = calcCalibrationByVenueCourse(results);
+    Object.entries(data).forEach(([venue, rows]) => {
+      console.log(`── ${venue} (計${rows[0]?.total || 0}件) ──`);
+      console.table(rows.map(r => ({ course: r.course, count: r.count, actual: r.actual != null ? (r.actual * 100).toFixed(1) + '%' : '—' })));
+    });
+    return data;
+  };
+  window._checkPlace23ByCourse = function (results) {
+    const { place2, place3 } = calcPlace23ByWinningCourse(results);
+    console.log('── 2着予測精度（1着枠番別） ──');
+    console.table(Object.entries(place2).map(([c, s]) => s ? {
+      course: c, total: s.total,
+      rank1: (s.rank1Rate * 100).toFixed(1) + '%',
+      top2: (s.top2Rate * 100).toFixed(1) + '%',
+      top3: (s.top3Rate * 100).toFixed(1) + '%',
+    } : { course: c, total: 0 }));
+    console.log('── 3着予測精度（1着枠番別） ──');
+    console.table(Object.entries(place3).map(([c, s]) => s ? {
+      course: c, total: s.total,
+      rank1: (s.rank1Rate * 100).toFixed(1) + '%',
+      top2: (s.top2Rate * 100).toFixed(1) + '%',
+      top3: (s.top3Rate * 100).toFixed(1) + '%',
+    } : { course: c, total: 0 }));
+    return { place2, place3 };
+  };
+
   // ── 公開関数（これだけ既存コードから呼ぶ）──
   // 関数は常に定義する。admin でない場合は中でスキップするだけ。
   window._renderCalibrationPanel = function (allResultsScenAll) {
@@ -1261,6 +1444,9 @@
       const p3stats    = calcPlace3Calibration(all);
       // コース別キャリブレーション（パネル表示用：補正済み値）
       const courseStats = calcCalibrationByCourse(all);
+      // [2026-07-13 追加] 会場×コース別1着率、1着枠番別2/3着予測精度
+      const venueCourseStats = calcCalibrationByVenueCourse(all);
+      const place23ByCourse  = calcPlace23ByWinningCourse(all);
 
       // ―― ③ コース別補正テーブル更新には1号艇の「生の推定値」を使用する ――
       // hitProbEst と同じ自己崩壊ループ対策。r.boatProbsRaw[1] が
@@ -1310,6 +1496,8 @@
             ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
             ${buildPlace2CalibHTML(p2stats, p3stats)}
             <div class="admin-only">${buildCoursCalibHTML(courseStats, all.length)}</div>
+            <div class="admin-only">${buildPlace23ByCourseHTML(place23ByCourse)}</div>
+            <div class="admin-only">${buildVenueCourseHTML(venueCourseStats)}</div>
           </div>
           ${buildOverestimateAnalysisHTML(all)}
           ${buildDiagnosisHTML(all)}
