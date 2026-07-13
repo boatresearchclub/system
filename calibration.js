@@ -116,9 +116,12 @@
   }
 
   // ══════════════════════════════════════════════════════════════════
-  // [2026-07-13 追加] 会場×コース別 1着率
+  // [2026-07-13 追加] 会場×コース別 1着率の精度（予測 vs 実績）
   // ──────────────────────────────────────────────────────────────────
-  // 戻り値: { 会場名: [ {course, count, total, actual}, ... course1〜6 ], ... }
+  // calcCalibrationByCourse（コース単位）を会場でも分割したもの。
+  // 艇×レース単位で boatProbs（予測勝率）と実際の勝敗を集計し、
+  // 会場×コースごとに 推定平均(estAvg) と 実績(actual) の差を見る。
+  // 戻り値: { 会場名: [ {course, count, estAvg, actual, diff}, ... course1〜6 ], ... }
   function calcCalibrationByVenueCourse(results) {
     const courses = [1, 2, 3, 4, 5, 6];
     const venueMap = {};
@@ -127,19 +130,28 @@
       if (winner == null) return;
       const v = r.venue || '不明';
       if (!venueMap[v]) {
-        venueMap[v] = { _total: 0 };
-        courses.forEach(c => venueMap[v][c] = 0);
+        venueMap[v] = {};
+        courses.forEach(c => venueMap[v][c] = { count: 0, sumEst: 0, sumAct: 0 });
       }
-      venueMap[v][winner] = (venueMap[v][winner] || 0) + 1;
-      venueMap[v]._total++;
+      courses.forEach(c => {
+        const est = _getBoatProb(r, c);
+        if (est == null) return; // このレースにこの枠のデータなし
+        const st = venueMap[v][c];
+        st.count++;
+        st.sumEst += est;
+        st.sumAct += (winner === c ? 1 : 0);
+      });
     });
 
     const out = {};
     Object.entries(venueMap).forEach(([v, courseMap]) => {
-      const total = courseMap._total || 0;
       out[v] = courses.map(c => {
-        const count = courseMap[c] || 0;
-        return { course: c, count, total, actual: total > 0 ? count / total : null };
+        const st = courseMap[c];
+        const count  = st.count;
+        const estAvg = count > 0 ? st.sumEst / count : null;
+        const actual = count > 0 ? st.sumAct / count : null;
+        const diff   = (estAvg != null && actual != null) ? actual - estAvg : null;
+        return { course: c, count, estAvg, actual, diff };
       });
     });
     return out;
@@ -632,7 +644,7 @@
       </div>`;
   }
 
-  // ── [2026-07-13 追加] 会場×コース別 1着率 HTML生成 ──
+  // ── [2026-07-13 追加] 会場×コース別 1着率の精度 HTML生成 ──
   function buildVenueCourseHTML(venueCourseStats) {
     const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
     const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
@@ -640,35 +652,51 @@
     if (venues.length === 0) {
       return `
         <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
-          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center">🏟️ 会場×コース別 1着率</div>
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center">🏟️ 会場×コース別 1着率の精度</div>
           <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.5rem 0">データ不足</div>
         </div>`;
     }
 
-    const headCells = [1,2,3,4,5,6].map(c =>
-      `<th style="padding:3px 5px;text-align:center;font-size:9px;color:var(--text3);font-weight:500">
-         <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>
-       </th>`).join('');
+    function diffColor(diff) {
+      if (diff == null) return 'var(--text3)';
+      const a = Math.abs(diff);
+      return a <= 0.03 ? 'var(--green)' : a <= 0.07 ? 'var(--orange)' : 'var(--red, #e05)';
+    }
 
+    // 会場ごとに1行、その中に各コースの「実績%（差）」をまとめて表示
     const rows = venues.map(v => {
       const rows6 = venueCourseStats[v];
-      const total = rows6[0]?.total || 0;
+      const totalCount = rows6.reduce((s, r) => s + r.count, 0);
       const cells = rows6.map(s => {
-        const pct = s.actual != null ? (s.actual * 100).toFixed(1) + '%' : '—';
-        return `<td style="padding:3px 5px;text-align:center;font-size:10px;font-weight:${s.course === 1 ? 700 : 500};color:var(--text)">${pct}</td>`;
+        if (s.count === 0) {
+          return `<td style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3)">—</td>`;
+        }
+        const actPct  = s.actual != null ? (s.actual * 100).toFixed(0) + '%' : '—';
+        const diffStr = s.diff != null ? (s.diff >= 0 ? '+' : '') + (s.diff * 100).toFixed(1) + '%' : '—';
+        const lowN = s.count < 30;
+        return `
+          <td style="padding:3px 4px;text-align:center;font-size:10px;white-space:nowrap">
+            <span style="font-weight:700;color:var(--text)">${actPct}</span><span style="font-size:9px;color:var(--text3)">${lowN ? '*' : ''}</span><br>
+            <span style="font-size:9px;font-weight:700;color:${diffColor(s.diff)}">${diffStr}</span>
+          </td>`;
       }).join('');
       return `
         <tr style="border-bottom:1px solid var(--border)">
           <td style="padding:3px 5px;font-size:10px;white-space:nowrap">${v}</td>
-          <td style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3)">${total}R</td>
+          <td style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3)">${totalCount}</td>
           ${cells}
         </tr>`;
     }).join('');
 
+    const headCells = [1,2,3,4,5,6].map(c =>
+      `<th style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3);font-weight:500">
+         <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>
+       </th>`).join('');
+
     return `
       <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
-        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🏟️ 会場×コース別 1着率</div>
-        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">会場ごとの枠番別勝率</div>
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🏟️ 会場×コース別 1着率の精度</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">各セル：実績勝率 / 下段=予測との差（実績−予測）</div>
         <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
           <table style="width:100%;border-collapse:collapse">
             <thead>
@@ -680,6 +708,9 @@
             </thead>
             <tbody>${rows}</tbody>
           </table>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:4px">
+          緑=差±3%以内、橙=±7%以内、赤=それ以上　* N&lt;30の参考値
         </div>
       </div>`;
   }
@@ -1345,8 +1376,14 @@
   window._checkVenueCourse = function (results) {
     const data = calcCalibrationByVenueCourse(results);
     Object.entries(data).forEach(([venue, rows]) => {
-      console.log(`── ${venue} (計${rows[0]?.total || 0}件) ──`);
-      console.table(rows.map(r => ({ course: r.course, count: r.count, actual: r.actual != null ? (r.actual * 100).toFixed(1) + '%' : '—' })));
+      console.log(`── ${venue} ──`);
+      console.table(rows.map(r => ({
+        course: r.course,
+        count: r.count,
+        est: r.estAvg != null ? (r.estAvg * 100).toFixed(1) + '%' : '—',
+        actual: r.actual != null ? (r.actual * 100).toFixed(1) + '%' : '—',
+        diff: r.diff != null ? (r.diff >= 0 ? '+' : '') + (r.diff * 100).toFixed(1) + '%' : '—',
+      })));
     });
     return data;
   };
