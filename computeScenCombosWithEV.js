@@ -224,12 +224,48 @@
   ];
   window.COURSE1_CALIB_POINTS = COURSE1_CALIB_POINTS; // calibration.js のJSON書き出しボタンから参照するため公開
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // [2026-07-13 追加] 会場別 1コース補正テーブル
+  //
+  //   【背景】津・平和島・多摩川・鳴門（潮汐/風でイン残りにくい）と
+  //   大村・常滑・宮島（イン粘り強）で1コース実績が推定59〜63%付近に
+  //   対して実績44%〜73%まで約30ポイント開いている。全会場共通の
+  //   COURSE1_CALIB_POINTS 1本ではこの会場差を拾えないため、
+  //   会場別テーブル（VENUE_COURSE1_CALIB_POINTS）を追加する。
+  //
+  //   サンプル不足の会場は自身のテーブルを持たせず、
+  //   calibrateCourse1Prob 側で全国平均（COURSE1_CALIB_POINTS）に
+  //   フォールバックする。
+  // ─────────────────────────────────────────────────────────────────────────
+  const _VENUE_COURSE1_CALIB_LS_KEY = 'scen_calib_venue_course1_v1';
+
+  function _loadVenueCourse1CalibFromLS() {
+    try {
+      const raw = localStorage.getItem(_VENUE_COURSE1_CALIB_LS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const cleaned = {};
+      Object.entries(parsed).forEach(([v, pts]) => {
+        if (_isSaneCalibPoints(pts)) cleaned[v] = pts;
+      });
+      return Object.keys(cleaned).length > 0 ? cleaned : null;
+    } catch (_e) { return null; }
+  }
+
+  // デフォルト: 空（会場別テーブル未学習の会場は calibrateCourse1Prob 内で
+  // 全国平均 COURSE1_CALIB_POINTS に自動フォールバックする）
+  const VENUE_COURSE1_CALIB_POINTS = _loadVenueCourse1CalibFromLS() || {};
+  window.VENUE_COURSE1_CALIB_POINTS = VENUE_COURSE1_CALIB_POINTS; // calibration.js のJSON書き出しボタンから参照するため公開
+
   /**
    * 1号艇の nigeProb を実測ベースで補正する。
    * @param {number} rawNigeProb  analyzer.js の Stage1 クリップ後の値
+   * @param {string} [boat1Name]  1号艇の選手名（個人逃げ率ブレンド用）
+   * @param {string} [venue]      会場名（会場別補正テーブル参照用）
    * @returns {number}            補正後の値（0〜1）
    */
-  window.calibrateCourse1Prob = function (rawNigeProb, boat1Name) {
+  window.calibrateCourse1Prob = function (rawNigeProb, boat1Name, venue) {
     // ── [2026-06-29 修正] 個人逃げ率ブレンド方式 ──────────────────────
     //
     // 【旧実装の問題】
@@ -263,8 +299,12 @@
     if (rawNigeProb == null || isNaN(rawNigeProb)) return rawNigeProb;
     const p = Math.max(0, Math.min(1, rawNigeProb));
 
-    // ── Step1: 全体補正テーブルで市場ベースの期待値を計算 ──
-    const pts = COURSE1_CALIB_POINTS;
+    // ── Step1: 補正テーブルで市場ベースの期待値を計算 ──
+    // [2026-07-13 追加] venue が渡され、かつ当該会場のサンプルが十分で
+    // 自前のテーブルが学習済みの場合はそちらを優先する。
+    // 会場別テーブルが無い（サンプル不足でupdateVenueCourse1CalibPointsが
+    // まだ書き込んでいない）場合は、従来通り全国平均テーブルにフォールバックする。
+    const pts = (venue && VENUE_COURSE1_CALIB_POINTS[venue]) || COURSE1_CALIB_POINTS;
     let globalCalib = p;
     if (p <= pts[0][0]) {
       globalCalib = pts[0][1];
@@ -333,6 +373,55 @@
     COURSE1_CALIB_POINTS.length = 0;
     newPoints.forEach(pt => COURSE1_CALIB_POINTS.push(pt));
     try { localStorage.setItem(_COURSE1_CALIB_LS_KEY, JSON.stringify(COURSE1_CALIB_POINTS)); } catch (_e) {}
+  };
+
+  /**
+   * calibration.js の calcCalibrationByVenueCourse() 結果
+   * （{ 会場名: [ {course, count, estAvg, actual, diff}, ... course1〜6 ], ... }）
+   * の course===1 要素を使って VENUE_COURSE1_CALIB_POINTS を会場ごとに更新する。
+   * updateCourse1CalibPoints と同じ自己崩壊ループ対策（最低サンプル数・
+   * 異常値ガード）を会場単位で踏襲する。
+   *
+   * サンプル不足の会場（MIN_SAMPLES_HARD_VENUE 未満）は、その会場の
+   * 既存テーブルを一切変更しない（＝未学習ならフォールバックのまま、
+   * 既学習でも直近が不足なら前回値を維持し暴れさせない）。
+   *
+   * @param {Object} venueCourseStats  calcCalibrationByVenueCourse() の戻り値
+   */
+  window.updateVenueCourse1CalibPoints = function (venueCourseStats) {
+    if (!venueCourseStats || typeof venueCourseStats !== 'object') return;
+
+    // 会場別は1会場あたりのレース数が全国平均より少なくなるため、
+    // 全国版（50件）よりやや緩めるが、崩壊値を拾わない最低限は確保する。
+    const MIN_SAMPLES_HARD_VENUE = 30;
+
+    Object.entries(venueCourseStats).forEach(([venue, courseStats]) => {
+      if (!Array.isArray(courseStats)) return;
+      const c1 = courseStats.find(s => s.course === 1);
+      if (!c1 || c1.estAvg == null || c1.actual == null) return;
+
+      if (c1.count < MIN_SAMPLES_HARD_VENUE) {
+        // サンプル不足の会場は更新しない（全国平均フォールバックのまま、
+        // または既存の会場別テーブルを維持）
+        return;
+      }
+      // 高確率帯で実績が極端に低い崩壊値は反映しない（全国版と同じガード）
+      if (c1.estAvg >= HIGH_PROB_BIN_MIN && c1.actual <= EXTREME_LOW_ACTUAL_THRESH) {
+        console.warn(`[updateVenueCourse1CalibPoints] ${venue}: 異常値（崩壊値）のため更新をスキップしました。`, c1);
+        return;
+      }
+
+      const newPoints = [[0.00, 0.00], [c1.estAvg, c1.actual], [1.00, c1.actual]];
+      if (!_isSaneCalibPoints(newPoints)) {
+        console.warn(`[updateVenueCourse1CalibPoints] ${venue}: 更新後テーブルが異常と判定されたため、適用を中止しました。`, newPoints);
+        return;
+      }
+      VENUE_COURSE1_CALIB_POINTS[venue] = newPoints;
+    });
+
+    try {
+      localStorage.setItem(_VENUE_COURSE1_CALIB_LS_KEY, JSON.stringify(VENUE_COURSE1_CALIB_POINTS));
+    } catch (_e) { /* 保存失敗は無視 */ }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -604,6 +693,19 @@
             });
             if (applied) {
               try { localStorage.setItem(_COURSE_OTHER_CALIB_LS_KEY, JSON.stringify(COURSE_OTHER_CALIB_POINTS)); } catch (_e) {}
+            }
+          }
+          if (json.VENUE_COURSE1_CALIB_POINTS && typeof json.VENUE_COURSE1_CALIB_POINTS === 'object') {
+            let venueApplied = false;
+            Object.entries(json.VENUE_COURSE1_CALIB_POINTS).forEach(([v, pts]) => {
+              if (_isSaneCalibPoints(pts)) {
+                VENUE_COURSE1_CALIB_POINTS[v] = pts;
+                venueApplied = true;
+              }
+            });
+            if (venueApplied) {
+              applied = true;
+              try { localStorage.setItem(_VENUE_COURSE1_CALIB_LS_KEY, JSON.stringify(VENUE_COURSE1_CALIB_POINTS)); } catch (_e) {}
             }
           }
 
@@ -942,7 +1044,7 @@
                     if (_c1boat && typeof calibrateCourse1Prob === 'function') {
                       const _rawC1b = _c1boat.final_prob;
                       _boatProbsRaw[1] = _rawC1b;
-                      const _calC1b = calibrateCourse1Prob(_rawC1b);
+                      const _calC1b = calibrateCourse1Prob(_rawC1b, undefined, venue);
                       if (_calC1b != null && !isNaN(_calC1b) && Math.abs(_calC1b - _rawC1b) > 1e-9) {
                         const _others5b = _ranked2.filter(b => b.boat !== 1);
                         const _others5bTotal = _others5b.reduce((s, b) => s + b.final_prob, 0) || 1;
@@ -1215,7 +1317,7 @@
             if (_boat1 && typeof calibrateCourse1Prob === 'function') {
               const _rawC1 = _boat1.final_prob;
               _boat1._rawCourseProb = _rawC1; // 再学習用（補正前の生値）
-              const _calC1 = calibrateCourse1Prob(_rawC1);
+              const _calC1 = calibrateCourse1Prob(_rawC1, _boat1.name, venue);
               if (_calC1 != null && !isNaN(_calC1) && Math.abs(_calC1 - _rawC1) > 1e-9) {
                 const _others5 = ranked2.filter(b => b.boat !== 1);
                 const _others5Total = _others5.reduce((s, b) => s + b.final_prob, 0) || 1;
