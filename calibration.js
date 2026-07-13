@@ -175,6 +175,21 @@
   }
 
   // ══════════════════════════════════════════════════════════════════
+  // [2026-07-13 追加] 会場別×1着枠番別 2着・3着 予測精度
+  // ──────────────────────────────────────────────────────────────────
+  // calcPlace23ByWinningCourse をさらに会場でも分割したもの。
+  // 戻り値: { 会場名: { place2: {1:{...},...,6:{...}}, place3: {同様} }, ... }
+  function calcPlace23ByVenueCourse(results) {
+    const venues = [...new Set((results || []).map(r => r.venue || '不明'))];
+    const out = {};
+    venues.forEach(v => {
+      const subset = (results || []).filter(r => (r.venue || '不明') === v);
+      out[v] = calcPlace23ByWinningCourse(subset);
+    });
+    return out;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
   // 決まり手 calibration [2026-07-13 追加]
   // ──────────────────────────────────────────────────────────────────
   // predKimariBoat/predKimariType: computeScenCombosWithEV が返す
@@ -769,8 +784,64 @@
       </div>`;
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // 30〜40%帯 過大評価 内訳調査パネル（管理者専用）
+  // ── [2026-07-13 追加] 会場別×1着枠番別 2着・3着予測精度 HTML生成 ──
+  // セルは「2着1位的中% / 3着3位以内%」を縦2段で表示するコンパクト版。
+  function buildPlace23VenueCourseHTML(place23ByVenue) {
+    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
+    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
+    const venues = Object.keys(place23ByVenue).sort();
+    if (venues.length === 0) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center">🎯 会場別×1着枠番別 2着・3着予測精度</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.5rem 0">データ不足</div>
+        </div>`;
+    }
+
+    function pctOrDash(v) { return v != null ? (v * 100).toFixed(0) + '%' : '—'; }
+
+    const headCells = [1,2,3,4,5,6].map(c =>
+      `<th style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3);font-weight:500">
+         <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>
+       </th>`).join('');
+
+    const rows = venues.map(v => {
+      const { place2, place3 } = place23ByVenue[v];
+      const cells = [1,2,3,4,5,6].map(c => {
+        const p2 = place2[c], p3 = place3[c];
+        if (!p2 && !p3) return `<td style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3)">—</td>`;
+        const total = p2?.total || p3?.total || 0;
+        return `
+          <td style="padding:3px 4px;text-align:center;font-size:9px;white-space:nowrap">
+            <span style="color:var(--text)">2着${pctOrDash(p2?.rank1Rate)}</span><br>
+            <span style="color:var(--text2)">3着${pctOrDash(p3?.top3Rate)}</span><br>
+            <span style="font-size:8px;color:var(--text3)">${total}R</span>
+          </td>`;
+      }).join('');
+      return `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 5px;font-size:10px;white-space:nowrap;vertical-align:middle">${v}</td>
+          ${cells}
+        </tr>`;
+    }).join('');
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🎯 会場別×1着枠番別 2着・3着予測精度</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">2着=1位的中率　3着=3位以内率</div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">会場</th>
+                ${headCells}
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
   // ──────────────────────────────────────────────────────────────────
   function buildOverestimateAnalysisHTML(results) {
     // 30〜40%帯のレースだけ抽出
@@ -1484,6 +1555,7 @@
       // [2026-07-13 追加] 会場×コース別1着率、1着枠番別2/3着予測精度
       const venueCourseStats = calcCalibrationByVenueCourse(all);
       const place23ByCourse  = calcPlace23ByWinningCourse(all);
+      const place23ByVenue   = calcPlace23ByVenueCourse(all);
 
       // ―― ③ コース別補正テーブル更新には1号艇の「生の推定値」を使用する ――
       // hitProbEst と同じ自己崩壊ループ対策。r.boatProbsRaw[1] が
@@ -1534,6 +1606,7 @@
             ${buildPlace2CalibHTML(p2stats, p3stats)}
             <div class="admin-only">${buildCoursCalibHTML(courseStats, all.length)}</div>
             <div class="admin-only">${buildPlace23ByCourseHTML(place23ByCourse)}</div>
+            <div class="admin-only">${buildPlace23VenueCourseHTML(place23ByVenue)}</div>
             <div class="admin-only">${buildVenueCourseHTML(venueCourseStats)}</div>
           </div>
           ${buildOverestimateAnalysisHTML(all)}
