@@ -1239,6 +1239,8 @@
         // [2026-07-13 追加] 会場別1コース補正テーブル。学習済み会場が
         // 一つも無い場合は {} になりうる（必須項目には含めない＝missing判定対象外）。
         VENUE_COURSE1_CALIB_POINTS: window.VENUE_COURSE1_CALIB_POINTS || {},
+        // [2026-07-13 追加] 会場別2〜6号艇コース補正テーブル。同様に {} になりうる。
+        VENUE_COURSE_OTHER_CALIB_POINTS: window.VENUE_COURSE_OTHER_CALIB_POINTS || {},
         updatedAt: new Date().toISOString(),
       };
       const json = JSON.stringify(payload, null, 2);
@@ -1408,6 +1410,11 @@
         // calibrateCourse1Prob 側が全国平均に自動フォールバックする）。
         const venueCourseStatsRaw = calcCalibrationByVenueCourse(allRawCourse);
         if (typeof updateVenueCourse1CalibPoints === 'function') updateVenueCourse1CalibPoints(venueCourseStatsRaw);
+
+        // [2026-07-13 追加] 会場別 2〜6号艇コース補正テーブルの学習。
+        // 1コースと同じ venueCourseStatsRaw（会場×コース単位の生値集計）を再利用し、
+        // course===2〜6 の要素で VENUE_COURSE_OTHER_CALIB_POINTS を更新する。
+        if (typeof updateVenueCourseOtherCalibPoints === 'function') updateVenueCourseOtherCalibPoints(venueCourseStatsRaw);
       } catch (_ccErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
 
       // ―― ④ 2〜6号艇の補正テーブル更新には各艇の「生の推定値」を使用する ――
