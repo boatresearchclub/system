@@ -1083,10 +1083,12 @@ function renderBuy(rno){
 
     // ── 展示補正係数 ──
     let tenjiCoef = 1.0;
-    let tenjiRawP1 = null; // [2026-07-13 追加] テーブル参照直後の生の加減値(pt)。クランプなし
+    let tenjiRawP1 = null;    // テーブル参照直後の補間済み加減値(pt)。クランプなし。スコア計算に使用
+    let tenjiRawBinP1 = null; // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用
     if(tenjiScoreMap){
-      tenjiCoef  = tenjiScoreMap[`__coef_${b.boat}`] ?? 1.0;
-      tenjiRawP1 = tenjiScoreMap[`__rawP1_${b.boat}`] ?? null;
+      tenjiCoef     = tenjiScoreMap[`__coef_${b.boat}`] ?? 1.0;
+      tenjiRawP1    = tenjiScoreMap[`__rawP1_${b.boat}`] ?? null;
+      tenjiRawBinP1 = tenjiScoreMap[`__rawBinP1_${b.boat}`] ?? null;
     }
 
     const wTenjiCourse = wTenji;
@@ -1096,7 +1098,8 @@ function renderBuy(rno){
     b._tenkaiCoef   = tenkaiCoef;   // 互換値（表示用のみ）
     b._tenkaiDiff   = tenkaiDiff;   // ボーナス計算で実際に使う値（差分ベース）
     b._tenjiCoef    = tenjiCoef;
-    b._tenjiRawP1   = tenjiRawP1;   // テーブル生値（pt）。7会場のみ非null
+    b._tenjiRawP1   = tenjiRawP1;   // テーブル生値（pt・補間済み）。7会場のみ非null
+    b._tenjiRawBinP1 = tenjiRawBinP1; // 本当の生テーブル値（整数・補間なし）。7会場のみ非null
     b._wTenjiCourse = wTenjiCourse;
     b.display_tenkai = useMaster ? tenkaiCoef : null;
     b.display_tenji  = hasTenji  ? tenjiCoef  : null;
@@ -1249,8 +1252,9 @@ function renderBuy(rno){
       const clipTrimPt = rawPt - clippedPt; // 正=クリップで下振れ抑制／負=クリップで下限持ち上げ
       b.display_tenji_clip_pt   = clipTrimPt;
       b.display_tenji_raw_coef  = rawCoef;
-      // [2026-07-13] テーブル参照直後の生の加減値(pt)。[0.5,2.0]クランプすら通っていない真の実測値。
-      b.display_tenji_table_pt  = rawPt;
+      // [2026-07-13] スリット補正表示用: 補間なしの本当の生テーブル値(整数)。
+      //   スコア計算(上のclippedPt)には使わない。あくまで管理画面の参考表示。
+      b.display_tenji_table_pt  = b._tenjiRawBinP1 ?? rawPt;
       // 展示補正セルに（）併記する実際の1着率加減値（renorm前のpt換算・目安値）
       b.display_tenji_addend_pt = clippedPt;
     } else {
@@ -1735,19 +1739,18 @@ function renderBuy(rno){
       tenjiCorrCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
     }
 
-    // スリット補正列: [2026-07-13〜] 実測テーブル会場のみ、テーブル参照直後の
-    //   「生の」1着率加減値(pt)を表示（[0.5,2.0]クランプすら通っていない真の実測値）。
-    //   展示補正列（コース別クリップ後の実効値）と見比べて、値がズレていればクリップが効いている、
-    //   という読み方ができるようにする。
+    // スリット補正列: [2026-07-13〜] 実測テーブル会場のみ、該当binの本当の生テーブル値
+    //   （整数・補間なし）を表示。展示補正列（コース別クリップ後・補間済みの実効値）と
+    //   見比べて、大きくズレていればクリップが効いている、という読み方ができる。
     let slitCorrCell;
     if(hasTenji && bt.display_tenji_table_pt != null){
-      const rawPt = bt.display_tenji_table_pt;
-      if(Math.abs(rawPt) < 0.05){
-        slitCorrCell = `<span style="font-size:10px;color:var(--text3)">±0.0</span>`;
+      const rawPt = Math.round(bt.display_tenji_table_pt); // 整数（生テーブル値そのもの）
+      if(rawPt === 0){
+        slitCorrCell = `<span style="font-size:10px;color:var(--text3)">±0</span>`;
       } else {
         const color = rawPt >= 0 ? 'var(--green)' : 'var(--red)';
         const mark  = rawPt >= 0 ? '▲' : '▼';
-        slitCorrCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${rawPt >= 0 ? '+' : '−'}${Math.abs(rawPt).toFixed(1)}</span>`;
+        slitCorrCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${rawPt >= 0 ? '+' : '−'}${Math.abs(rawPt)}</span>`;
       }
     } else {
       slitCorrCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
@@ -1894,7 +1897,7 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobに展開補正を加味して正規化し、コース別キャリブレーションまで適用した1着率（展示・スリット補正は含まない／合計100%）">基準</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）。（）内は実際に1着率へ加算される値のpt換算目安（renorm前のため最終確率列の差分とは一致しない参考値）">展示補正</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-13〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島）のみ表示。テーブル参照直後の生の1着率加減値(pt)（クランプなし）。展示補正列（コース別クリップ後）と数値が異なる艇はクリップが効いている。それ以外の会場は—">スリット補正</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-13〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島）のみ表示。該当diffが属する本当の生テーブル値(整数・補間なし)。展示補正列（コース別クリップ後・補間済みの実効値）と大きく異なる艇はクリップが効いている。それ以外の会場は—">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示">3連対率</th>
         </tr></thead>

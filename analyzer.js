@@ -114,6 +114,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       // %pt → 係数（例: +13%pt → 1.13）
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;  // バッジ表示用
@@ -147,6 +148,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       const row  = _tokonameTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
@@ -182,6 +184,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       const row  = _gamagoriTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
@@ -217,6 +220,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       const row  = _mikuniTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
@@ -252,6 +256,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       const row  = _narutoTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
@@ -287,6 +292,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       const row  = _tamagawaTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
@@ -322,6 +328,7 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       const row  = _heiwajimaTableLookup(b.boat, diff) ?? { p1: 0, p2: 0, p3: 0, p3r: 0 };
       map[`__coef_${b.boat}`]  = Math.min(2.0, Math.max(0.5, 1 + row.p1 / 100));
       map[`__rawP1_${b.boat}`] = row.p1 ?? 0;  // [2026-07-13 追加] テーブル参照直後の生の1着率加減値(pt)。クランプ一切なし
+      map[`__rawBinP1_${b.boat}`] = row.rawP1 ?? 0;  // [2026-07-13 追加] 補間なしの本当の生テーブル値(整数)。表示専用（スリット補正）
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;

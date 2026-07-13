@@ -260,6 +260,17 @@ const SUMINOE_TENJI_TABLE = {
 // 各binの中央値を代表点として線形補間し、実測データの値自体は保持したまま
 // 連続的な変化にする（住之江・常滑・蒲郡いずれも実測データのため、
 // 値を捨てて他会場と同じ合成感度式に統一するのではなく、補間のみ行う）。
+// [2026-07-13 追加] 該当diffが属するbinの生の値（整数・補間なし）をそのまま返す。
+// テーブル記載時のオリジナルbin境界[lo,hi]でそのまま範囲判定するだけの単純マッチ。
+function _rawBinLookup(rows, diff) {
+  for (const r of rows) {
+    const lo = r.lo === null ? -Infinity : r.lo;
+    const hi = r.hi === null ?  Infinity : r.hi;
+    if (diff >= lo && diff <= hi) return r;
+  }
+  return rows[rows.length - 1];
+}
+
 function _interpolateTenjiTable(rows, diff) {
   const points = rows.map((r, i) => {
     let lo = r.lo, hi = r.hi;
@@ -269,8 +280,12 @@ function _interpolateTenjiTable(rows, diff) {
     return { x: (lo + hi) / 2, p1: r.p1, p2: r.p2, p3: r.p3, p3r: r.p3r };
   });
 
-  if (diff <= points[0].x) return points[0];
-  if (diff >= points[points.length - 1].x) return points[points.length - 1];
+  // [2026-07-13 追加] 補間なしの生bin値（整数）。スコア計算には使わず表示専用。
+  const raw = _rawBinLookup(rows, diff);
+  const rawVals = { rawP1: raw.p1, rawP2: raw.p2, rawP3: raw.p3, rawP3r: raw.p3r };
+
+  if (diff <= points[0].x) return { ...points[0], ...rawVals };
+  if (diff >= points[points.length - 1].x) return { ...points[points.length - 1], ...rawVals };
 
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i], b = points[i + 1];
@@ -281,10 +296,11 @@ function _interpolateTenjiTable(rows, diff) {
         p2:  a.p2  + (b.p2  - a.p2)  * t,
         p3:  a.p3  + (b.p3  - a.p3)  * t,
         p3r: a.p3r + (b.p3r - a.p3r) * t,
+        ...rawVals,
       };
     }
   }
-  return points[points.length - 1];
+  return { ...points[points.length - 1], ...rawVals };
 }
 
 // 住之江補正テーブルを引いて行を返す（線形補間版）
