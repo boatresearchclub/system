@@ -1757,7 +1757,12 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
                 ? 1 - (1 - trTrust) * (1 - personTrust)
                 : trTrust;
             }
-            if(baseTR != null && personRate2 != null && personTrust > 0.3){
+            // [2026-07-13 修正] personTrust > 0.3 のハードカットオフを撤廃。
+            // 旧: 信頼度0.3未満の個人データは「全く使わない」の二択だったため、
+            //     境界付近（trust=0.29等）の情報がまるごと切り捨てられていた。
+            // 新: wPerson=personTrust による連続ブレンドなら、trust→0で自然に
+            //     baseTRのみへ収束するため閾値は不要（数式的に安全側）。
+            if(baseTR != null && personRate2 != null){
               const wPerson = personTrust;
               const wNat    = (1 - personTrust);  // ② 修正: trTrust二重適用を排除
               const wTot    = wPerson + wNat;      // 常に1.0
@@ -2013,8 +2018,9 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         : 1.0;
 
       // ── 2着と同じ3パターン優先順位 ──
+      // [2026-07-13 修正] personTrust > 0.3 のハードカットオフを撤廃（2着と同じ理由）。
       let r3;
-      if(baseR3 != null && personR3 != null && personTrust > 0.3){
+      if(baseR3 != null && personR3 != null){
         // ①ベース＋個人両方あり
         // ② wNat修正: baseは常にフルウェイト、個人が上乗せ（trTrust二重適用を排除）
         const wPerson = personTrust;
@@ -2026,7 +2032,7 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         // ②ベースのみ
         r3 = baseR3;
         try { _CALC3RD_FALLBACK_STATS.total++; _CALC3RD_FALLBACK_STATS.branch2++; } catch(_e) {}
-      } else if(personR3 != null && personTrust > 0.3){
+      } else if(personR3 != null){
         // ③個人のみ（ベースなし）
         r3 = personR3;
         try { _CALC3RD_FALLBACK_STATS.total++; _CALC3RD_FALLBACK_STATS.branch3++; } catch(_e) {}
