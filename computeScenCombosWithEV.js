@@ -595,9 +595,20 @@
     }
 
     const newPoints = [[0.00, 0.00]]; // 左端固定
+
+    // [2026-07-13 追加] 小標本崩壊値ガード
+    //   既存の②ガードは「高確率帯（40%+）で実績が5%以下」しか捕捉できず、
+    //   30〜40%帯のような中間帯でサンプルが少ない（N=13等）場合に
+    //   偶然実績0%になったビンがそのまま補正テーブルに刻まれてしまう
+    //   （実例: 推定34.3%・実績0.0%・N=13 が CALIB_POINTS を歪める）。
+    //   母数が少ない（<30件）ビンは、推定と実績の乖離が大きい（20pt以上）場合、
+    //   確率帯を問わず「まだ信頼できない」として補正テーブルへの反映をスキップする。
+    const SMALL_SAMPLE_THRESH        = 30;   // これ未満は「小標本」とみなす
+    const SMALL_SAMPLE_MAX_DEVIATION = 0.20; // 小標本で許容する最大乖離（20pt）
+
     binStats.forEach(b => {
       if (b.total >= 10 && b.estAvg != null && b.actual != null) {
-        // ── ② 極端な値（崩壊）の破棄 ──
+        // ── ② 極端な値（崩壊）の破棄（高確率帯・実績激低）──
         // 高確率ビン（40%以上）で実績が極端に低い（5%以下など）場合は、
         // データ不足または一時的な偏りによる崩壊値とみなし、
         // この点は補正テーブルに反映しない（既存の対応点をそのまま維持する）。
@@ -605,6 +616,16 @@
           console.warn(
             `[updateCalibPoints] 異常値スキップ: ビン[${b.label}] estAvg=${b.estAvg.toFixed(2)} ` +
             `actual=${(b.actual*100).toFixed(1)}% (N=${b.total}) → このビンは補正テーブルに反映しません。`
+          );
+          return;
+        }
+        // ── ②' 小標本崩壊値の破棄（確率帯を問わない）──
+        const deviation = Math.abs(b.actual - b.estAvg);
+        if (b.total < SMALL_SAMPLE_THRESH && deviation >= SMALL_SAMPLE_MAX_DEVIATION) {
+          console.warn(
+            `[updateCalibPoints] 小標本異常値スキップ: ビン[${b.label}] estAvg=${b.estAvg.toFixed(2)} ` +
+            `actual=${(b.actual*100).toFixed(1)}% (N=${b.total} < ${SMALL_SAMPLE_THRESH}, 乖離${(deviation*100).toFixed(1)}pt) ` +
+            `→ サンプル不足のため補正テーブルに反映しません。`
           );
           return;
         }
