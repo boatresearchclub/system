@@ -102,8 +102,15 @@ def get_race_index_path(date_str=None):
 CHECK_INTERVAL    = 2   # 秒
 HISTORY_DAYS      = 1
 RESULT_DAYS       = 1
-HISTORY_KEEP_DAYS = 30  # history_*.json を保持する最大日数（バックテスト用）
-RESULT_KEEP_DAYS  = 30  # result_*.json を保持する最大日数
+# [2026-07-14 修正] 従来は30日でhistory_*.json/result_*.jsonを削除しており、
+# クライアント側(top_stats.js)のキャリブレーション検証窓を延ばしても
+# サーバー側がその日数分のファイルを持っていなければ意味がなかった。
+# top_stats.js の CALIBRATION_HISTORY_DAYS=365 に合わせて保持期間を延長する。
+# ※ 過去のCSV自体がCSV_DIRに残っていない日は当然 history_*.json は作られない
+#   （write_history_json は CSV_DIR のファイルからしか生成できない）。
+#   3年分のCSVが実際に残っているなら --backfill-history で一括生成できる。
+HISTORY_KEEP_DAYS = 365  # history_*.json を保持する最大日数（バックテスト用）
+RESULT_KEEP_DAYS  = 365  # result_*.json を保持する最大日数
 
 VENUE_SLUG = {
     "桐生":   "kiryu",    "戸田":   "toda",     "江戸川": "edogawa",
@@ -1173,27 +1180,48 @@ def write_data_index():
     存在する result_*.json / history_*.json の日付リストを記録し、
     ブラウザ側が「存在しない日付」に無駄なfetchをしないようにする。
 
+    [2026-07-14 修正] history_dates/result_dates をそのまま365日分返すと、
+    一般ユーザーも含めた全員のページ読み込みで最大730リクエストが発生し、
+    アプリが重くなってしまう問題があった（キャリブレーション検証窓の拡張が
+    一般表示パネルにまで巻き添えで影響していた）。
+    → 「一般ユーザー向け（直近分・即fetch）」と「管理者の検証パネル向け
+      （拡張分・必要な時だけ追加fetch）」の2層に分離する。
+      history_dates/result_dates      = 直近 DEFAULT_FETCH_DAYS 日分（従来通りの挙動）
+      history_dates_extended/result_dates_extended = 保持している全日付
+      （＝最大 HISTORY_KEEP_DAYS/RESULT_KEEP_DAYS 日分）
+    loader.js 側は history_dates/result_dates だけを起動時に自動fetchし、
+    history_dates_extended/result_dates_extended は管理者が検証パネルを
+    開いたときにだけ fetchExtendedHistoryForCalibration() が使う。
+
     出力フォーマット:
         {
-          "result_dates":  ["20260512", "20260511", ...],  // 新しい順
-          "history_dates": ["20260511", "20260510", ...],  // 新しい順
+          "result_dates":  ["20260512", "20260511", ...],  // 新しい順・直近分のみ
+          "history_dates": ["20260511", "20260510", ...],  // 新しい順・直近分のみ
+          "result_dates_extended":  [...],  // 新しい順・保持している全日付
+          "history_dates_extended": [...],  // 新しい順・保持している全日付
           "updated": "2026-05-12 09:30:00"
         }
     """
     DATA_DIR.mkdir(exist_ok=True)
 
-    result_dates = sorted(
+    # 一般ユーザーが起動時に即fetchする日数。従来の挙動（60日集計パネル）と
+    # 同程度に抑え、ページ読み込み時のリクエスト数を増やさない。
+    DEFAULT_FETCH_DAYS = 60
+
+    result_dates_extended = sorted(
         [re.sub(r"result_(\d{8})\.json", r"\1", Path(p).name)
          for p in glob.glob(str(DATA_DIR / "result_*.json"))
          if re.match(r"result_\d{8}\.json", Path(p).name)],
         reverse=True
     )
-    history_dates = sorted(
+    history_dates_extended = sorted(
         [re.sub(r"history_(\d{8})\.json", r"\1", Path(p).name)
          for p in glob.glob(str(DATA_DIR / "history_*.json"))
          if re.match(r"history_\d{8}\.json", Path(p).name)],
         reverse=True
     )
+    result_dates  = result_dates_extended[:DEFAULT_FETCH_DAYS]
+    history_dates = history_dates_extended[:DEFAULT_FETCH_DAYS]
 
     # today_date: today_YYYYMMDD.json の日付（当日分が存在する場合のみ）
     # today_str() は深夜0〜3時に翌日付を返すため、実際のファイルと日付がズレる場合がある。
@@ -1207,15 +1235,18 @@ def write_data_index():
             break
 
     index = {
-        "result_dates":  result_dates,
-        "history_dates": history_dates,
+        "result_dates":           result_dates,
+        "history_dates":          history_dates,
+        "result_dates_extended":  result_dates_extended,
+        "history_dates_extended": history_dates_extended,
         "today_date":    today_date_val,
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     out_path = DATA_DIR / "index.json"
     with open(out_path, 'w', encoding='utf-8') as _wf:
         _wf.write(json.dumps(index, ensure_ascii=False, separators=(",", ":")))
-    log(f"  [JSON] data/index.json 更新: result={len(result_dates)}日 history={len(history_dates)}日")
+    log(f"  [JSON] data/index.json 更新: result={len(result_dates)}日(拡張{len(result_dates_extended)}日) "
+        f"history={len(history_dates)}日(拡張{len(history_dates_extended)}日)")
     return True
 
 
@@ -3108,6 +3139,28 @@ def _git_heal_on_startup():
 
 
 def main():
+    # [2026-07-14 追加] 一括バックフィール用の一回限りモード。
+    # 通常の監視ループ（HISTORY_DAYS=1で毎日1日分だけ生成）とは別に、
+    # CSV_DIR / RESULT_DIR に残っている過去分をまとめて history_*.json /
+    # result_*.json化する。実行例:
+    #   python auto_push.py --backfill-history 365
+    # 対象日数分のCSV/RESULT_DIRファイルが実際に残っていない日はスキップされる
+    # （write_history_json / write_result_json は既存ファイルからしか生成しない）。
+    # 実行後は data/index.json も更新して終了する（監視ループには入らない）。
+    if "--backfill-history" in sys.argv:
+        try:
+            idx = sys.argv.index("--backfill-history")
+            days_back = int(sys.argv[idx + 1]) if idx + 1 < len(sys.argv) else HISTORY_KEEP_DAYS
+        except (ValueError, IndexError):
+            days_back = HISTORY_KEEP_DAYS
+        log(f"[バックフィル] history_*.json / result_*.json を過去{days_back}日分まとめて生成します")
+        DATA_DIR.mkdir(exist_ok=True)
+        write_history_json(days_back=days_back)
+        write_result_json(days_back=days_back)
+        write_data_index()
+        log("[バックフィル] 完了")
+        return
+
     log("=" * 50)
     log("  自動push監視 起動")
     log(f"  CSV監視  : {CSV_DIR}")

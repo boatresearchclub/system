@@ -116,6 +116,92 @@ async function fetchAndMergeJsonData() {
 }
 
 
+// ══════════════════════════════════════════════════════════════════
+// [2026-07-14 追加] 拡張履歴の遅延fetch（管理者の検証パネル専用）
+//
+// fetchAndMergeJsonData() は index.json の history_dates/result_dates
+// （直近分のみ・全ユーザー起動時に即fetch）だけを読み込む。
+// 検証パネル（③④キャリブレーション）で使う拡張分（history_dates_extended/
+// result_dates_extended・最大365日）は、管理者がその画面を開いたときだけ
+// このfetchExtendedHistoryForCalibration()で追加取得する。
+// 一般ユーザーはこの関数を一度も呼ばないため、fetch数・再計算コストは
+// 従来（直近60日程度）のまま増えない。
+//
+// 既にALL_DATA_HISTORY/RESULT_DATAに読み込み済みの日付は再fetchしない
+// （fetchAndMergeJsonDataとの重複を避ける）。
+// ══════════════════════════════════════════════════════════════════
+let _extendedHistoryFetchPromise = null; // 二重発火防止（同時に複数回呼ばれても1回だけfetchする）
+
+async function fetchExtendedHistoryForCalibration() {
+  if (_extendedHistoryFetchPromise) return _extendedHistoryFetchPromise;
+
+  _extendedHistoryFetchPromise = (async () => {
+    async function safeFetch(url) {
+      try {
+        const res = await fetch(url, { cache: 'default' });
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    const idx = await safeFetch(`${DATA_BASE_URL}/index.json`);
+    if (!idx) return false;
+
+    const historyDatesExt = idx.history_dates_extended || [];
+    const resultDatesExt  = idx.result_dates_extended  || [];
+
+    // 既に読み込み済みの日付（history: ALL_DATA_HISTORYのdashキー、
+    // result: RESULT_DATAのキーから日付部分を逆引き）は除外する。
+    const alreadyHistoryDash = new Set(Object.keys(ALL_DATA_HISTORY));
+    const missingHistory = historyDatesExt.filter(nd => {
+      const dash = `${nd.slice(0,4)}-${nd.slice(4,6)}-${nd.slice(6,8)}`;
+      return !alreadyHistoryDash.has(dash);
+    });
+
+    // RESULT_DATAは "{slug}_{YYYYMMDD}_{rno}" 形式なので、日付部分を含む
+    // キーが1件でもあれば「その日は取得済み」とみなす。
+    const alreadyResultDates = new Set(
+      Object.keys(RESULT_DATA)
+        .map(k => (k.match(/_(\d{8})_\d+$/) || [])[1])
+        .filter(Boolean)
+    );
+    const missingResult = resultDatesExt.filter(nd => !alreadyResultDates.has(nd));
+
+    const historyFetches = missingHistory.map(nd => {
+      const dash = `${nd.slice(0,4)}-${nd.slice(4,6)}-${nd.slice(6,8)}`;
+      return safeFetch(`${DATA_BASE_URL}/history_${nd}.json`).then(data => {
+        if (!data) return;
+        if (!ALL_DATA_HISTORY[dash]) {
+          ALL_DATA_HISTORY[dash] = data;
+        } else {
+          for (const [venue, vdata] of Object.entries(data)) {
+            if (!ALL_DATA_HISTORY[dash][venue]) ALL_DATA_HISTORY[dash][venue] = vdata;
+          }
+        }
+      });
+    });
+
+    const resultFetches = missingResult.map(nd =>
+      safeFetch(`${DATA_BASE_URL}/result_${nd}.json`).then(data => {
+        if (!data) return;
+        for (const [key, val] of Object.entries(data)) {
+          const m = key.match(/^(.+)[ _](\d+)$/);
+          const fullKey = m ? `${m[1]}_${nd}_${m[2]}` : `${key}_${nd}`;
+          if (!RESULT_DATA[fullKey]) RESULT_DATA[fullKey] = val;
+        }
+      })
+    );
+
+    await Promise.allSettled([...historyFetches, ...resultFetches]);
+    return true;
+  })();
+
+  return _extendedHistoryFetchPromise;
+}
+
+
 // IS_SERVER: localhost以外（Netlify/GitHub Pages）では動的APIは使えないため
 // ホスト名でランタイム判定する（auto_pushによるハードコード true を廃止）
 const IS_SERVER = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');

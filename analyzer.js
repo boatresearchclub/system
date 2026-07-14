@@ -1416,6 +1416,14 @@ function calcPlace2Probs(boats, ranked){
   const vKimari = MASTER_EXT?.venue_kimari?.[DATA.venue] || null;
   const nigeProb = vKimari?.['逃げ'] ?? 0.45;  // なければ0.45をデフォルト
 
+  // [2026-07-14 追加] inn_2place は会場によってサンプル数(イン逃げ回数)が
+  // 1件〜数十件までばらつくのに、これまでは値が存在しさえすれば全国値と
+  // 一切ブレンドせず採用していた。build_master_json.py が出力する
+  // inn_2place_trust（件数ベースの信頼度・0〜1）で全国加重平均との
+  // ブレンドを行う。
+  const inn2Trust    = MASTER_EXT?.venue_stats?.[DATA.venue]?.inn_2place_trust ?? 0;
+  const nationalInn2 = MASTER_EXT?.national_inn_2place || {};
+
   // winner_course_order: 個人の「勝者コース別・自コース別2着率」
   const winnerCO = MASTER_EXT?.winner_course_order || {};
 
@@ -1436,7 +1444,12 @@ function calcPlace2Probs(boats, ranked){
     for(const b of ranked){
       if(b.boat === 1) continue;
       const sc     = String(b.boat);
-      const baseP2 = inn2Place[sc] ?? null;
+      const rawP2  = inn2Place[sc] ?? null;
+      // 会場値は inn2Trust（件数ベース）で全国加重平均とブレンド。
+      // 会場値自体がない場合も、tenkai_prob按分より先に全国値を使う。
+      const baseP2 = (rawP2 != null)
+        ? rawP2 * inn2Trust + (nationalInn2[sc] ?? rawP2) * (1 - inn2Trust)
+        : (nationalInn2[sc] ?? null);
 
       // winner_course_order: 「1号艇(wc='1')が1着のとき、自艇(sc)が2着に来た率」
       const personEntry = winnerCO[b.name]?.[sc]?.['1'];
@@ -1588,6 +1601,13 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
     if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0) return v;
     return masterExt?.venue_stats?.[venue]?.inn_2place || {};
   })();
+
+  // [2026-07-14 追加] calcPlace2Probsと同じ縮小推定をここでも使うための
+  // trust・全国加重平均。masterExt/venue はこの関数のローカル変数を使う
+  // （options.masterExtで外部注入されるケースがあるため、グローバルの
+  // MASTER_EXT/DATA.venueに依存すると注入時に不整合が起きるため）。
+  const inn2Trust    = masterExt?.venue_stats?.[venue]?.inn_2place_trust ?? 0;
+  const nationalInn2 = masterExt?.national_inn_2place || {};
 
   const KIMARI_HARD_EXCLUDE = {
     '逃げ':       new Set(['2','3','4','5','6']),
@@ -1802,7 +1822,13 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
           // 0 = 実測データなし（全国平均バイアスをフル適用） / 1 = 実測データ十分（バイアス無効化）
           let _dataTrust2 = 0;
           if(useInn2){
-            const baseP2 = inn2Place[sc] ?? null;
+            const rawP2 = inn2Place[sc] ?? null;
+            // [2026-07-14 修正] 会場のinn_2placeはNが少ない会場でも満額採用
+            // されていた。inn2Trust（件数ベース信頼度）で全国加重平均と
+            // ブレンドしてから使う（calcPlace2Probsと同じ考え方）。
+            const baseP2 = (rawP2 != null)
+              ? rawP2 * inn2Trust + (nationalInn2[sc] ?? rawP2) * (1 - inn2Trust)
+              : (nationalInn2[sc] ?? null);
             const personEntry2 = winnerCO[b.name]?.[sc]?.['1'];
             const personRate2  = personEntry2?.rate2 ?? null;
             const personTrust2 = personEntry2?.trust ?? 0;
@@ -1812,9 +1838,13 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             } else {
               p2 = baseP2;
             }
-            // inn_2place は会場の実測イン逃げ時2着率（board全体集計）のため
-            // 値が取れていれば信頼度は高いとみなす。
-            if(baseP2 != null) _dataTrust2 = 1.0;
+            // [2026-07-14 修正] 「値があれば信頼度1.0」という誤った決め打ちを廃止。
+            // 会場値を使った場合は inn2Trust（件数ベース）をそのまま信頼度とし、
+            // 会場値がなく全国値のみで補った場合は中程度(0.5)、
+            // 個人実績が十分(personTrust2>0.3)ならそれを優先する。
+            if(rawP2 != null) _dataTrust2 = inn2Trust;
+            else if(nationalInn2[sc] != null) _dataTrust2 = 0.5;
+            if(personTrust2 > 0.3) _dataTrust2 = Math.max(_dataTrust2, personTrust2);
             if(p2 == null){
               // [2026-06-25] finalProb按分を平滑化（25%均等 + 75%prob按分）
               const bt = ranked2.find(r => r.boat === b.boat);
