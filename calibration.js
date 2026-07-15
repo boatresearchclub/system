@@ -1163,6 +1163,43 @@
       });
     }
 
+    // ── ⑧ 最終確率キャリブレーション（推定的中確率 vs 実績的中率・買い目セット単位）──
+    // [2026-07-16 追加] hitProbEst（1レースあたり、生成された買い目セット全体が
+    // 当たる確率の合計＝EV計算の元になる「最終確率」）は、これまで
+    // updateCalibPoints（内部の自己補正テーブル更新）にしか使われておらず、
+    // 実際に「推定X%帯の買い目セットが実績で何%当たっているか」を目に見える
+    // 形で検証したものがなかった。①〜⑦は1着/2着/3着など各段階を個別に見て
+    // いるだけで、それらを掛け合わせた最終出力の精度は未検証だった。
+    //
+    // calibrateProb 適用後（hitProbEst・最終出力）と適用前（_rawHitProbEst・
+    // 生の三重積）の両方を同じビンで比較し、「自己補正が実際に効いているか」
+    // も併せて確認できるようにする。
+    const allRawForFinal = all.map(r => {
+      const raw = (r._rawHitProbEst != null) ? r._rawHitProbEst : r.hitProbEst;
+      return (raw === r.hitProbEst) ? r : Object.assign({}, r, { hitProbEst: raw });
+    });
+    const finalProbBinStats = calcCalibration(all);           // 補正後（実運用で使われる値）
+    const rawProbBinStats   = calcCalibration(allRawForFinal); // 補正前（三重積の生値）
+    const finalError   = calcCalibrationError(finalProbBinStats);
+    const rawError     = calcCalibrationError(rawProbBinStats);
+    const finalViolations = countMonotonicViolations(finalProbBinStats);
+    section('⑧ 最終確率キャリブレーション（推定的中確率 vs 実績的中率・買い目セット単位）');
+    push(['対象', '加重平均誤差', '単調性逆転数']);
+    push(['補正後(hitProbEst・実運用値)', finalError != null ? _pctStr(finalError) : '', finalViolations]);
+    push(['補正前(生の三重積)', rawError != null ? _pctStr(rawError) : '', '']);
+    blank();
+    push(['推定帯', '件数(補正後)', '推定平均(補正後)', '実績(補正後)', '差(補正後)',
+                    '推定平均(補正前)', '実績(補正前)', '差(補正前)']);
+    finalProbBinStats.forEach((b, i) => {
+      const rb = rawProbBinStats[i];
+      const diffF = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      const diffR = (rb && rb.actual != null && rb.estAvg != null) ? rb.actual - rb.estAvg : null;
+      push([
+        b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diffF != null ? _pctStr(diffF) : '',
+        rb ? _pctStr(rb.estAvg) : '', rb ? _pctStr(rb.actual) : '', diffR != null ? _pctStr(diffR) : ''
+      ]);
+    });
+
     return '\uFEFF' + lines.join('\r\n'); // BOM付き（Excelで文字化けしないように）
   }
 
