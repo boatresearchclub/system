@@ -4420,7 +4420,9 @@ function updatePersistentBanners(rno){
       // 浮動小数点誤差対策: 小数第2位で丸めてから比較
       const tenjiDiff = (myT != null && prT != null) ? Math.round((prT - myT) * 100) / 100 : null;
       const leadOk = tenjiDiff != null ? (tenjiDiff >= 0.1) : false;
-      if(leadOk) slitLeadBoatsBan.push(bn);
+      // [2026-07-17 追加] スリットALと同時該当する艇はスリットリードに出さない
+      // （スリットALの条件はスリットリードの条件を包含するため、この艇単位の除外だけで足りる）
+      if(leadOk && !makuriBoatsBan.includes(bn)) slitLeadBoatsBan.push(bn);
     }
     if(slitLeadBoatsBan.length > 0){
       const slitLeadCircles = slitLeadBoatsBan.map(bn =>
