@@ -986,6 +986,49 @@
     return v == null ? '' : (v * 100).toFixed(1) + '%';
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-16 追加] 展開シナリオ確率キャリブレーション（2着/3着の全艇分布）
+  // ──────────────────────────────────────────────────────────────────
+  // calcWinProbCalibration と全く同じ方式（レースごとに全艇の推定確率と
+  // 的中/非的中を突き合わせ、推定帯ごとに実績と比較）を、weighted2ndMap/
+  // weighted3rdMap（collectResultsForDateScenが保存する全艇分の正規化済み
+  // 確率マップ）に適用する。mapField/actualField を引数化して2着・3着
+  // 両方に共通利用できるようにした。
+  //
+  // 注意: weighted3rdMap は「2着が誰であったか」で周辺化した値であり、
+  // 展開シナリオUIが表示する「1着・2着の具体的な組み合わせに条件づけた
+  // 3着分布」（merged3rdMap）そのものではない、粗い近似値である。
+  function calcScenarioMapCalibration(results, mapField, actualField) {
+    const boats = [1, 2, 3, 4, 5, 6];
+    const binned = BINS.map(bin => ({
+      label: bin.label, min: bin.min, max: bin.max,
+      total: 0, hits: 0, sumEst: 0,
+    }));
+
+    (results || []).forEach(r => {
+      const map = r[mapField];
+      const actualBoat = r[actualField];
+      if (!map || actualBoat == null) return;
+      boats.forEach(boat => {
+        const est = map[String(boat)] ?? map[boat];
+        if (est == null || typeof est !== 'number' || isNaN(est)) return;
+        const bin = binned.find(b => est >= b.min && est < b.max);
+        if (!bin) return;
+        bin.total++;
+        bin.sumEst += est;
+        if (actualBoat === boat) bin.hits++;
+      });
+    });
+
+    return binned.map(b => ({
+      label  : b.label,
+      total  : b.total,
+      hits   : b.hits,
+      actual : b.total > 0 ? b.hits / b.total : null,
+      estAvg : b.total > 0 ? b.sumEst / b.total : null,
+    }));
+  }
+
   function _buildCalibrationCSV(all) {
     const lines = [];
     const push = (row) => lines.push(_csvRow(row));
@@ -1197,6 +1240,35 @@
       push([
         b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diffF != null ? _pctStr(diffF) : '',
         rb ? rb.total : '', rb ? _pctStr(rb.estAvg) : '', rb ? _pctStr(rb.actual) : '', diffR != null ? _pctStr(diffR) : ''
+      ]);
+    });
+
+    // ── ⑨ 展開シナリオ確率キャリブレーション（2着/3着・全艇分布ベース）──
+    // [2026-07-16 追加] ⑧までは「1着×2着×3着」を掛け合わせた後の値
+    // （hitProbEst＝買い目セット単位）しか見ていなかったが、これは買い目の
+    // 点数・閾値という下流の判断が混ざってしまう。ここでは買い目選定より
+    // 前の、展開シナリオそのものの確率（weighted2ndMap/weighted3rdMap）を
+    // ①と同じ「推定帯ごとに全艇の的中/非的中を比較」する方式で検証する。
+    const place2ScenarioStats = calcScenarioMapCalibration(all, 'weighted2ndMap', 'actual2nd');
+    const place3ScenarioStats = calcScenarioMapCalibration(all, 'weighted3rdMap', 'actual3rd');
+    const place2ScenarioError = calcCalibrationError(place2ScenarioStats);
+    const place3ScenarioError = calcCalibrationError(place3ScenarioStats);
+    const place2ScenarioViolations = countMonotonicViolations(place2ScenarioStats);
+    const place3ScenarioViolations = countMonotonicViolations(place3ScenarioStats);
+    section('⑨ 展開シナリオ確率キャリブレーション（2着/3着・買い目選定前の全艇分布）');
+    push(['対象', '加重平均誤差', '単調性逆転数']);
+    push(['2着（weighted2ndMap）', place2ScenarioError != null ? _pctStr(place2ScenarioError) : '', place2ScenarioViolations]);
+    push(['3着（weighted3rdMap・2着で周辺化した近似値）', place3ScenarioError != null ? _pctStr(place3ScenarioError) : '', place3ScenarioViolations]);
+    blank();
+    push(['推定帯', '件数(2着)', '推定平均(2着)', '実績(2着)', '差(2着)',
+                    '件数(3着)', '推定平均(3着)', '実績(3着)', '差(3着)']);
+    place2ScenarioStats.forEach((b, i) => {
+      const b3 = place3ScenarioStats[i];
+      const diff2 = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      const diff3 = (b3 && b3.actual != null && b3.estAvg != null) ? b3.actual - b3.estAvg : null;
+      push([
+        b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diff2 != null ? _pctStr(diff2) : '',
+        b3 ? b3.total : '', b3 ? _pctStr(b3.estAvg) : '', b3 ? _pctStr(b3.actual) : '', diff3 != null ? _pctStr(diff3) : ''
       ]);
     });
 
