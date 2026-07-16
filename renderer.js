@@ -885,30 +885,43 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     ? `<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(0,102,255,.12);color:var(--accent2);margin-left:8px;vertical-align:middle">展示情報込み</span>`
     : '';
 
-  // ── 住之江: 軸候補・切り候補バッジ ──
+  // ── 軸候補・切り候補バッジ ──
   let suminoePivotBadges = '';
+  const boatCircleS = n =>
+    `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
+
+  // 軸候補: 実測会場のみ、タイム差(__diff_)が+0.40秒以上の艇（複数可）
   if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
-    const pivotBoats = []; // diffプラス大 = 軸候補
-    const cutBoats   = []; // diffマイナス大 = 切り候補
+    const pivotBoats = [];
     ranked2.forEach(b => {
       const diff = tenjiScoreMap[`__diff_${b.boat}`];
       if (diff == null) return;
-      if (diff >= 0.40)  pivotBoats.push({ boat: b.boat, diff });
-      if (diff <= -0.40) cutBoats.push({ boat: b.boat, diff });
+      if (diff >= 0.40) pivotBoats.push({ boat: b.boat, diff });
     });
     pivotBoats.sort((a, b) => b.diff - a.diff);
-    cutBoats.sort((a, b) => a.diff - b.diff);
-
-    const boatCircleS = n =>
-      `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
-
     if (pivotBoats.length > 0) {
       const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;
     }
-    if (cutBoats.length > 0) {
-      const circles = cutBoats.map(x => boatCircleS(x.boat)).join('');
-      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${circles}</span>`;
+  }
+
+  // 切り候補: 展示補正後3連対率（年間実績＋当日展示デルタ）を6艇比較して最も低い1艇を表示。
+  //   相対比較のみで、閾値条件は無し。実測会場でなくても年間実績だけで比較できれば表示する。
+  {
+    let minVal = Infinity;
+    let cutBoat = null;
+    ranked2.forEach(b => {
+      const base3r = MASTER_EXT?.player_index?.[b.name]?.annual_place3;
+      if (base3r == null) return; // 実績データが無い艇は比較対象外
+      let adj = base3r;
+      if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
+        const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
+        adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
+      }
+      if (adj < minVal) { minVal = adj; cutBoat = b.boat; }
+    });
+    if (cutBoat != null) {
+      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${boatCircleS(cutBoat)}</span>`;
     }
   }
 
@@ -1719,6 +1732,30 @@ function renderBuy(rno){
   const buy2 = buy2Hit_raw;
 
 
+  // ── 展示補正後3連対率を6艇比較し、最も低い艇を「切」候補としてマーク ──
+  // 出走表と同じ年間3連対率(annual_place3)に、実測テーブル会場のみ当日展示の
+  // 3連対率デルタ(__p3r_)を加算した「補正後の値」で6艇を比較する。相対比較のみ、閾値条件は無し。
+  // データが無い艇（annual_place3 null）は比較対象から除外する。
+  // データが無い艇（annual_place3 null）は比較対象から除外する。
+  const p3rAdjustedByBoat = {};
+  ranked2.forEach(b => {
+    const base3r = MASTER_EXT?.player_index?.[b.name]?.annual_place3;
+    if (base3r == null) return;
+    let adj = base3r;
+    if (isMeasuredTenjiVenue && hasTenji && tenjiScoreMap) {
+      const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
+      adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
+    }
+    p3rAdjustedByBoat[b.boat] = adj;
+  });
+  let p3rCutBoat = null;
+  {
+    let minVal = Infinity;
+    Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
+      if (val < minVal) { minVal = val; p3rCutBoat = Number(boatStr); }
+    });
+  }
+
   // ─ STEP6: 確率テーブル生成
   const probRows = ranked2.map((bt,i)=>{
     // 基準列: probを6艇で正規化し、展開補正（tenkaiDiff）を加味した相対確率（合計100%）
@@ -1782,11 +1819,16 @@ function renderBuy(rno){
 
     // ── 3連対率セル（管理者限定）──
     // 基準値: 出走表と同じ MASTER_EXT.player_index[name].annual_place3（年間3連対率）
-    // 実測テーブル会場（住之江/常滑/蒲郡/三国）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
+    // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
     // それ以外の会場は実測デルタを持たないため基準値のみ表示（根拠のない加算はしない）。
+    // [2026-07-17 追加] 6艇比較で補正後の値が最も低い艇には「切」バッジを付ける。
     let place3rCell;
     {
       const base3r = MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // 0〜1 の割合、なければ null
+      const isCutCandidate = p3rCutBoat != null && bt.boat === p3rCutBoat;
+      const cutBadge = isCutCandidate
+        ? `<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切</span>`
+        : '';
       if(base3r == null){
         place3rCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
       } else if(isMeasuredTenjiVenue && hasTenji && tenjiScoreMap){
@@ -1795,9 +1837,9 @@ function renderBuy(rno){
         const deltaStr = Math.abs(deltaPt) < 0.5
           ? ''
           : `<span style="font-size:9px;color:${deltaPt >= 0 ? 'var(--green)' : 'var(--red)'}">（${deltaPt >= 0 ? '+' : '−'}${Math.abs(deltaPt).toFixed(1)}）</span>`;
-        place3rCell = `<span style="font-family:var(--mono)">${(adjusted * 100).toFixed(1)}%</span>${deltaStr}`;
+        place3rCell = `<span style="font-family:var(--mono)">${(adjusted * 100).toFixed(1)}%</span>${deltaStr}${cutBadge}`;
       } else {
-        place3rCell = `<span style="font-family:var(--mono)">${(base3r * 100).toFixed(1)}%</span>`;
+        place3rCell = `<span style="font-family:var(--mono)">${(base3r * 100).toFixed(1)}%</span>${cutBadge}`;
       }
     }
 
@@ -1904,7 +1946,7 @@ function renderBuy(rno){
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）。（）内は実際に1着率へ加算される値のpt換算目安（renorm前のため最終確率列の差分とは一致しない参考値）">展示補正</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-13〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎）のみ表示。該当diffが属する本当の生テーブル値(整数・補間なし)。展示補正列（コース別クリップ後・補間済みの実効値）と大きく異なる艇はクリップが効いている。それ以外の会場は—">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示">3連対率</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示。6艇比較で最も低い艇には「切」バッジ表示">3連対率</th>
         </tr></thead>
         <tbody>${probRows}</tbody>
       </table>
