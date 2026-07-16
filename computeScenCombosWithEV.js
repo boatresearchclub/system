@@ -1255,8 +1255,26 @@
               } finally {
                 window._restoreDataForCalc(_sv2);
               }
+            } else if (typeof window._scenBoatProbsSkipCount === 'undefined' || window._scenBoatProbsSkipCount < 10) {
+              // [2026-07-17 追加] ここが素通りされると boatProbs が空のまま返り、
+              // top_stats.js 側で「展示補正・スリット補正前の生データ」
+              // （rd.boats[].final_prob）にフォールバックしてしまう。
+              // 個別レースの最終確率(50%未満が多い)と、③セクションの「推定」
+              // 平均（過大評価に見える）が食い違う現象の原因候補のひとつ。
+              window._scenBoatProbsSkipCount = (window._scenBoatProbsSkipCount || 0) + 1;
+              console.warn('[computeScenCombosWithEV/cache] boatProbs 再構築スキップ',
+                { venue, rno, date: vdata?.date,
+                  hasBoats: !!_rd2?.boats,
+                  hasCalcTenkaiProbs: typeof calcTenkaiProbs === 'function',
+                  hasSetDataForCalc: typeof window._setDataForCalc === 'function' });
             }
-          } catch (_be) { /* boatProbs 取得失敗は無視 */ }
+          } catch (_be) {
+            if (typeof window._scenBoatProbsFailCount === 'undefined') window._scenBoatProbsFailCount = 0;
+            if (window._scenBoatProbsFailCount < 10) {
+              window._scenBoatProbsFailCount++;
+              console.warn('[computeScenCombosWithEV/cache] boatProbs 取得失敗', venue, rno, vdata?.date, _be);
+            }
+          }
 
           return {
             combos      : _combos,
