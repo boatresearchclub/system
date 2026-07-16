@@ -1034,7 +1034,12 @@ function renderBuy(rno){
   const { wBase, wTenkai, wTenji } = calcDynamicWeights(arek);
 
   // 各艇の展開係数・展示係数を算出
-  const tenkaiOnlyTotal = ranked.reduce((s, x) => s + (x.tenkai_score ?? x.tenkai_prob), 0) || 1;
+  // [2026-07-17 修正] 基準1着率(display_base)は「今回のメンバーの噛み合いのみ」を
+  // 反映し、展示・風などの当日外的要因は含めない、という定義に合わせるため、
+  // tenkai_score/tenkai_prob（layer3=展示・風込み）ではなく、layer3を含まない
+  // tenkai_prob_pure を使用する。tenkai_prob_pure が無い（古い/未対応の呼び出し元）
+  // 場合は従来通り tenkai_score/tenkai_prob にフォールバックし、挙動を維持する。
+  const tenkaiOnlyTotal = ranked.reduce((s, x) => s + (x.tenkai_prob_pure ?? x.tenkai_score ?? x.tenkai_prob), 0) || 1;
 
   // ── 枠番順に並んだrawBoatsから「1つ前コース（枠番-1）の艇」参照マップを生成 ──
   // 例: 4号艇なら3号艇を前コースとして参照
@@ -1073,7 +1078,7 @@ function renderBuy(rno){
     //     展開要因がもたらす補正の絶対量が艇ごとの実際の強弱に比例する。
     let tenkaiDiff = 0.0;
     if(useMaster && baseNorm > 0){
-      const tenkaiNorm = (b.tenkai_score ?? b.tenkai_prob) / tenkaiOnlyTotal;
+      const tenkaiNorm = (b.tenkai_prob_pure ?? b.tenkai_score ?? b.tenkai_prob) / tenkaiOnlyTotal;
       tenkaiDiff = tenkaiNorm - baseNorm;
     }
     // 旧tenkaiCoef互換値（表示・デバッグ用にのみ保持。ボーナス計算には使わない）

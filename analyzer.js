@@ -1067,6 +1067,7 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
       ...b,
       tenkai_prob:      b.prob,
       tenkai_score:     b.prob,
+      tenkai_prob_pure: b.prob,
       final_prob:       b.prob,
       layer2_modifier:  1.0,
       layer3_modifier:  1.0,
@@ -1080,6 +1081,7 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
       ...b,
       tenkai_prob:      b.prob,
       tenkai_score:     b.prob,
+      tenkai_prob_pure: b.prob,
       final_prob:       b.prob,
       layer2_modifier:  1.0,
       layer3_modifier:  1.0,
@@ -1469,11 +1471,62 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
   });
   const total = Object.values(scores).reduce((s, v) => s + v, 0) || 1;
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-17 追加] 「基準1着率」表示用 ── layer3(展示・風)を含まない
+  // 「今回のメンバー6人の噛み合いのみ」のスコアを別途算出する。
+  //
+  // 【目的】
+  //   ユーザー定義: 「基準＝今回のメンバーならこの選手は◯%」
+  //                 「展示など"その日限りの外的要因"は最終確率側だけで混ぜる」
+  //   → 現行の tenkai_prob/tenkai_score/final_prob は Stage1/Stage2の時点で
+  //     すでに layer3（展示偏差・風）を掛け込んでいるため、この定義には
+  //     厳密には合っていなかった（前段の会話で確認済み）。
+  //
+  // 【方針: 既存出力への影響ゼロ】
+  //   下のロジックは上の scores（＝final_prob/tenkai_prob/tenkai_score の元）
+  //   とは完全に独立した計算で、新規フィールド tenkai_prob_pure にのみ格納する。
+  //   既存フィールドの値・計算経路は一切変更しない
+  //   （買い目判定・HIT/REC・展開分析タブ・calibration.jsの学習対象などは無影響）。
+  //
+  //   layer3を除く以外の要素（メンバー噛み合いboost、まくり→まくり差し連動
+  //   ボーナスchainBoostMap）は「今回のメンバー構成そのものの噛み合い」に
+  //   該当するため、pure側にも含める。
+  //   v2パターンテーブルのブレンド（v2NigeOverride等）は「展示込みnigeProbを
+  //   実績値にブレンドする」処理で、layer3抜きの値に対する意味が変わって
+  //   しまうため、pure側では適用しない（Stage1/2の素の噛み合い値のみ使用）。
+  // ══════════════════════════════════════════════════════════════════
+  const rawNigePure = (boat1 ? boat1.prob : 0)
+    * Math.max(0, 1.0 - totalBoost * NIGE_BOOST_SCALE);
+  const nigeProbPureClipped = Math.min(NIGE_CLIP_MAX, Math.max(NIGE_CLIP_MIN, rawNigePure));
+
+  const condRawPure = {};
+  others.forEach(b => {
+    const baseShare = b.prob / othersProbTotal;
+    condRawPure[b.boat] = Math.max(0,
+      baseShare
+      * (1.0 + boost[b.boat] * CONDITIONAL_BOOST_SCALE)
+      * chainBoostMap[b.boat]
+    );
+  });
+  const condTotalPure = Object.values(condRawPure).reduce((s, v) => s + v, 0) || 1;
+  const conditionalSharePure = {};
+  others.forEach(b => { conditionalSharePure[b.boat] = condRawPure[b.boat] / condTotalPure; });
+
+  const scoresPure = {};
+  scoresPure[1] = Math.max(FLOOR_PROB, nigeProbPureClipped);
+  others.forEach(b => {
+    scoresPure[b.boat] = Math.max(FLOOR_PROB, (1 - nigeProbPureClipped) * (conditionalSharePure[b.boat] ?? 0));
+  });
+  const totalPure = Object.values(scoresPure).reduce((s, v) => s + v, 0) || 1;
+
   return [...boats]
     .map(b => ({
       ...b,
       tenkai_prob:         scores[b.boat] / total,
       tenkai_score:        scores[b.boat] / total,
+      // [2026-07-17 追加] 基準1着率表示専用（layer3=展示・風を含まない）。
+      // renderer.js の display_base 計算はこちらを参照する。
+      tenkai_prob_pure:    scoresPure[b.boat] / totalPure,
       kimari_coef:         b.boat === 1 ? -(totalBoost) : boost[b.boat],  // デバッグ用: ブースト量
       final_prob:          scores[b.boat] / total,
       // [2026-06-20 追加] 1号艇のみ: コース別補正前の値（calibration.js が
