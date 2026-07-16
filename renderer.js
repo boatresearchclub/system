@@ -4360,6 +4360,32 @@ function updatePersistentBanners(rno){
         <span style="font-size:10px;color:var(--text3);flex-shrink:0">一撃警戒</span>
       </div>`;
     }
+
+    // ── スリットリードバナー: 展示タイム0.1秒以上差のみ（ST条件なし） ──
+    // 条件: 前艇比 展示タイム0.1秒以上速い（スリットALからST条件を除いたもの）
+    const slitLeadBoatsBan = [];
+    for(let bn = 2; bn <= 6; bn++){
+      const thisB = boats.find(b => b.boat === bn);
+      const prevB = boats.find(b => b.boat === bn - 1);
+      if(!thisB || !prevB) continue;
+      const myT = tenjiBanData[String(bn)]?.tenji ?? null;
+      const prT = tenjiBanData[String(bn-1)]?.tenji ?? null;
+      // 浮動小数点誤差対策: 小数第2位で丸めてから比較
+      const tenjiDiff = (myT != null && prT != null) ? Math.round((prT - myT) * 100) / 100 : null;
+      const leadOk = tenjiDiff != null ? (tenjiDiff >= 0.1) : false;
+      if(leadOk) slitLeadBoatsBan.push(bn);
+    }
+    if(slitLeadBoatsBan.length > 0){
+      const slitLeadCircles = slitLeadBoatsBan.map(bn =>
+        `<span class="boat-circle b${bn}" style="width:20px;height:20px;font-size:10px;line-height:20px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${bn}</span>`
+      ).join('');
+      html += `<div class="insufficient-banner" style="background:rgba(255,59,59,0.07);border-color:rgba(255,59,59,0.22);color:#000">
+        <span style="font-size:13px;flex-shrink:0">🚀</span>
+        <span style="font-weight:700;flex-shrink:0">スリットリード</span>
+        ${slitLeadCircles}
+        <span style="font-size:10px;color:var(--text3);flex-shrink:0">展示先行</span>
+      </div>`;
+    }
   }
 
   // ── AI予想条件バナー（_scenEVCache から参照）──
