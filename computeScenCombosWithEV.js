@@ -1116,7 +1116,23 @@
                     if (_tk && typeof _tenjiCache !== 'undefined') _tSM = _tenjiCache[_tk] || {};
                   } catch(_te) {}
                   const _sd = calcScenarioData(_ranked2w, _rd.boats, _tSM, venue, vdata);
-                  if (_sd) {
+                  // [2026-07-16 修正] calcScenarioData は不正入力時も {valid:false} という
+                  // truthy なオブジェクトを返すため、従来の if(_sd) だけでは
+                  // 「計算できなかった」ケースを素通りさせてしまい、後段の
+                  // calcWeighted2nd/calcWeighted3rd が undefined 参照で例外を投げて
+                  // catch(_we) に無言で握りつぶされていた（＝新設した⑨セクションが
+                  // 過去日で全件0件になっていた真因の疑いが強い）。
+                  // .valid を明示チェックし、失敗時は限定回数だけログを出して
+                  // 原因（展示データ不足等）を可視化できるようにする。
+                  if (_sd && !_sd.valid) {
+                    if (typeof window._scenSdInvalidCount === 'undefined') window._scenSdInvalidCount = 0;
+                    if (window._scenSdInvalidCount < 10) {
+                      window._scenSdInvalidCount++;
+                      console.warn('[computeScenCombosWithEV/cache] calcScenarioData invalid',
+                        { venue, rno, date: vdata?.date, tenjiKeys: Object.keys(_tSM || {}).length });
+                    }
+                  }
+                  if (_sd && _sd.valid) {
                     let _raw = 0, _cnt = 0;
                     _combos.forEach(c => {
                       const _w = parseInt(c.split('-')[0]);
@@ -1158,14 +1174,26 @@
                         _cacheWeighted3rd   = _cW3;
                         _cacheRanked3rdList = Object.entries(_cW3).sort((a, b) => b[1] - a[1]).map(([k]) => parseInt(k));
                       }
-                    } catch (_we) { /* 計算失敗時は空のまま（後段でフォールバック） */ }
+                    } catch (_we) {
+                      if (typeof window._scenW23FailCount === 'undefined') window._scenW23FailCount = 0;
+                      if (window._scenW23FailCount < 10) {
+                        window._scenW23FailCount++;
+                        console.warn('[computeScenCombosWithEV/cache] weighted2nd/3rd 再計算失敗', venue, rno, vdata?.date, _we);
+                      }
+                    }
                   }
                 }
               } finally {
                 window._restoreDataForCalc(_savedC);
               }
             }
-          } catch (_ce) { /* hitProbEst 計算失敗時は null のまま返す */ }
+          } catch (_ce) {
+            if (typeof window._scenCacheOuterFailCount === 'undefined') window._scenCacheOuterFailCount = 0;
+            if (window._scenCacheOuterFailCount < 10) {
+              window._scenCacheOuterFailCount++;
+              console.warn('[computeScenCombosWithEV/cache] hitProbEst/weighted 再計算の外側で例外', venue, rno, vdata?.date, _ce);
+            }
+          }
 
           // キャッシュヒット時も boatProbs を構築する
           // _ranked が取れていれば final_prob を使い、なければ空オブジェクト
