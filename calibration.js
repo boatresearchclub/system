@@ -1189,14 +1189,14 @@
     push(['補正前(生の三重積)', rawError != null ? _pctStr(rawError) : '', '']);
     blank();
     push(['推定帯', '件数(補正後)', '推定平均(補正後)', '実績(補正後)', '差(補正後)',
-                    '推定平均(補正前)', '実績(補正前)', '差(補正前)']);
+                    '件数(補正前)', '推定平均(補正前)', '実績(補正前)', '差(補正前)']);
     finalProbBinStats.forEach((b, i) => {
       const rb = rawProbBinStats[i];
       const diffF = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
       const diffR = (rb && rb.actual != null && rb.estAvg != null) ? rb.actual - rb.estAvg : null;
       push([
         b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diffF != null ? _pctStr(diffF) : '',
-        rb ? _pctStr(rb.estAvg) : '', rb ? _pctStr(rb.actual) : '', diffR != null ? _pctStr(diffR) : ''
+        rb ? rb.total : '', rb ? _pctStr(rb.estAvg) : '', rb ? _pctStr(rb.actual) : '', diffR != null ? _pctStr(diffR) : ''
       ]);
     });
 
