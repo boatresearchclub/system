@@ -463,6 +463,11 @@
       return Object.assign({}, r, { boatProbs: swappedBp });
     });
   }
+  // [2026-07-17 診断追加] _lastAllResults はこのIIFE内のローカル変数のため
+  // コンソールから直接見えない。Step1Only比較検証用に読み取り専用の窓口を追加する。
+  // 既存の挙動・パネル描画には一切影響しない（読むだけ）。
+  window._getLastAllResults = function () { return _lastAllResults; };
+
   window.calcCalibrationByCourse_Step1Only = function (results) {
     return calcCalibrationByCourse(_swapCourse1WithStep1Only(results));
   };
