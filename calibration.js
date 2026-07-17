@@ -475,6 +475,46 @@
     return calcCalibrationByVenueCourse(_swapCourse1WithStep1Only(results));
   };
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-17 追加/A1+A2] 新展示モデル（calcTenjiScore直接加算）＋
+  // 再正規化修正を適用した場合の①③相当集計。Step1Only比較と同じ設計。
+  //
+  // 【使い方】
+  //   1. window._calibExperiment.flags.useNewTenjiModel = true; を実行
+  //   2. 既存の「バックテスト再計算」操作を行う（boatProbsV2 が populate される）
+  //   3. calcCalibrationByCourse_V2(resultsScenAll) / calcCalibrationByVenueCourse_V2(resultsScenAll)
+  //      を現行の calcCalibrationByCourse(resultsScenAll) と見比べる
+  //   boatProbsV2 が空（未計算）のレースは元の boatProbs のまま扱われるため、
+  //   フラグOFFのまま呼んでも既存の①③と同じ結果になる（安全側フォールバック）。
+  // ══════════════════════════════════════════════════════════════════
+  function _swapWithV2(results) {
+    return (results || []).map(r => {
+      if (!r.boatProbsV2 || Object.keys(r.boatProbsV2).length === 0) return r;
+      return Object.assign({}, r, { boatProbs: r.boatProbsV2 });
+    });
+  }
+  window.calcCalibrationByCourse_V2 = function (results) {
+    return calcCalibrationByCourse(_swapWithV2(results));
+  };
+  window.calcCalibrationByVenueCourse_V2 = function (results) {
+    return calcCalibrationByVenueCourse(_swapWithV2(results));
+  };
+  // コンソールから: window._compareV2() で①相当の 現行 vs V2 を並べて表示する
+  window._compareV2 = function () {
+    const all = _lastAllResults || [];
+    const withV2 = all.filter(r => r.boatProbsV2 && Object.keys(r.boatProbsV2).length > 0).length;
+    console.log(`[V2比較] boatProbsV2 を持つレース: ${withV2}/${all.length}件` +
+      (withV2 === 0 ? '（0件＝まだ useNewTenjiModel=true でバックテストを再実行していません）' : ''));
+    if (withV2 === 0) return null;
+    const cur = calcCalibrationByCourse(all).find(s => s.course === 1);
+    const v2  = calcCalibrationByCourse_V2(all).find(s => s.course === 1);
+    console.table([
+      { 版: '現行', 件数: cur?.count, 推定: cur?.estAvg, 実績: cur?.actual, 差: cur?.diff },
+      { 版: 'V2(新展示モデル+A1修正)', 件数: v2?.count, 推定: v2?.estAvg, 実績: v2?.actual, 差: v2?.diff },
+    ]);
+    return { current: cur, v2 };
+  };
+
   function calcCalibrationByCourse(results) {
     const courses = [1, 2, 3, 4, 5, 6];
 
@@ -1586,8 +1626,13 @@
 
       container.innerHTML = `
         <div class="ai-stats-card" style="margin-bottom:0.6rem">
-          <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
-            <button onclick="window._downloadCalibPointsJSON()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;margin-right:6px">
+          <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+            <label style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px;cursor:pointer" title="ONにして再バックテストすると boatProbsV2 が populate される。既存の予測・買い目・EVには影響しません。">
+              <input type="checkbox" ${window._calibExperiment?.flags?.useNewTenjiModel ? 'checked' : ''}
+                onchange="window._calibExperiment.flags.useNewTenjiModel=this.checked; window._calibExperiment.flags.fixRenorm=this.checked; console.log('[実験フラグ] useNewTenjiModel/fixRenorm =', this.checked, '再バックテスト実行後 window._compareV2() で確認してください');">
+              🧪 実験: 新展示モデル(A2)+再正規化修正(A1)
+            </label>
+            <button onclick="window._downloadCalibPointsJSON()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">
               🔄 補正テーブルをJSON保存（全端末配布用）
             </button>
             <button onclick="window._downloadCalibrationCSV()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">

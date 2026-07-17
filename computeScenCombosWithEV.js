@@ -125,6 +125,27 @@
     } catch (_e) {}
   })();
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // [2026-07-17 追加] 実験用フラグ・並行値の一元管理オブジェクト
+  //
+  //   【目的】現行運用（final_prob / boatProbs / EV / 買い目）に一切影響を与えず、
+  //   新ロジックの検証を進めるための「唯一の窓口」。
+  //   ・新しいグローバル変数やフィールドをファイルごとに増やさない。
+  //   ・flags が全部 false の間は、既存コードと完全に同一の計算結果になる
+  //     （if文がfalseで素通りするだけ）。
+  //   ・admin-modeのcalibration.jsパネルからチェックボックスでON/OFFする想定。
+  //   ・本採用が決まったら、該当flagのif分岐を残して旧分岐を削除するだけで
+  //     クリーンアップが完結する（新旧ファイルの統合作業は発生しない）。
+  // ─────────────────────────────────────────────────────────────────────────
+  window._calibExperiment = window._calibExperiment || {
+    flags: {
+      useNewTenjiModel: false,   // A2: バックテストの展示補正をrenderer.jsと同じ calcTenjiScore ベースに統一
+      fixRenorm:        false,  // A1: 2〜6号艇補正後の全体再正規化から1号艇を除外
+    },
+    // 直近1レース分の並行計算値を一時保持するデバッグ用スロット（永続配列にはしない）
+    debug: {},
+  };
+
   // localStorage から復元を試みる（起動時に前回の実測値を即時反映）
   function _loadCalibFromLS() {
     try {
@@ -1292,6 +1313,9 @@
             // 渡していない（Step2が発火しない）ため、boatProbs 自体が既に Step1 のみの値。
             // 非キャッシュ経路との整合のため同じ値をそのまま複製しておく。
             boatProbsStep1Only: Object.assign({}, _boatProbs),
+            // [2026-07-17 追加/A2診断] キャッシュ経路では新展示モデルを未計算のため空。
+            // calibration.js側は空オブジェクトを「このレースは対象外」として無視する。
+            boatProbsV2: {},
             // [修正] 旧実装は常に null/{} だった。計算できていれば反映する。
             pred2ndRank : null,
             pred3rdRank : null,
@@ -1550,12 +1574,101 @@
                   b.final_prob = _calOther;
                 }
               });
-              const _renormTotal = ranked2.reduce((s, b) => s + (b.final_prob || 0), 0);
-              if (_renormTotal > 0 && Math.abs(_renormTotal - 1) > 1e-9) {
-                ranked2.forEach(b => { b.final_prob = b.final_prob / _renormTotal; });
+              // [2026-07-17 追加/A1] window._calibExperiment.flags.fixRenorm が true の場合のみ、
+              //   1号艇を再正規化の対象から外し、2〜6号艇の枠内だけで再正規化する。
+              //   旧実装は6艇まとめて割っていたため、2〜6号艇補正の下方修正幅ぶん
+              //   1号艇の値が押し戻される（③の過大評価の主因）。flagがfalseの間は
+              //   従来通りの分岐（6艇まとめて再正規化）を通るため挙動は完全に維持される。
+              if (window._calibExperiment?.flags?.fixRenorm) {
+                const _boat1Fix = ranked2.find(b => b.boat === 1);
+                const _othersFix = ranked2.filter(b => b.boat !== 1);
+                const _othersFixTotal = _othersFix.reduce((s, b) => s + (b.final_prob || 0), 0);
+                if (_boat1Fix && _othersFixTotal > 0) {
+                  const _remainingFix = Math.max(0, 1 - _boat1Fix.final_prob);
+                  _othersFix.forEach(b => { b.final_prob = _remainingFix * (b.final_prob / _othersFixTotal); });
+                  // 1号艇 final_prob はここでは変更しない（Step1/Step2の確定値を保持）
+                }
+              } else {
+                const _renormTotal = ranked2.reduce((s, b) => s + (b.final_prob || 0), 0);
+                if (_renormTotal > 0 && Math.abs(_renormTotal - 1) > 1e-9) {
+                  ranked2.forEach(b => { b.final_prob = b.final_prob / _renormTotal; });
+                }
               }
             }
           } catch (_cco) { /* 補正失敗時は無補正のまま続行（フォールバック） */ }
+
+          // ─────────────────────────────────────────────────────────────────
+          // [2026-07-17 追加/A2 診断] 本番(renderer.js)と同じ calcTenjiScore ベースの
+          // 展示補正モデルで final_prob を並行計算する（読み取り専用・検証専用）。
+          //   window._calibExperiment.flags.useNewTenjiModel が true の場合のみ実行。
+          //   既存の b.final_prob / ranked2 の並び順・EV計算・買い目には一切影響しない。
+          //   結果は b.final_prob_v2 / b.__calV2 に格納し、boatProbsV2 として返却する。
+          // ─────────────────────────────────────────────────────────────────
+          try {
+            if (window._calibExperiment?.flags?.useNewTenjiModel
+                && typeof calcTenjiScore === 'function'
+                && tenjiScoreMap && Object.keys(tenjiScoreMap).length > 0) {
+
+              const _tsm2 = calcTenjiScore(ranked2, tenjiScoreMap, venue, _arek);
+              const _isMeasuredVenue = !!(_tsm2 && _tsm2.__isSuminoe);
+
+              const TENJI_P1_CLIP_BY_COURSE_V2 = {
+                1: [0.94, 1.06], 2: [0.90, 1.12], 3: [0.85, 1.20],
+                4: [0.80, 1.25], 5: [0.85, 1.20], 6: [0.88, 1.15],
+              };
+              const BONUS_BASE_TENJI_V2 = 0.15;
+
+              ranked2.forEach(b => {
+                const tenkaiBonusV2 = 1.0 * (b._tenkaiDiff || 0) * _wTenkai;
+                const preScoreV2 = Math.max(0.001, b._baseNorm + tenkaiBonusV2);
+                if (_isMeasuredVenue) {
+                  const [lo, hi] = TENJI_P1_CLIP_BY_COURSE_V2[b.boat] ?? [0.85, 1.20];
+                  const rawPtV2 = _tsm2?.[`__rawP1_${b.boat}`] ?? ((( _tsm2?.[`__coef_${b.boat}`] ?? 1.0) - 1.0) * 100);
+                  const loPt = (lo - 1.0) * 100, hiPt = (hi - 1.0) * 100;
+                  const clippedPtV2 = Math.min(hiPt, Math.max(loPt, rawPtV2));
+                  b._multi_score_v2 = Math.max(0.001, preScoreV2 + clippedPtV2 / 100);
+                } else {
+                  const tenjiCoefV2 = _tsm2?.[`__coef_${b.boat}`] ?? 1.0;
+                  const tenjiBonusV2 = BONUS_BASE_TENJI_V2 * (tenjiCoefV2 - 1.0) * _wTenji;
+                  b._multi_score_v2 = Math.max(0.001, preScoreV2 + tenjiBonusV2);
+                }
+              });
+              const _multiTotalV2 = ranked2.reduce((s, b) => s + b._multi_score_v2, 0) || 1;
+              ranked2.forEach(b => { b.final_prob_v2 = b._multi_score_v2 / _multiTotalV2; });
+
+              // 1号艇・2〜6号艇の較正も現行と同じ手順で適用（A1のrenorm修正込み）
+              const _boat1V2 = ranked2.find(b => b.boat === 1);
+              if (_boat1V2 && typeof calibrateCourse1Prob === 'function') {
+                const _rawC1V2 = _boat1V2.final_prob_v2;
+                const _calC1V2 = calibrateCourse1Prob(_rawC1V2, _boat1V2.name, venue);
+                if (_calC1V2 != null && !isNaN(_calC1V2)) {
+                  const _othersV2 = ranked2.filter(b => b.boat !== 1);
+                  const _othersV2Total = _othersV2.reduce((s, b) => s + b.final_prob_v2, 0) || 1;
+                  const _remainV2 = Math.max(0, 1 - _calC1V2);
+                  _othersV2.forEach(b => { b.final_prob_v2 = _remainV2 * (b.final_prob_v2 / _othersV2Total); });
+                  _boat1V2.final_prob_v2 = _calC1V2;
+                }
+              }
+              if (typeof calibrateOtherCourseProb === 'function') {
+                ranked2.forEach(b => {
+                  if (b.boat == null || b.boat === 1 || b.final_prob_v2 == null) return;
+                  const _calOtherV2 = calibrateOtherCourseProb(b.final_prob_v2, b.boat, venue);
+                  if (_calOtherV2 != null && !isNaN(_calOtherV2)) b.final_prob_v2 = _calOtherV2;
+                });
+                // A1修正込みの再正規化（2〜6号艇の枠内のみ）
+                const _boat1V2b = ranked2.find(b => b.boat === 1);
+                const _othersV2b = ranked2.filter(b => b.boat !== 1);
+                const _othersV2bTotal = _othersV2b.reduce((s, b) => s + (b.final_prob_v2 || 0), 0);
+                if (_boat1V2b && _othersV2bTotal > 0) {
+                  const _remainV2b = Math.max(0, 1 - _boat1V2b.final_prob_v2);
+                  _othersV2b.forEach(b => { b.final_prob_v2 = _remainV2b * (b.final_prob_v2 / _othersV2bTotal); });
+                }
+              }
+              window._calibExperiment.debug.lastTenjiV2 = { venue, rno, isMeasuredVenue: _isMeasuredVenue };
+            }
+          } catch (_a2err) {
+            console.warn('[computeScenCombosWithEV/A2診断] 並行計算に失敗しました（既存挙動には影響なし）', _a2err);
+          }
 
           ranked2.sort((a, b) => b.final_prob - a.final_prob);
         } catch (_efp) {
@@ -1829,12 +1942,19 @@
       // 並行確率マップ。1号艇以外は現行の boatProbs と同じ値（Step2の対象外のため）。
       // 既存の boatProbs / boatProbsRaw の中身・使われ方には一切影響しない追加のみ。
       const boatProbsStep1Only = {};
+      // [2026-07-17 追加/A1+A2 診断] window._calibExperiment.flags.useNewTenjiModel が
+      // true の場合のみ意味を持つ並行値（新展示モデル＋A1再正規化修正込みの final_prob_v2）。
+      // 既存の boatProbs / final_prob には一切影響しない。フラグOFF時は空のまま。
+      const boatProbsV2 = {};
       ranked2.forEach(b => {
         if (b.boat != null && b.final_prob != null) {
           boatProbs[b.boat] = b.final_prob;
           boatProbsStep1Only[b.boat] = (b.boat === 1 && b.__step1OnlyProb != null)
             ? b.__step1OnlyProb
             : b.final_prob;
+        }
+        if (b.boat != null && b.final_prob_v2 != null) {
+          boatProbsV2[b.boat] = b.final_prob_v2;
         }
         // [2026-06-20 追加/2026-07-03 拡張] 全艇の補正前の生値も保持。
         // calibration.js がこちらを使って updateCourse1CalibPoints /
@@ -1870,6 +1990,9 @@
         // [2026-07-17 診断追加] Step2（個人逃げ率ブレンド）を適用しなかった場合の並行値。
         // 既存の予測・買い目・EV計算には一切使われない、検証専用の追加フィールド。
         boatProbsStep1Only,
+        // [2026-07-17 追加/A1+A2 診断] 新展示モデル(calcTenjiScore直接加算)＋
+        // A1再正規化修正を両方適用した場合の並行値。フラグOFF時は空オブジェクト。
+        boatProbsV2,
         // 2着/3着順位リスト（top_stats.js で actual2nd/3rd と照合して pred?ndRank を付与）
         ranked2ndList,          // [最有力艇, 2位艇, ...] 加重確率降順
         ranked3rdList,          // 同上（3着）
