@@ -440,6 +440,36 @@
     return null;
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-17 診断追加] Step2（1号艇・個人逃げ率ブレンド）を適用しなかった
+  // 場合の①③相当の集計を、既存の集計ロジックをそのまま再利用して算出する。
+  //
+  // 【設計方針】
+  //   本番の予測・買い目・EV計算・既存の①③表示には一切影響しない、
+  //   検証専用の追加関数。r.boatProbs[1] を r.boatProbsStep1Only[1] に
+  //   差し替えたコピーを作り、既存の calcCalibrationByCourse /
+  //   calcCalibrationByVenueCourse にそのまま渡すだけ。
+  //
+  // 【使い方（ブラウザコンソール）】
+  //   calcCalibrationByCourse_Step1Only(resultsScenAll)          // ①相当（コース単体）
+  //   calcCalibrationByVenueCourse_Step1Only(resultsScenAll)     // ③相当（会場×コース別）
+  //   既存の calcCalibrationByCourse(resultsScenAll) / calcCalibrationByVenueCourse(resultsScenAll)
+  //   の結果と見比べることで、Step2が①③のズレにどれだけ寄与しているかを切り分けられる。
+  // ══════════════════════════════════════════════════════════════════
+  function _swapCourse1WithStep1Only(results) {
+    return (results || []).map(r => {
+      if (!r.boatProbsStep1Only || r.boatProbsStep1Only[1] == null) return r;
+      const swappedBp = Object.assign({}, r.boatProbs, { 1: r.boatProbsStep1Only[1] });
+      return Object.assign({}, r, { boatProbs: swappedBp });
+    });
+  }
+  window.calcCalibrationByCourse_Step1Only = function (results) {
+    return calcCalibrationByCourse(_swapCourse1WithStep1Only(results));
+  };
+  window.calcCalibrationByVenueCourse_Step1Only = function (results) {
+    return calcCalibrationByVenueCourse(_swapCourse1WithStep1Only(results));
+  };
+
   function calcCalibrationByCourse(results) {
     const courses = [1, 2, 3, 4, 5, 6];
 

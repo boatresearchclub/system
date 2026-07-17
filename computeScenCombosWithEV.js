@@ -332,6 +332,11 @@
       }
     }
 
+    // [2026-07-17 診断追加] Step2（個人逃げ率ブレンド）が最終値に与える影響を
+    // 検証するため、Step1までの値（globalCalib）を副作用なしで記録しておく。
+    // 既存の戻り値・挙動には一切影響しない（読み取り専用の追加）。
+    window._lastCourse1GlobalCalib = globalCalib;
+
     // ── Step2: 個人逃げ率ブレンド ──
     // boat1Name が渡されていて MASTER_EXT が利用可能な場合のみ適用
     if (boat1Name && typeof MASTER_EXT !== 'undefined' && MASTER_EXT?.course_master) {
@@ -1283,6 +1288,10 @@
             ev          : null,
             boatProbs   : _boatProbs,
             boatProbsRaw: _boatProbsRaw,
+            // [2026-07-17 診断追加] キャッシュ経路は calibrateCourse1Prob に boat1Name を
+            // 渡していない（Step2が発火しない）ため、boatProbs 自体が既に Step1 のみの値。
+            // 非キャッシュ経路との整合のため同じ値をそのまま複製しておく。
+            boatProbsStep1Only: Object.assign({}, _boatProbs),
             // [修正] 旧実装は常に null/{} だった。計算できていれば反映する。
             pred2ndRank : null,
             pred3rdRank : null,
@@ -1511,6 +1520,9 @@
               const _rawC1 = _boat1.final_prob;
               _boat1._rawCourseProb = _rawC1; // 再学習用（補正前の生値）
               const _calC1 = calibrateCourse1Prob(_rawC1, _boat1.name, venue);
+              // [2026-07-17 診断追加] Step2（個人逃げ率ブレンド）適用前の値（Step1まで）を
+              // 並行保持する。既存の _calC1 の使い道（final_prob 更新・再配分）には一切影響しない。
+              _boat1.__step1OnlyProb = window._lastCourse1GlobalCalib ?? _calC1;
               if (_calC1 != null && !isNaN(_calC1) && Math.abs(_calC1 - _rawC1) > 1e-9) {
                 const _others5 = ranked2.filter(b => b.boat !== 1);
                 const _others5Total = _others5.reduce((s, b) => s + b.final_prob, 0) || 1;
@@ -1813,9 +1825,16 @@
       // 実績と比較するために使用する。
       const boatProbs = {};
       const boatProbsRaw = {};
+      // [2026-07-17 診断追加] Step2（1号艇・個人逃げ率ブレンド）を適用しなかった場合の
+      // 並行確率マップ。1号艇以外は現行の boatProbs と同じ値（Step2の対象外のため）。
+      // 既存の boatProbs / boatProbsRaw の中身・使われ方には一切影響しない追加のみ。
+      const boatProbsStep1Only = {};
       ranked2.forEach(b => {
         if (b.boat != null && b.final_prob != null) {
           boatProbs[b.boat] = b.final_prob;
+          boatProbsStep1Only[b.boat] = (b.boat === 1 && b.__step1OnlyProb != null)
+            ? b.__step1OnlyProb
+            : b.final_prob;
         }
         // [2026-06-20 追加/2026-07-03 拡張] 全艇の補正前の生値も保持。
         // calibration.js がこちらを使って updateCourse1CalibPoints /
@@ -1848,6 +1867,9 @@
         ev          : null,     // 同上（synthOdds が確定してから計算）
         boatProbs,              // { 枠番: final_prob } コース別勝率キャリブレーション用
         boatProbsRaw,           // { 1: 補正前nigeProb } コース別補正の再学習用（デバッグ）
+        // [2026-07-17 診断追加] Step2（個人逃げ率ブレンド）を適用しなかった場合の並行値。
+        // 既存の予測・買い目・EV計算には一切使われない、検証専用の追加フィールド。
+        boatProbsStep1Only,
         // 2着/3着順位リスト（top_stats.js で actual2nd/3rd と照合して pred?ndRank を付与）
         ranked2ndList,          // [最有力艇, 2位艇, ...] 加重確率降順
         ranked3rdList,          // 同上（3着）
@@ -1931,6 +1953,10 @@
           }
           if (res.boatProbsRaw) {
             r.boatProbsRaw = res.boatProbsRaw;
+          }
+          // [2026-07-17 診断追加] Step2抜きの並行値も引き継ぐ（検証専用・既存挙動に影響なし）
+          if (res.boatProbsStep1Only) {
+            r.boatProbsStep1Only = res.boatProbsStep1Only;
           }
 
           // ── 加重確率ベースで pred2ndRank を上書き ──
