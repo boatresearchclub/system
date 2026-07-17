@@ -136,14 +136,40 @@
   //   ・admin-modeのcalibration.jsパネルからチェックボックスでON/OFFする想定。
   //   ・本採用が決まったら、該当flagのif分岐を残して旧分岐を削除するだけで
   //     クリーンアップが完結する（新旧ファイルの統合作業は発生しない）。
+  //   ・[2026-07-17 追記] バックテスト再実行がページリロードを伴う環境があるため、
+  //     flags は localStorage にも保存し、リロード後も維持されるようにする。
+  //     COURSE1_CALIB_POINTS 等と同じ永続化パターンを踏襲。
   // ─────────────────────────────────────────────────────────────────────────
+  const _CALIB_EXPERIMENT_LS_KEY = 'calib_experiment_flags_v1';
+  function _loadExperimentFlagsFromLS() {
+    try {
+      const raw = localStorage.getItem(_CALIB_EXPERIMENT_LS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch (_e) {}
+    return null;
+  }
   window._calibExperiment = window._calibExperiment || {
-    flags: {
-      useNewTenjiModel: false,   // A2: バックテストの展示補正をrenderer.jsと同じ calcTenjiScore ベースに統一
-      fixRenorm:        false,  // A1: 2〜6号艇補正後の全体再正規化から1号艇を除外
-    },
+    flags: Object.assign(
+      {
+        useNewTenjiModel: false,   // A2: バックテストの展示補正をrenderer.jsと同じ calcTenjiScore ベースに統一
+        fixRenorm:        false,  // A1: 2〜6号艇補正後の全体再正規化から1号艇を除外
+      },
+      _loadExperimentFlagsFromLS() || {}
+    ),
     // 直近1レース分の並行計算値を一時保持するデバッグ用スロット（永続配列にはしない）
     debug: {},
+    // flags を変更した後は必ずこれを呼ぶ（localStorageへ保存＋console確認ログ）。
+    // calibration.js のチェックボックスもこの関数経由で更新する。
+    saveFlags() {
+      try {
+        localStorage.setItem(_CALIB_EXPERIMENT_LS_KEY, JSON.stringify(this.flags));
+        console.log('[実験フラグ] localStorageに保存しました。ページ再読み込み後も維持されます。', this.flags);
+      } catch (_e) {
+        console.warn('[実験フラグ] localStorage保存に失敗しました', _e);
+      }
+    },
   };
 
   // localStorage から復元を試みる（起動時に前回の実測値を即時反映）

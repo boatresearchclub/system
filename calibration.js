@@ -1629,7 +1629,7 @@
           <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
             <label style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px;cursor:pointer" title="ONにして再バックテストすると boatProbsV2 が populate される。既存の予測・買い目・EVには影響しません。">
               <input type="checkbox" ${window._calibExperiment?.flags?.useNewTenjiModel ? 'checked' : ''}
-                onchange="window._calibExperiment.flags.useNewTenjiModel=this.checked; window._calibExperiment.flags.fixRenorm=this.checked; console.log('[実験フラグ] useNewTenjiModel/fixRenorm =', this.checked, '再バックテスト実行後 window._compareV2() で確認してください');">
+                onchange="window._calibExperiment.flags.useNewTenjiModel=this.checked; window._calibExperiment.flags.fixRenorm=this.checked; window._calibExperiment.saveFlags(); console.log('[実験フラグ] useNewTenjiModel/fixRenorm =', this.checked, '再バックテスト実行後 window._compareV2() で確認してください');">
               🧪 実験: 新展示モデル(A2)+再正規化修正(A1)
             </label>
             <button onclick="window._downloadCalibPointsJSON()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">
