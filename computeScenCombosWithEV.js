@@ -1154,19 +1154,28 @@
               const _savedC = window._setDataForCalc(vdata, venue);
               try {
                 const _arek = (_rd.arek > 0) ? _rd.arek : 54.7;
-                const _ranked = calcTenkaiProbs(_rd.boats, _arek);
+                // [修正 2026-07-18] バックテスト側もcalcTenkaiProbsExtended（展示タイム・
+                // 気象・スリット補正あり）に統一。本番表示(renderer.js/renderBuy)は既に
+                // Extended版を使っており、旧版(calcTenkaiProbs)のままだと
+                // 「補正テーブル(calibrateCourse1Prob等)は本番と別モデルのクセを学習」
+                // することになり、本番へ正しく効かなくなる。
+                // → tenjiScoreMap(_tSM)の取得をcalcTenkaiProbs呼び出しより前に移動。
+                let _tSM = {};
+                try {
+                  if (typeof _ensureTenjiCache === 'function') _ensureTenjiCache();
+                  const _sl = (typeof SLUG_MAP !== 'undefined' && SLUG_MAP[venue]) || venue;
+                  const _tk = (typeof tenjiKey === 'function') ? tenjiKey(_sl, vdata.date, rno) : null;
+                  if (_tk && typeof _tenjiCache !== 'undefined') _tSM = _tenjiCache[_tk] || {};
+                } catch(_te) {}
+                const _ranked = calcTenkaiProbsExtended(_rd.boats, _arek, _tSM, venue);
                 if (_ranked && _ranked.length >= 2) {
-                  const _probTotal = _ranked.reduce((s,b) => s + b.prob, 0) || 1;
-                  _ranked.forEach(b => { b.final_prob = b.prob / _probTotal; });
+                  // Extended版は既にfinal_probを正規化済みで返す。念のため未設定の艇だけ保険で埋める。
+                  if (_ranked.some(b => b.final_prob == null)) {
+                    const _probTotal = _ranked.reduce((s,b) => s + b.prob, 0) || 1;
+                    _ranked.forEach(b => { if (b.final_prob == null) b.final_prob = b.prob / _probTotal; });
+                  }
                   const _p2map = calcPlace2Probs(_rd.boats, _ranked);
                   const _ranked2w = _ranked.map(b => ({...b, place2_prob: _p2map[b.boat] || 0}));
-                  let _tSM = {};
-                  try {
-                    if (typeof _ensureTenjiCache === 'function') _ensureTenjiCache();
-                    const _sl = (typeof SLUG_MAP !== 'undefined' && SLUG_MAP[venue]) || venue;
-                    const _tk = (typeof tenjiKey === 'function') ? tenjiKey(_sl, vdata.date, rno) : null;
-                    if (_tk && typeof _tenjiCache !== 'undefined') _tSM = _tenjiCache[_tk] || {};
-                  } catch(_te) {}
                   const _sd = calcScenarioData(_ranked2w, _rd.boats, _tSM, venue, vdata);
                   // [2026-07-16 修正] calcScenarioData は不正入力時も {valid:false} という
                   // truthy なオブジェクトを返すため、従来の if(_sd) だけでは
@@ -1258,10 +1267,21 @@
               const _sv2 = window._setDataForCalc(vdata, venue);
               try {
                 const _arek2   = (_rd2.arek > 0) ? _rd2.arek : 54.7;
-                const _ranked2 = calcTenkaiProbs(_rd2.boats, _arek2);
+                // [修正 2026-07-18] 呼び出し1と同様、本番と同一モデルに統一。
+                let _tSM2 = {};
+                try {
+                  if (typeof _ensureTenjiCache === 'function') _ensureTenjiCache();
+                  const _sl2 = (typeof SLUG_MAP !== 'undefined' && SLUG_MAP[venue]) || venue;
+                  const _tk2 = (typeof tenjiKey === 'function') ? tenjiKey(_sl2, vdata.date, rno) : null;
+                  if (_tk2 && typeof _tenjiCache !== 'undefined') _tSM2 = _tenjiCache[_tk2] || {};
+                } catch(_te2) {}
+                const _ranked2 = calcTenkaiProbsExtended(_rd2.boats, _arek2, _tSM2, venue);
                 if (_ranked2 && _ranked2.length > 0) {
-                  const _pt = _ranked2.reduce((s, b) => s + b.prob, 0) || 1;
-                  _ranked2.forEach(b => { b.final_prob = b.prob / _pt; });
+                  // Extended版は既にfinal_prob正規化済み。未設定艇のみ保険で埋める。
+                  if (_ranked2.some(b => b.final_prob == null)) {
+                    const _pt = _ranked2.reduce((s, b) => s + b.prob, 0) || 1;
+                    _ranked2.forEach(b => { if (b.final_prob == null) b.final_prob = b.prob / _pt; });
+                  }
 
                   // ── [2026-06-20 追加] コース別キャリブレーション補正 ──
                   // 本線（非キャッシュ経路）と同じロジック。1号艇のみ補正し、
