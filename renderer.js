@@ -2742,9 +2742,12 @@ function buildInTepBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges
 const IN_NEG_N_SIGMA    = 1.0;   // σの倍率（1.0σ ≈ 会場ごとの「1標準偏差下」）
 const IN_NEG_FALLBACK_PT = 0.10; // σデータがないときの固定マージン（10%pt）
 
-function _calcInNegCond(ranked2, venueOverride) {
+function _calcInNegCond(ranked2, venueOverride, vdataOverride) {
   const _venue    = venueOverride ?? DATA.venue ?? null;
-  const innData   = DATA.inn_data || {};
+  // [2026-07-19修正] venueOverride指定時（例: top_page.jsの複数会場ループ）は
+  // 開いているレースが無く DATA が null のことがあるため、渡された vdataOverride
+  // （会場ごとのデータ）を優先する。未指定時は従来通りグローバル DATA を使う。
+  const innData   = vdataOverride?.inn_data ?? (DATA ? DATA.inn_data : null) ?? {};
   const cRates    = innData.course_rates || [];
   const venueAvg1 = cRates[1] ?? null;
   const boat1     = ranked2.find(b => b.boat === 1);
