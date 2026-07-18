@@ -1,0 +1,1670 @@
+// calibration.js — 確率推定キャリブレーション（完全外付けモジュール）
+//
+// 【設計方針】
+//   既存コード（backtest.js / top_stats.js）への変更はゼロ。
+//   collectResultsForDateScen(d, true) が返す results[] を受け取るだけ。
+//   必要なフィールド: hitProbEst (number|null), isHit (boolean)
+//
+// 【使い方】
+//   _renderHistory30 の elHistory.innerHTML 代入の直前に1行追加するだけ:
+//
+//     _renderCalibrationPanel(allResultsScenAll);   // ← これだけ追加
+//     elHistory.innerHTML = `...`;                  // 既存行はそのまま
+//
+//   描画先 DOM は自動生成。id="top-ai-calibration-panel" が存在しない場合は
+//   top-ai-stats-history-summary の直後に自動挿入する。
+//
+// ─────────────────────────────────────────────────────────────────────
+
+(function () {
+
+  // admin 判定は呼び出し時に毎回 classList で確認する（即時評価を廃止）
+  // ※ init()（SHA-256認証）が async のため、スクリプト読み込み時点では
+  //   admin-mode クラスがまだ付与されていない場合がある。
+
+  // ── CSV保存機能用: 直近の描画に使った results 配列を保持 ──
+  // _renderCalibrationPanel が呼ばれるたびに更新される。
+  // ボタンの onclick からはこの変数経由でアクセスする（引数を持たせず
+  // 常に「今表示中のパネルの元データ」を書き出せるようにするため）。
+  let _lastAllResults = [];
+
+  // ── ビン定義 ──
+  // hitProbEst の値域 [0, 1] を6段階に分割
+  const BINS = [
+    { label: '0–10%',  min: 0.00, max: 0.10 },
+    { label: '10–20%', min: 0.10, max: 0.20 },
+    { label: '20–30%', min: 0.20, max: 0.30 },
+    { label: '30–40%', min: 0.30, max: 0.40 },
+    { label: '40–60%', min: 0.40, max: 0.60 },
+    { label: '60%+',   min: 0.60, max: 1.01 },
+  ];
+
+  // ── メイン集計関数 ──
+  // results[]: collectResultsForDateScen(d, true) の返り値を30日分結合したもの
+  // 戻り値: ビン別統計の配列
+  function calcCalibration(results) {
+    const valid = results.filter(r => r.hitProbEst != null);
+
+    return BINS.map(bin => {
+      const inBin   = valid.filter(r => r.hitProbEst >= bin.min && r.hitProbEst < bin.max);
+      const total   = inBin.length;
+      const hits    = inBin.filter(r => r.isHit).length;
+      const actual  = total > 0 ? hits / total : null;
+      const estAvg  = total > 0
+        ? inBin.reduce((s, r) => s + r.hitProbEst, 0) / total
+        : null;
+      return { label: bin.label, total, hits, actual, estAvg };
+    });
+  }
+
+  // ── キャリブレーション品質スコア ──
+  // 各ビンの |推定 − 実績| を加重平均（サンプル数重み）
+  // 0に近いほど良い。0.05以下なら優秀、0.10超は要見直し
+  function calcCalibrationError(binStats) {
+    const valid = binStats.filter(b => b.total > 0 && b.actual != null && b.estAvg != null);
+    if (valid.length === 0) return null;
+    const totalN  = valid.reduce((s, b) => s + b.total, 0);
+    const wErr    = valid.reduce((s, b) => s + Math.abs(b.estAvg - b.actual) * b.total, 0);
+    return wErr / totalN;
+  }
+
+  // ── 単調性チェック ──
+  // 推定値が上がるほど実際の的中率も上がっているか（理想的な予測モデルの条件）
+  // 有効ビン間で「逆転」が何回起きているかを返す
+  function countMonotonicViolations(binStats) {
+    const valid = binStats.filter(b => b.total >= 10 && b.actual != null); // 修正: N<10は参考値のため単調性チェックから除外
+    let violations = 0;
+    for (let i = 1; i < valid.length; i++) {
+      if (valid[i].actual < valid[i - 1].actual - 0.02) violations++;
+    }
+    return violations;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 2着 calibration
+  // ──────────────────────────────────────────────────────────────────
+  // results[] の各レースで「実際の2着枠番が予測リストの何位だったか」を集計する。
+  // pred2ndRank: top_stats.js の collectResultsForDateScen が付与するフィールド。
+  //   1 = 買い目中で最多出現の2着枠番と一致（予測1位的中）
+  //   2 = 2番目に多い2着枠番と一致
+  //   null = 買い目に実際の2着枠番が含まれていない or データなし
+  function calcPlace2Calibration(results) {
+    const valid = results.filter(r => r.pred2ndRank != null || r.actual2nd != null);
+    const total = valid.length;
+    if (total === 0) return null;
+    const rank1 = valid.filter(r => r.pred2ndRank === 1).length;
+    const top2  = valid.filter(r => r.pred2ndRank != null && r.pred2ndRank <= 2).length;
+    const top3  = valid.filter(r => r.pred2ndRank != null && r.pred2ndRank <= 3).length;
+    const miss  = valid.filter(r => r.pred2ndRank == null).length;
+    return { rank1Rate: rank1/total, top2Rate: top2/total, top3Rate: top3/total, missRate: miss/total, total };
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 3着 calibration
+  // ──────────────────────────────────────────────────────────────────
+  // pred3rdRank と同様の集計。3着は選択肢が多い（4〜5枠番）ため
+  // top3Rate が実用上の下限目標になる。
+  function calcPlace3Calibration(results) {
+    const valid = results.filter(r => r.pred3rdRank != null || r.actual3rd != null);
+    const total = valid.length;
+    if (total === 0) return null;
+    const rank1 = valid.filter(r => r.pred3rdRank === 1).length;
+    const top2  = valid.filter(r => r.pred3rdRank != null && r.pred3rdRank <= 2).length;
+    const top3  = valid.filter(r => r.pred3rdRank != null && r.pred3rdRank <= 3).length;
+    const miss  = valid.filter(r => r.pred3rdRank == null).length;
+    return { rank1Rate: rank1/total, top2Rate: top2/total, top3Rate: top3/total, missRate: miss/total, total };
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-13 追加] 会場×コース別 1着率の精度（予測 vs 実績）
+  // ──────────────────────────────────────────────────────────────────
+  // calcCalibrationByCourse（コース単位）を会場でも分割したもの。
+  // 艇×レース単位で boatProbs（予測勝率）と実際の勝敗を集計し、
+  // 会場×コースごとに 推定平均(estAvg) と 実績(actual) の差を見る。
+  // 戻り値: { 会場名: [ {course, count, estAvg, actual, diff}, ... course1〜6 ], ... }
+  function calcCalibrationByVenueCourse(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const venueMap = {};
+    (results || []).forEach(r => {
+      const winner = _getWinnerCourse(r);
+      if (winner == null) return;
+      const v = r.venue || '不明';
+      if (!venueMap[v]) {
+        venueMap[v] = {};
+        courses.forEach(c => venueMap[v][c] = { count: 0, sumEst: 0, sumAct: 0 });
+      }
+      courses.forEach(c => {
+        const est = _getBoatProb(r, c);
+        if (est == null) return; // このレースにこの枠のデータなし
+        const st = venueMap[v][c];
+        st.count++;
+        st.sumEst += est;
+        st.sumAct += (winner === c ? 1 : 0);
+      });
+    });
+
+    const out = {};
+    Object.entries(venueMap).forEach(([v, courseMap]) => {
+      out[v] = courses.map(c => {
+        const st = courseMap[c];
+        const count  = st.count;
+        const estAvg = count > 0 ? st.sumEst / count : null;
+        const actual = count > 0 ? st.sumAct / count : null;
+        const diff   = (estAvg != null && actual != null) ? actual - estAvg : null;
+        return { course: c, count, estAvg, actual, diff };
+      });
+    });
+    return out;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-13 追加] コース別（1着艇の枠番別）2着・3着 予測精度
+  // ──────────────────────────────────────────────────────────────────
+  // calcPlace2/3Calibration を「1着になった枠番」ごとに分割したもの。
+  // 例: 1号艇が1着だったレースだけを集めて、2着予測が当たっていたか集計。
+  // 戻り値: { place2: {1:{...},...,6:{...}}, place3: {同様} }
+  function calcPlace23ByWinningCourse(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const out2 = {}, out3 = {};
+    courses.forEach(c => {
+      const subset = (results || []).filter(r => r.actual1st === c);
+      out2[c] = calcPlace2Calibration(subset);
+      out3[c] = calcPlace3Calibration(subset);
+    });
+    return { place2: out2, place3: out3 };
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-13 追加] 会場別×1着枠番別 2着・3着 予測精度
+  // ──────────────────────────────────────────────────────────────────
+  // calcPlace23ByWinningCourse をさらに会場でも分割したもの。
+  // 戻り値: { 会場名: { place2: {1:{...},...,6:{...}}, place3: {同様} }, ... }
+  function calcPlace23ByVenueCourse(results) {
+    const venues = [...new Set((results || []).map(r => r.venue || '不明'))];
+    const out = {};
+    venues.forEach(v => {
+      const subset = (results || []).filter(r => (r.venue || '不明') === v);
+      out[v] = calcPlace23ByWinningCourse(subset);
+    });
+    return out;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 決まり手 calibration [2026-07-13 追加]
+  // ──────────────────────────────────────────────────────────────────
+  // predKimariBoat/predKimariType: computeScenCombosWithEV が返す
+  //   「全winner×kimariの中で最大確率のペア」（top_stats.js が転記）。
+  // actualKimari: renderer.js の結果表示由来（rd.kimari）。
+  // actual1st と predKimariBoat が一致する時のみ「決まり手そのものの的中率」
+  // を比較する（軸艇が違うと決まり手の比較自体に意味がないため）。
+  function calcKimariCalibration(results) {
+    const valid = results.filter(r =>
+      r.actualKimari != null && r.predKimariType != null && r.predKimariBoat != null && r.actual1st != null
+    );
+    const total = valid.length;
+    if (total === 0) return null;
+    const boatMatch = valid.filter(r => r.predKimariBoat === r.actual1st);
+    const boatMatchTotal = boatMatch.length;
+    const typeMatch = boatMatch.filter(r => r.predKimariType === r.actualKimari);
+    const boatMatchRate = boatMatchTotal / total;
+    const typeAccuracyGivenBoatMatch = boatMatchTotal > 0 ? typeMatch.length / boatMatchTotal : null;
+
+    // 決まり手別 混同行列（軸艇一致時のみ集計。実際の決まり手 → 予測の決まり手 の件数）
+    const confusion = {};
+    boatMatch.forEach(r => {
+      const a = r.actualKimari;
+      const p = r.predKimariType;
+      if (!confusion[a]) confusion[a] = {};
+      confusion[a][p] = (confusion[a][p] ?? 0) + 1;
+    });
+
+    return { total, boatMatchTotal, boatMatchRate, typeAccuracyGivenBoatMatch, confusion };
+  }
+
+  // ── 2着・3着 calibration HTML生成 ──
+  function buildPlace2CalibHTML(p2, p3) {
+    function barRow(label, rate, threshGood, threshWarn, note) {
+      if (rate == null) return '';
+      const pct   = (rate * 100).toFixed(0) + '%';
+      const color = rate >= threshGood ? 'var(--green)'
+                  : rate >= threshWarn ? 'var(--orange)'
+                  : 'var(--red, #e05)';
+      const w     = Math.round(rate * 120);
+      return `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 6px;font-size:10px;color:var(--text3);white-space:nowrap">${label}</td>
+          <td style="padding:3px 6px;min-width:96px">
+            <div style="height:14px;background:var(--bg2);border-radius:2px;overflow:hidden">
+              <div style="height:100%;width:${w}px;background:${color};border-radius:2px;opacity:0.85"></div>
+            </div>
+          </td>
+          <td style="padding:3px 6px;text-align:right;font-size:11px;font-weight:700;color:${color}">${pct}</td>
+          <td style="padding:3px 6px;font-size:9px;color:var(--text3)">${note}</td>
+        </tr>`;
+    }
+    const p2Section = p2 ? `
+      <div style="font-size:10px;font-weight:700;color:var(--text3);margin:6px 0 2px">2着予測精度（${p2.total}件）</div>
+      <table style="width:100%;border-collapse:collapse"><tbody>
+        ${barRow('1位的中', p2.rank1Rate, 0.50, 0.35, '目標50%+')}
+        ${barRow('2位以内', p2.top2Rate,  0.70, 0.55, '目標70%+')}
+        ${barRow('3位以内', p2.top3Rate,  0.85, 0.70, '目標85%+')}
+        ${barRow('買い目外', p2.missRate, 0,    0.15, '低いほど良')}
+      </tbody></table>` : '<div style="font-size:10px;color:var(--text3);padding:4px 0">2着データ不足</div>';
+    const p3Section = p3 ? `
+      <div style="font-size:10px;font-weight:700;color:var(--text3);margin:8px 0 2px">3着予測精度（${p3.total}件）</div>
+      <table style="width:100%;border-collapse:collapse"><tbody>
+        ${barRow('1位的中', p3.rank1Rate, 0.40, 0.28, '目標40%+')}
+        ${barRow('2位以内', p3.top2Rate,  0.60, 0.45, '目標60%+')}
+        ${barRow('3位以内', p3.top3Rate,  0.75, 0.60, '目標75%+')}
+        ${barRow('買い目外', p3.missRate, 0,    0.25, '低いほど良')}
+      </tbody></table>` : '<div style="font-size:10px;color:var(--text3);padding:4px 0">3着データ不足</div>';
+    const p2ok  = p2 && p2.rank1Rate >= 0.50;
+    const p3ok  = p3 && p3.top3Rate  >= 0.75;
+    const judge = (!p2 && !p3)   ? null
+                : (p2ok && p3ok) ? { text: '2着・3着ともに良好',       color: 'var(--green)'      }
+                : (!p2ok&&!p3ok) ? { text: '2着・3着とも要改善',       color: 'var(--red, #e05)'  }
+                : p2ok           ? { text: '2着良好・3着は要確認',     color: 'var(--orange)'     }
+                :                  { text: '2着要改善・3着は許容範囲', color: 'var(--orange)'     };
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">📊 2着・3着 予測精度</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:6px">買い目内での的中順位分布</div>
+        ${judge ? `<div style="font-size:11px;font-weight:700;color:${judge.color};text-align:center;margin-bottom:6px;padding:3px 0;border-bottom:1px solid var(--border)">${judge.text}</div>` : ''}
+        <div style="overflow-x:auto">${p2Section}${p3Section}</div>
+        <div style="font-size:9px;color:var(--text3);margin-top:5px">
+          予測順位=買い目中の枠番出現頻度で判定　買い目外=実際の着順枠が買い目に含まれていなかった割合
+        </div>
+      </div>`;
+  }
+
+  // ── HTML生成 ──
+  function buildCalibrationHTML(binStats, calError, violations, totalValid) {
+    if (totalValid < 30) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:4px">📐 確率キャリブレーション</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.3rem 0">
+            データ不足（${totalValid}件）<br>30件以上で表示
+          </div>
+        </div>`;
+    }
+
+    // 品質判定
+    const errLabel  = calError == null   ? '—'
+                    : calError <= 0.05   ? '優秀'
+                    : calError <= 0.10   ? '良好'
+                    : calError <= 0.15   ? '要注意'
+                    : '問題あり';
+    const errColor  = calError == null   ? 'var(--text3)'
+                    : calError <= 0.05   ? 'var(--green)'
+                    : calError <= 0.10   ? 'var(--green)'
+                    : calError <= 0.15   ? 'var(--orange)'
+                    : 'var(--red, #e05)';
+    const errStr    = calError != null ? `${(calError * 100).toFixed(1)}%誤差・${errLabel}` : '—';
+
+    const monLabel  = violations === 0 ? '✓ 単調増加（理想的）'
+                    : violations === 1 ? `△ 軽微な逆転あり（${violations}箇所）`
+                    : `✗ 逆転${violations}箇所（要確認）`;
+    const monColor  = violations === 0 ? 'var(--green)'
+                    : violations === 1 ? 'var(--orange)'
+                    : 'var(--red, #e05)';
+
+    // バーチャート行
+    const maxBar = 120; // px
+    const rows = binStats.map(b => {
+      if (b.total === 0) {
+        return `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:3px 6px;font-size:10px;color:var(--text3);white-space:nowrap">${b.label}</td>
+            <td colspan="4" style="padding:3px 6px;font-size:10px;color:var(--text3);text-align:center">—</td>
+          </tr>`;
+      }
+      const estPct    = b.estAvg  != null ? (b.estAvg  * 100).toFixed(0) + '%' : '—';
+      const actPct    = b.actual  != null ? (b.actual  * 100).toFixed(0) + '%' : '—';
+      const actWidth  = b.actual  != null ? Math.round(b.actual  * maxBar) : 0;
+      const estWidth  = b.estAvg  != null ? Math.round(b.estAvg  * maxBar) : 0;
+      const diff      = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      const diffStr   = diff != null
+        ? (diff >= 0 ? `+${(diff*100).toFixed(0)}` : `${(diff*100).toFixed(0)}`) + '%'
+        : '—';
+      const diffColor = diff == null       ? 'var(--text3)'
+                      : Math.abs(diff) <= 0.05 ? 'var(--green)'
+                      : Math.abs(diff) <= 0.10 ? 'var(--orange)'
+                      : 'var(--red, #e05)';
+      const lowN = b.total < 10;
+
+      return `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 6px;font-size:10px;color:var(--text3);white-space:nowrap">${b.label}</td>
+          <td style="padding:4px 6px;min-width:90px">
+            <div style="position:relative;height:14px;background:var(--bg2);border-radius:2px;overflow:hidden">
+              <div style="position:absolute;left:0;top:0;height:100%;width:${estWidth}px;background:var(--border);border-radius:2px;opacity:0.6"></div>
+              <div style="position:absolute;left:0;top:0;height:100%;width:${actWidth}px;background:${actWidth >= estWidth ? 'var(--green)' : 'var(--orange)'};border-radius:2px;opacity:0.85"></div>
+            </div>
+          </td>
+          <td style="padding:4px 6px;text-align:right;font-size:10px;color:var(--text3)">${estPct}</td>
+          <td style="padding:4px 6px;text-align:right;font-size:11px;font-weight:700;color:var(--text${lowN ? '3' : ''})">${actPct}${lowN ? '<span style="font-size:9px;color:var(--text3)">*</span>' : ''}</td>
+          <td style="padding:4px 6px;text-align:right;font-size:10px;font-weight:700;color:${diffColor}">${diffStr}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">📐 確率キャリブレーション</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">推定勝率 vs 実績勝率（全艇×全レース　${totalValid}件）</div>
+
+        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:3px">
+            <span style="font-size:10px;color:var(--text3)">加重平均誤差</span>
+            <span style="font-size:11px;font-weight:700;color:${errColor}">${errStr}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between">
+            <span style="font-size:10px;color:var(--text3)">単調性</span>
+            <span style="font-size:10px;font-weight:700;color:${monColor}">${monLabel}</span>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:3px 6px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">推定帯</th>
+                <th style="padding:3px 6px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">バー</th>
+                <th style="padding:3px 6px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">推定</th>
+                <th style="padding:3px 6px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">実績</th>
+                <th style="padding:3px 6px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">差</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:4px">
+          灰バー=推定、色バー=実績　* N&lt;10の参考値
+        </div>
+      </div>`;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // コース別 勝率キャリブレーション（本物版）
+  // ──────────────────────────────────────────────────────────────────
+  // 各レースの全艇 boatProbs（final_prob）を展開し、
+  // 「モデルが各枠番に与えた予測勝率の平均」vs「実際の勝率」を比較する。
+  //
+  // 集計単位: 艇（boat）× レース
+  //   - 推定: boatProbs[boat] = その艇の final_prob（モデル予測勝率）
+  //   - 実績: actualResult の1着枠番が boat と一致するか（0 or 1）
+  //
+  // これにより「1コースをモデルが過小評価しているか」が正確にわかる。
+  // ══════════════════════════════════════════════════════════════════
+  // ── boatProbs 取得のフォールバック ──
+  // 上流オブジェクトのフィールド名・形式がブレているケースに対応する。
+  //   名前ブレ:  boatProbs / finalProbs / winProbs / probs / boatProbsRaw
+  //   形式ブレ:  { "1": 0.3, ... } / { 1: 0.3, ... } / [b0..b5] (0始まり配列)
+  //             / [{boat:1, prob:0.3}, ...] (オブジェクト配列)
+  function _getBoatProb(r, course) {
+    const candidates = [r.boatProbs, r.finalProbs, r.winProbs, r.probs, r.boatProbsRaw];
+    for (const bp of candidates) {
+      if (bp == null) continue;
+      // オブジェクト配列 [{boat, prob}] 形式
+      if (Array.isArray(bp) && bp.length && typeof bp[0] === 'object' && bp[0] !== null) {
+        const hit = bp.find(b => Number(b.boat ?? b.course ?? b.frame) === course);
+        const v = hit && (hit.prob ?? hit.winProb ?? hit.est);
+        if (v != null) return Number(v);
+        continue;
+      }
+      // 数値配列（0始まり or 1始まりの両方を試す）
+      if (Array.isArray(bp)) {
+        if (bp[course] != null) return Number(bp[course]);       // 1始まり想定
+        if (bp[course - 1] != null) return Number(bp[course - 1]); // 0始まり想定
+        continue;
+      }
+      // プレーンオブジェクト（キーが数値/文字列どちらでも bp[course] でヒットする）
+      if (bp[course] != null) return Number(bp[course]);
+      if (bp[String(course)] != null) return Number(bp[String(course)]);
+    }
+    return null;
+  }
+
+  // ── actualResult から1着枠番を取得するフォールバック ──
+  //   名前ブレ:  actualResult（"1-2-3"等の文字列） / actual1st / winnerCourse / result
+  //   形式ブレ:  文字列(区切り文字違い) / 配列 [1,2,3] / 数値そのもの
+  function _getWinnerCourse(r) {
+    const cands = [r.actual1st, r.winnerCourse, r.actualResult, r.result];
+    for (const v of cands) {
+      if (v == null) continue;
+      if (typeof v === 'number') return v;
+      if (Array.isArray(v)) return parseInt(v[0], 10);
+      const n = parseInt((v + '').trim().split(/[-－−,\s]/)[0], 10);
+      if (!Number.isNaN(n)) return n;
+    }
+    return null;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-17 診断追加] Step2（1号艇・個人逃げ率ブレンド）を適用しなかった
+  // 場合の①③相当の集計を、既存の集計ロジックをそのまま再利用して算出する。
+  //
+  // 【設計方針】
+  //   本番の予測・買い目・EV計算・既存の①③表示には一切影響しない、
+  //   検証専用の追加関数。r.boatProbs[1] を r.boatProbsStep1Only[1] に
+  //   差し替えたコピーを作り、既存の calcCalibrationByCourse /
+  //   calcCalibrationByVenueCourse にそのまま渡すだけ。
+  //
+  // 【使い方（ブラウザコンソール）】
+  //   calcCalibrationByCourse_Step1Only(resultsScenAll)          // ①相当（コース単体）
+  //   calcCalibrationByVenueCourse_Step1Only(resultsScenAll)     // ③相当（会場×コース別）
+  //   既存の calcCalibrationByCourse(resultsScenAll) / calcCalibrationByVenueCourse(resultsScenAll)
+  //   の結果と見比べることで、Step2が①③のズレにどれだけ寄与しているかを切り分けられる。
+  // ══════════════════════════════════════════════════════════════════
+  function _swapCourse1WithStep1Only(results) {
+    return (results || []).map(r => {
+      if (!r.boatProbsStep1Only || r.boatProbsStep1Only[1] == null) return r;
+      const swappedBp = Object.assign({}, r.boatProbs, { 1: r.boatProbsStep1Only[1] });
+      return Object.assign({}, r, { boatProbs: swappedBp });
+    });
+  }
+  // [2026-07-17 診断追加] _lastAllResults はこのIIFE内のローカル変数のため
+  // コンソールから直接見えない。Step1Only比較検証用に読み取り専用の窓口を追加する。
+  // 既存の挙動・パネル描画には一切影響しない（読むだけ）。
+  window._getLastAllResults = function () { return _lastAllResults; };
+
+  window.calcCalibrationByCourse_Step1Only = function (results) {
+    return calcCalibrationByCourse(_swapCourse1WithStep1Only(results));
+  };
+  window.calcCalibrationByVenueCourse_Step1Only = function (results) {
+    return calcCalibrationByVenueCourse(_swapCourse1WithStep1Only(results));
+  };
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-17 追加/A1+A2] 新展示モデル（calcTenjiScore直接加算）＋
+  // 再正規化修正を適用した場合の①③相当集計。Step1Only比較と同じ設計。
+  //
+  // 【使い方】
+  //   1. window._calibExperiment.flags.useNewTenjiModel = true; を実行
+  //   2. 既存の「バックテスト再計算」操作を行う（boatProbsV2 が populate される）
+  //   3. calcCalibrationByCourse_V2(resultsScenAll) / calcCalibrationByVenueCourse_V2(resultsScenAll)
+  //      を現行の calcCalibrationByCourse(resultsScenAll) と見比べる
+  //   boatProbsV2 が空（未計算）のレースは元の boatProbs のまま扱われるため、
+  //   フラグOFFのまま呼んでも既存の①③と同じ結果になる（安全側フォールバック）。
+  // ══════════════════════════════════════════════════════════════════
+  function _swapWithV2(results) {
+    return (results || []).map(r => {
+      if (!r.boatProbsV2 || Object.keys(r.boatProbsV2).length === 0) return r;
+      return Object.assign({}, r, { boatProbs: r.boatProbsV2 });
+    });
+  }
+  window.calcCalibrationByCourse_V2 = function (results) {
+    return calcCalibrationByCourse(_swapWithV2(results));
+  };
+  window.calcCalibrationByVenueCourse_V2 = function (results) {
+    return calcCalibrationByVenueCourse(_swapWithV2(results));
+  };
+  // コンソールから: window._compareV2() で①相当の 現行 vs V2 を並べて表示する
+  window._compareV2 = function () {
+    const all = _lastAllResults || [];
+    const withV2 = all.filter(r => r.boatProbsV2 && Object.keys(r.boatProbsV2).length > 0).length;
+    console.log(`[V2比較] boatProbsV2 を持つレース: ${withV2}/${all.length}件` +
+      (withV2 === 0 ? '（0件＝まだ useNewTenjiModel=true でバックテストを再実行していません）' : ''));
+    if (withV2 === 0) return null;
+    const cur = calcCalibrationByCourse(all).find(s => s.course === 1);
+    const v2  = calcCalibrationByCourse_V2(all).find(s => s.course === 1);
+    console.table([
+      { 版: '現行', 件数: cur?.count, 推定: cur?.estAvg, 実績: cur?.actual, 差: cur?.diff },
+      { 版: 'V2(新展示モデル+A1修正)', 件数: v2?.count, 推定: v2?.estAvg, 実績: v2?.actual, 差: v2?.diff },
+    ]);
+    return { current: cur, v2 };
+  };
+
+  function calcCalibrationByCourse(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+
+    // 各コース（枠番）ごとに全レースの boatProbs を展開して集計
+    const stats = courses.map(course => {
+      let sumEst   = 0;  // 予測勝率の合計
+      let sumAct   = 0;  // 実際に勝った回数
+      let count    = 0;  // boatProbs にデータがあった艇×レース数
+
+      results.forEach(r => {
+        const est = _getBoatProb(r, course);
+        if (est == null) return; // このレースにデータなし
+
+        const winner = _getWinnerCourse(r);
+        if (winner == null) return;
+
+        sumEst += est;
+        sumAct += (winner === course ? 1 : 0);
+        count++;
+      });
+
+      const estAvg = count > 0 ? sumEst / count : null; // 平均予測勝率
+      const actual = count > 0 ? sumAct / count : null; // 実際の勝率
+
+      return { course, count, estAvg, actual };
+    });
+
+    // ── 診断ログ：全コースで count === 0 のとき、原因特定のため実データ形状を出力 ──
+    if (stats.every(s => s.count === 0) && results.length > 0) {
+      const sample = results.find(r => r) || {};
+      console.warn(
+        '[calibration] コース別キャリブレーション: 全コースで0件。\n' +
+        'boatProbs系フィールドまたは勝者情報の取得に失敗しています。サンプルのキー一覧:',
+        Object.keys(sample),
+        '\nboatProbs候補の値:', {
+          boatProbs: sample.boatProbs, finalProbs: sample.finalProbs,
+          winProbs: sample.winProbs, probs: sample.probs, boatProbsRaw: sample.boatProbsRaw,
+        },
+        '\n勝者情報候補の値:', {
+          actual1st: sample.actual1st, winnerCourse: sample.winnerCourse,
+          actualResult: sample.actualResult, result: sample.result,
+        }
+      );
+    }
+
+    return stats;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 確率帯別 勝率キャリブレーション（左パネル「📐 確率キャリブレーション」用）
+  // ──────────────────────────────────────────────────────────────────
+  // [2026-06-23 修正] 旧実装は results を hitProbEst（レース単位・買い目の
+  //   合成的中確率）でビン分けしていた。hitProbEst は1レースにつき1値しか
+  //   存在しないため母数は最大 totalAll 件（≒996件）で、特に低確率帯は
+  //   サンプルが極端に少なく（N<10常態化）、実用に耐えないグラフになっていた。
+  //
+  //   「確率キャリブレーション」として本来見たいのは
+  //     「モデルが各艇に与えた勝率予測 vs 実際にその艇が勝てたか」
+  //   であり、これは calcCalibrationByCourse と同じ集計単位
+  //   （艇 × レース）を使えば、最大 totalAll × 6 件まで母数を増やせる。
+  //   → boatProbs を全艇展開し、コースで束ねる代わりに確率帯（BINS）で束ね直す。
+  //
+  // 【重要】この関数の戻り値は表示専用。
+  //   updateCalibPoints()（hitProbEst の自己補正テーブル CALIB_POINTS 更新）には
+  //   引き続き calcCalibration() の結果（hitProbEst集計）を渡すこと。
+  //   CALIB_POINTS は「買い目合成確率(hitProbEst)」を補正するためのテーブルで、
+  //   computeScenCombosWithEV.js の ev = synthOdds × calibrateProb(rawHitProbEst)
+  //   に直結している。ここで艇単位の勝率集計を混ぜて渡すと、無関係な統計量で
+  //   hitProbEst の補正テーブルが歪み、EV計算全体が壊れるため絶対に混在させない。
+  function calcWinProbCalibration(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const binned = BINS.map(bin => ({
+      label: bin.label, min: bin.min, max: bin.max,
+      total: 0, hits: 0, sumEst: 0,
+    }));
+
+    (results || []).forEach(r => {
+      const winner = _getWinnerCourse(r);
+      if (winner == null) return;
+      courses.forEach(course => {
+        const est = _getBoatProb(r, course);
+        if (est == null) return;
+        const bin = binned.find(b => est >= b.min && est < b.max);
+        if (!bin) return; // 値域外（負値や1.01以上など想定外データ）は無視
+        bin.total++;
+        bin.sumEst += est;
+        if (winner === course) bin.hits++;
+      });
+    });
+
+    return binned.map(b => ({
+      label  : b.label,
+      total  : b.total,
+      hits   : b.hits,
+      actual : b.total > 0 ? b.hits / b.total : null,
+      estAvg : b.total > 0 ? b.sumEst / b.total : null,
+    }));
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-03 追加] 2〜6号艇 コース別×確率帯別 勝率キャリブレーション
+  // [2026-07-18 修正] コース1も対象に含めるよう拡張。
+  // ──────────────────────────────────────────────────────────────────
+  // calcCalibrationByCourse はコースごとに単一の平均値しか出さないため、
+  // computeScenCombosWithEV.js の updateCourseOtherCalibPoints に渡す
+  // 「帯ごとの実測」を作れない。calcWinProbCalibration と同じ BINS を
+  // コース別に束ね直し、{ 1: [...], 2: [...], ..., 6: [...] } を返す。
+  //
+  // [2026-07-18 修正] 従来コース1は calibrateCourse1Prob/updateCourse1CalibPoints
+  // が単一点方式（[[0,0],[平均推定,平均実績],[1,平均実績]]）で担当しており、
+  // 対象外としていた。しかし診断（CSV①確率キャリブレーション）で
+  // 40-60%帯+15.7pt・60%+帯+17.9ptと帯によって乖離幅が大きく異なることが
+  // 判明し、単一点方式では高確率帯が一律にフラット化されてしまう構造的欠陥が
+  // 確認された。集計ロジック自体はコースに依存しない汎用処理のため、
+  // コース1を除外する理由はなく、他コースと同じ帯別集計に統一する。
+  function calcWinProbCalibrationByCourse(results) {
+    const courses = [1, 2, 3, 4, 5, 6];
+    const out = {};
+
+    courses.forEach(course => {
+      const binned = BINS.map(bin => ({
+        label: bin.label, min: bin.min, max: bin.max,
+        total: 0, hits: 0, sumEst: 0,
+      }));
+
+      (results || []).forEach(r => {
+        const winner = _getWinnerCourse(r);
+        if (winner == null) return;
+        const est = _getBoatProb(r, course);
+        if (est == null) return;
+        const bin = binned.find(b => est >= b.min && est < b.max);
+        if (!bin) return;
+        bin.total++;
+        bin.sumEst += est;
+        if (winner === course) bin.hits++;
+      });
+
+      out[course] = binned.map(b => ({
+        label  : b.label,
+        count  : b.total,
+        hits   : b.hits,
+        actual : b.total > 0 ? b.hits / b.total : null,
+        estAvg : b.total > 0 ? b.sumEst / b.total : null,
+      }));
+    });
+
+    return out;
+  }
+
+  // ── [2026-07-13 追加] 会場×コース別 1着率の精度 HTML生成 ──
+  function buildVenueCourseHTML(venueCourseStats) {
+    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
+    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
+    const venues = Object.keys(venueCourseStats).sort();
+    if (venues.length === 0) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center">🏟️ 会場×コース別 1着率の精度</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.5rem 0">データ不足</div>
+        </div>`;
+    }
+
+    function diffColor(diff) {
+      if (diff == null) return 'var(--text3)';
+      const a = Math.abs(diff);
+      return a <= 0.03 ? 'var(--green)' : a <= 0.07 ? 'var(--orange)' : 'var(--red, #e05)';
+    }
+
+    // 会場ごとに1行、その中に各コースの「実績%（差）」をまとめて表示
+    const rows = venues.map(v => {
+      const rows6 = venueCourseStats[v];
+      const totalCount = rows6.reduce((s, r) => s + r.count, 0);
+      const cells = rows6.map(s => {
+        if (s.count === 0) {
+          return `<td style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3)">—</td>`;
+        }
+        const actPct  = s.actual != null ? (s.actual * 100).toFixed(0) + '%' : '—';
+        const diffStr = s.diff != null ? (s.diff >= 0 ? '+' : '') + (s.diff * 100).toFixed(1) + '%' : '—';
+        const lowN = s.count < 30;
+        return `
+          <td style="padding:3px 4px;text-align:center;font-size:10px;white-space:nowrap">
+            <span style="font-weight:700;color:var(--text)">${actPct}</span><span style="font-size:9px;color:var(--text3)">${lowN ? '*' : ''}</span><br>
+            <span style="font-size:9px;font-weight:700;color:${diffColor(s.diff)}">${diffStr}</span>
+          </td>`;
+      }).join('');
+      return `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 5px;font-size:10px;white-space:nowrap">${v}</td>
+          <td style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3)">${totalCount}</td>
+          ${cells}
+        </tr>`;
+    }).join('');
+
+    const headCells = [1,2,3,4,5,6].map(c =>
+      `<th style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3);font-weight:500">
+         <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>
+       </th>`).join('');
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🏟️ 会場×コース別 1着率の精度</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">各セル：実績勝率 / 下段=予測との差（実績−予測）</div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">会場</th>
+                <th style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3);font-weight:500">件数</th>
+                ${headCells}
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:4px">
+          緑=差±3%以内、橙=±7%以内、赤=それ以上　* N&lt;30の参考値
+        </div>
+      </div>`;
+  }
+
+  // ── [2026-07-13 追加] 会場別×1着枠番別 2着・3着予測精度 HTML生成 ──
+  // セルは「2着1位的中% / 3着3位以内%」を縦2段で表示するコンパクト版。
+  function buildPlace23VenueCourseHTML(place23ByVenue) {
+    const courseBg   = ['','#d8d8d8','#333','#e33','#36c','#fa0','#2a9'];
+    const courseText = ['','#333','#fff','#fff','#fff','#333','#fff'];
+    const venues = Object.keys(place23ByVenue).sort();
+    if (venues.length === 0) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center">🎯 会場別×1着枠番別 2着・3着予測精度</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.5rem 0">データ不足</div>
+        </div>`;
+    }
+
+    function pctOrDash(v) { return v != null ? (v * 100).toFixed(0) + '%' : '—'; }
+
+    const headCells = [1,2,3,4,5,6].map(c =>
+      `<th style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3);font-weight:500">
+         <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:${courseBg[c]};color:${courseText[c]};font-size:9px;font-weight:700">${c}</span>
+       </th>`).join('');
+
+    const rows = venues.map(v => {
+      const { place2, place3 } = place23ByVenue[v];
+      const cells = [1,2,3,4,5,6].map(c => {
+        const p2 = place2[c], p3 = place3[c];
+        if (!p2 && !p3) return `<td style="padding:3px 4px;text-align:center;font-size:9px;color:var(--text3)">—</td>`;
+        const total = p2?.total || p3?.total || 0;
+        return `
+          <td style="padding:3px 4px;text-align:center;font-size:9px;white-space:nowrap">
+            <span style="color:var(--text)">2着${pctOrDash(p2?.rank1Rate)}</span><br>
+            <span style="color:var(--text2)">3着${pctOrDash(p3?.top3Rate)}</span><br>
+            <span style="font-size:8px;color:var(--text3)">${total}R</span>
+          </td>`;
+      }).join('');
+      return `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 5px;font-size:10px;white-space:nowrap;vertical-align:middle">${v}</td>
+          ${cells}
+        </tr>`;
+    }).join('');
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🎯 会場別×1着枠番別 2着・3着予測精度</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">2着=1位的中率　3着=3位以内率</div>
+        <div style="overflow-x:auto;max-height:280px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500">会場</th>
+                ${headCells}
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+  // ──────────────────────────────────────────────────────────────────
+  function buildOverestimateAnalysisHTML(results) {
+    // 30〜40%帯のレースだけ抽出
+    const band = results.filter(r => r.hitProbEst != null && r.hitProbEst >= 0.30 && r.hitProbEst < 0.40);
+    if (band.length === 0) return '';
+
+    // ── 会場別集計 ──
+    const venueMap = {};
+    band.forEach(r => {
+      const v = r.venue || '不明';
+      if (!venueMap[v]) venueMap[v] = { total: 0, hits: 0 };
+      venueMap[v].total++;
+      if (r.isHit) venueMap[v].hits++;
+    });
+    const venueRows = Object.entries(venueMap)
+      .map(([v, s]) => ({ venue: v, ...s, actual: s.hits / s.total }))
+      .sort((a, b) => a.actual - b.actual); // 的中率低い順
+
+    // ── レース番号別集計 ──
+    const rnoMap = {};
+    band.forEach(r => {
+      const rno = r.rno != null ? `${r.rno}R` : '不明';
+      if (!rnoMap[rno]) rnoMap[rno] = { total: 0, hits: 0 };
+      rnoMap[rno].total++;
+      if (r.isHit) rnoMap[rno].hits++;
+    });
+    const rnoRows = Object.entries(rnoMap)
+      .map(([rno, s]) => ({ rno, ...s, actual: s.hits / s.total }))
+      .sort((a, b) => {
+        const na = parseInt(a.rno); const nb = parseInt(b.rno);
+        return na - nb;
+      });
+
+    // ── EV帯別集計（synth × hitProbEst）──
+    const evMap = { '〜0.9': { total:0,hits:0 }, '0.9〜1.0': { total:0,hits:0 }, '1.0〜1.1': { total:0,hits:0 }, '1.1〜1.3': { total:0,hits:0 }, '1.3〜': { total:0,hits:0 } };
+    band.forEach(r => {
+      const ev = r.ev;
+      if (ev == null) return;
+      const key = ev < 0.9 ? '〜0.9' : ev < 1.0 ? '0.9〜1.0' : ev < 1.1 ? '1.0〜1.1' : ev < 1.3 ? '1.1〜1.3' : '1.3〜';
+      evMap[key].total++;
+      if (r.isHit) evMap[key].hits++;
+    });
+
+    const totalBand = band.length;
+    const hitsBand  = band.filter(r => r.isHit).length;
+    const actBand   = hitsBand / totalBand;
+
+    // ── 会場テーブル HTML ──
+    const vHtml = venueRows.map(s => {
+      const pct = (s.actual * 100).toFixed(0) + '%';
+      const color = s.actual < 0.25 ? 'var(--red,#e05)' : s.actual < 0.35 ? 'var(--orange)' : 'var(--green)';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:3px 5px;font-size:10px">${s.venue}</td>
+        <td style="padding:3px 5px;font-size:10px;text-align:right;color:var(--text3)">${s.total}件</td>
+        <td style="padding:3px 5px;font-size:10px;text-align:right;font-weight:700;color:${color}">${pct}</td>
+      </tr>`;
+    }).join('');
+
+    // ── レース番号テーブル HTML ──
+    const rHtml = rnoRows.map(s => {
+      const pct = (s.actual * 100).toFixed(0) + '%';
+      const color = s.actual < 0.25 ? 'var(--red,#e05)' : s.actual < 0.35 ? 'var(--orange)' : 'var(--green)';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:3px 5px;font-size:10px">${s.rno}</td>
+        <td style="padding:3px 5px;font-size:10px;text-align:right;color:var(--text3)">${s.total}件</td>
+        <td style="padding:3px 5px;font-size:10px;text-align:right;font-weight:700;color:${color}">${pct}</td>
+      </tr>`;
+    }).join('');
+
+    // ── EV帯テーブル HTML ──
+    const eHtml = Object.entries(evMap).map(([key, s]) => {
+      if (s.total === 0) return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:3px 5px;font-size:10px">EV${key}</td>
+        <td colspan="2" style="padding:3px 5px;font-size:10px;text-align:center;color:var(--text3)">—</td>
+      </tr>`;
+      const pct = (s.hits / s.total * 100).toFixed(0) + '%';
+      const color = (s.hits/s.total) < 0.25 ? 'var(--red,#e05)' : (s.hits/s.total) < 0.35 ? 'var(--orange)' : 'var(--green)';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:3px 5px;font-size:10px">EV${key}</td>
+        <td style="padding:3px 5px;font-size:10px;text-align:right;color:var(--text3)">${s.total}件</td>
+        <td style="padding:3px 5px;font-size:10px;text-align:right;font-weight:700;color:${color}">${pct}</td>
+      </tr>`;
+    }).join('');
+
+    const thStyle = `padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500;border-bottom:1px solid var(--border)`;
+    const mkTable = (title, rows) => `
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:4px">${title}</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="${thStyle}">区分</th>
+            <th style="${thStyle};text-align:right">件数</th>
+            <th style="${thStyle};text-align:right">実績</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+    return `
+      <div class="admin-only" style="margin-top:8px">
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--orange,#f80)">
+          <div style="font-size:10px;font-weight:700;color:var(--orange,#f80);text-align:center;margin-bottom:2px">
+            🔍 30〜40%帯 過大評価 内訳調査
+          </div>
+          <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:8px">
+            推定30〜40%の${totalBand}件 → 実績的中率 <strong style="color:${actBand < 0.30 ? 'var(--red,#e05)' : 'var(--orange)'}">${(actBand*100).toFixed(1)}%</strong>（目標35%）
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">
+            ${mkTable('会場別', vHtml)}
+            ${mkTable('レース番号別', rHtml)}
+            ${mkTable('EV帯別', eHtml)}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 2着・3着 データvs買い目 切り分け診断（管理者専用）
+  // ──────────────────────────────────────────────────────────────────
+  // 「予測が機能していない」原因を切り分ける：
+  //   データが悪い → 1位予測と2位予測の的中率がほぼ同率（識別力なし）
+  //   買い目が悪い → 1位予測の的中率が低く、かつ2位以下に偏っている
+  // ──────────────────────────────────────────────────────────────────
+  function buildDiagnosisHTML(results) {
+    const valid2 = results.filter(r => r.actual2nd != null && r.pred2ndRank != null);
+    const valid3 = results.filter(r => r.actual3rd != null && r.pred3rdRank != null);
+    if (valid2.length === 0 && valid3.length === 0) return '';
+
+    // ── 予測順位分布（2着・3着）──
+    function rankDist(arr, rankField) {
+      const dist = {};
+      arr.forEach(r => {
+        const k = r[rankField] <= 4 ? r[rankField] : 5; // 5位以下まとめ
+        dist[k] = (dist[k] ?? 0) + 1;
+      });
+      return dist;
+    }
+    const dist2 = rankDist(valid2, 'pred2ndRank');
+    const dist3 = rankDist(valid3, 'pred3rdRank');
+    const total2 = valid2.length;
+    const total3 = valid3.length;
+
+    // ── 識別力スコア（1位と2位の差）──
+    // 差が大きいほど予測が機能している
+    // 差が小さい（≤5%）→ データが悪い可能性大
+    const r2_1 = (dist2[1] ?? 0) / total2;
+    const r2_2 = (dist2[2] ?? 0) / total2;
+    const r3_1 = (dist3[1] ?? 0) / total3;
+    const r3_2 = (dist3[2] ?? 0) / total3;
+    const disc2 = r2_1 - r2_2; // 識別力（2着）
+    const disc3 = r3_1 - r3_2; // 識別力（3着）
+
+    // ── 診断判定 ──
+    function diagnose(disc, rank1, name) {
+      if (disc >= 0.08) return { verdict: `✅ ${name}予測は機能している`, color: 'var(--green)',   detail: `1位と2位に${(disc*100).toFixed(0)}%差あり` };
+      if (disc >= 0.03) return { verdict: `🟡 ${name}予測は弱い識別力`,   color: 'var(--orange)', detail: `1位と2位の差が${(disc*100).toFixed(0)}%のみ` };
+      return                   { verdict: `🔴 ${name}予測は機能していない`, color: 'var(--red,#e05)', detail: `1位と2位がほぼ同率 → データ品質を疑う` };
+    }
+    const diag2 = diagnose(disc2, r2_1, '2着');
+    const diag3 = diagnose(disc3, r3_1, '3着');
+
+    // ── レース番号別の2着1位的中率 ──
+    // （1着コース別の内訳は 🎯 会場別×1着枠番別 パネルに統合済みのためここでは廃止）
+    const byRno2 = {};
+    valid2.forEach(r => {
+      const g = r.rno != null ? `${r.rno}R` : null;
+      if (!g) return;
+      if (!byRno2[g]) byRno2[g] = { total: 0, rank1: 0, rno: r.rno };
+      byRno2[g].total++;
+      if (r.pred2ndRank === 1) byRno2[g].rank1++;
+    });
+    const rnoRows2 = Object.entries(byRno2)
+      .sort((a, b) => a[1].rno - b[1].rno)
+      .map(([g, s]) => {
+        const rate = s.rank1 / s.total;
+        const color = rate >= 0.40 ? 'var(--green)' : rate >= 0.28 ? 'var(--orange)' : 'var(--red,#e05)';
+        return `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 5px;font-size:10px">${g}</td>
+          <td style="padding:3px 5px;font-size:10px;text-align:right;color:var(--text3)">${s.total}件</td>
+          <td style="padding:3px 5px;font-size:10px;text-align:right;font-weight:700;color:${color}">${(rate*100).toFixed(0)}%</td>
+        </tr>`;
+      }).join('');
+
+    // ── 予測順位分布バー ──
+    function distBars(dist, total, maxRank) {
+      return Array.from({ length: maxRank }, (_, i) => i + 1).map(rank => {
+        const label = rank === maxRank ? `${rank}位以下` : `${rank}位`;
+        const cnt   = dist[rank] ?? 0;
+        const rate  = cnt / total;
+        const w     = Math.round(rate * 100);
+        const color = rank === 1 ? 'var(--green)' : rank === 2 ? 'var(--orange)' : 'var(--text3)';
+        return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span style="font-size:9px;color:var(--text3);width:36px;flex-shrink:0">${label}</span>
+          <div style="flex:1;height:10px;background:var(--bg2);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${w}%;background:${color};opacity:0.8;border-radius:2px"></div>
+          </div>
+          <span style="font-size:9px;font-weight:700;color:${color};width:28px;text-align:right">${(rate*100).toFixed(0)}%</span>
+        </div>`;
+      }).join('');
+    }
+
+    const thStyle = `padding:3px 5px;text-align:left;font-size:9px;color:var(--text3);font-weight:500;border-bottom:1px solid var(--border)`;
+
+    return `
+      <div class="admin-only" style="margin-top:8px">
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:8px">
+            🔬 2着・3着 データvs買い目 切り分け診断
+          </div>
+
+          <!-- 診断サマリー -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+            <div style="background:var(--bg2);border-radius:4px;padding:8px;border-left:3px solid ${diag2.color}">
+              <div style="font-size:10px;font-weight:700;color:${diag2.color};margin-bottom:2px">${diag2.verdict}</div>
+              <div style="font-size:9px;color:var(--text3)">${diag2.detail}</div>
+            </div>
+            <div style="background:var(--bg2);border-radius:4px;padding:8px;border-left:3px solid ${diag3.color}">
+              <div style="font-size:10px;font-weight:700;color:${diag3.color};margin-bottom:2px">${diag3.verdict}</div>
+              <div style="font-size:9px;color:var(--text3)">${diag3.detail}</div>
+            </div>
+          </div>
+
+          <!-- 予測順位分布 -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div>
+              <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:4px">2着 予測順位分布（${total2}件）</div>
+              ${distBars(dist2, total2, 5)}
+            </div>
+            <div>
+              <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:4px">3着 予測順位分布（${total3}件）</div>
+              ${distBars(dist3, total3, 5)}
+            </div>
+          </div>
+
+          <!-- レース番号別 -->
+          <div>
+            <div style="font-size:9px;font-weight:700;color:var(--text3);margin-bottom:4px">レース番号別 2着1位的中率</div>
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th style="${thStyle}">R</th>
+                <th style="${thStyle};text-align:right">件数</th>
+                <th style="${thStyle};text-align:right">的中率</th>
+              </tr></thead>
+              <tbody>${rnoRows2}</tbody>
+            </table>
+          </div>
+
+          <div style="font-size:9px;color:var(--text3);margin-top:6px">
+            識別力=1位と2位の的中率の差。差が小さい→データ品質の問題。差が大きく1位が低い→買い目ロジックの問題。
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // CSV保存機能
+  // ──────────────────────────────────────────────────────────────────
+  // 5パネル（確率キャリブレーション／2着・3着予測精度／コース別勝率／
+  // 30〜40%帯過大評価内訳／2着・3着診断）の集計結果を1本のCSVにまとめて
+  // ダウンロードする。既存の calc*() 関数をそのまま再利用し、表示用HTMLとは
+  // 独立に「今パネルに表示されている数値」と同じ集計をもう一度計算する。
+  // ══════════════════════════════════════════════════════════════════
+
+  function _csvEscape(v) {
+    if (v == null) return '';
+    const s = String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function _csvRow(arr) {
+    return arr.map(_csvEscape).join(',');
+  }
+  function _pctStr(v) {
+    return v == null ? '' : (v * 100).toFixed(1) + '%';
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-16 追加] 展開シナリオ確率キャリブレーション（2着/3着の全艇分布）
+  // ──────────────────────────────────────────────────────────────────
+  // calcWinProbCalibration と全く同じ方式（レースごとに全艇の推定確率と
+  // 的中/非的中を突き合わせ、推定帯ごとに実績と比較）を、weighted2ndMap/
+  // weighted3rdMap（collectResultsForDateScenが保存する全艇分の正規化済み
+  // 確率マップ）に適用する。mapField/actualField を引数化して2着・3着
+  // 両方に共通利用できるようにした。
+  //
+  // 注意: weighted3rdMap は「2着が誰であったか」で周辺化した値であり、
+  // 展開シナリオUIが表示する「1着・2着の具体的な組み合わせに条件づけた
+  // 3着分布」（merged3rdMap）そのものではない、粗い近似値である。
+  function calcScenarioMapCalibration(results, mapField, actualField) {
+    const boats = [1, 2, 3, 4, 5, 6];
+    const binned = BINS.map(bin => ({
+      label: bin.label, min: bin.min, max: bin.max,
+      total: 0, hits: 0, sumEst: 0,
+    }));
+
+    (results || []).forEach(r => {
+      const map = r[mapField];
+      const actualBoat = r[actualField];
+      if (!map || actualBoat == null) return;
+      boats.forEach(boat => {
+        const est = map[String(boat)] ?? map[boat];
+        if (est == null || typeof est !== 'number' || isNaN(est)) return;
+        const bin = binned.find(b => est >= b.min && est < b.max);
+        if (!bin) return;
+        bin.total++;
+        bin.sumEst += est;
+        if (actualBoat === boat) bin.hits++;
+      });
+    });
+
+    return binned.map(b => ({
+      label  : b.label,
+      total  : b.total,
+      hits   : b.hits,
+      actual : b.total > 0 ? b.hits / b.total : null,
+      estAvg : b.total > 0 ? b.sumEst / b.total : null,
+    }));
+  }
+
+  function _buildCalibrationCSV(all) {
+    const lines = [];
+    const push = (row) => lines.push(_csvRow(row));
+    const blank = () => lines.push('');
+    const section = (title) => { blank(); push([title]); };
+
+    // ── ① 確率キャリブレーション（艇×レース、winProbBinStats）──
+    const winProbBinStats = calcWinProbCalibration(all);
+    const calError   = calcCalibrationError(winProbBinStats);
+    const violations = countMonotonicViolations(winProbBinStats);
+    section('① 確率キャリブレーション（推定勝率 vs 実績勝率・全艇×全レース）');
+    push(['加重平均誤差', calError != null ? _pctStr(calError) : '']);
+    push(['単調性逆転数', violations]);
+    push(['推定帯', '件数', '推定平均', '実績', '差']);
+    winProbBinStats.forEach(b => {
+      const diff = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      push([b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diff != null ? _pctStr(diff) : '']);
+    });
+
+    // ── ② 2着・3着 予測精度 ──
+    const p2 = calcPlace2Calibration(all);
+    const p3 = calcPlace3Calibration(all);
+    section('② 2着・3着 予測精度（買い目内での的中順位分布）');
+    push(['区分', '2着', '3着']);
+    push(['件数', p2 ? p2.total : '', p3 ? p3.total : '']);
+    push(['1位的中', p2 ? _pctStr(p2.rank1Rate) : '', p3 ? _pctStr(p3.rank1Rate) : '']);
+    push(['2位以内', p2 ? _pctStr(p2.top2Rate)  : '', p3 ? _pctStr(p3.top2Rate)  : '']);
+    push(['3位以内', p2 ? _pctStr(p2.top3Rate)  : '', p3 ? _pctStr(p3.top3Rate)  : '']);
+    push(['買い目外', p2 ? _pctStr(p2.missRate) : '', p3 ? _pctStr(p3.missRate) : '']);
+
+    // ── ③ 会場×コース別 1着率の精度（予測 vs 実績）──
+    const venueCourseStats = calcCalibrationByVenueCourse(all);
+    section('③ 会場×コース別 1着率の精度（予測 vs 実績）');
+    Object.keys(venueCourseStats).sort().forEach(v => {
+      blank();
+      push([v]);
+      push(['枠', '件数', '推定', '実績', '差']);
+      venueCourseStats[v].forEach(s => {
+        push([s.course, s.count, _pctStr(s.estAvg), _pctStr(s.actual), s.diff != null ? _pctStr(s.diff) : '']);
+      });
+    });
+
+    // ── ④ 会場別×1着枠番別 2着・3着 予測精度 ──
+    const place23ByVenue = calcPlace23ByVenueCourse(all);
+    section('④ 会場別×1着枠番別 2着・3着 予測精度');
+    Object.keys(place23ByVenue).sort().forEach(v => {
+      blank();
+      push([v]);
+      push(['1着枠', '区分', '件数', '1位的中', '2位以内', '3位以内', '買い目外']);
+      const { place2, place3 } = place23ByVenue[v];
+      [1, 2, 3, 4, 5, 6].forEach(c => {
+        const s2 = place2[c];
+        const s3 = place3[c];
+        push([c, '2着', s2 ? s2.total : '', s2 ? _pctStr(s2.rank1Rate) : '', s2 ? _pctStr(s2.top2Rate) : '', s2 ? _pctStr(s2.top3Rate) : '', s2 ? _pctStr(s2.missRate) : '']);
+        push([c, '3着', s3 ? s3.total : '', s3 ? _pctStr(s3.rank1Rate) : '', s3 ? _pctStr(s3.top2Rate) : '', s3 ? _pctStr(s3.top3Rate) : '', s3 ? _pctStr(s3.missRate) : '']);
+      });
+    });
+
+    // ── ⑤ 30〜40%帯 過大評価 内訳調査 ──
+    const band = all.filter(r => r.hitProbEst != null && r.hitProbEst >= 0.30 && r.hitProbEst < 0.40);
+    if (band.length > 0) {
+      const totalBand = band.length;
+      const hitsBand  = band.filter(r => r.isHit).length;
+
+      const venueMap = {};
+      band.forEach(r => {
+        const v = r.venue || '不明';
+        if (!venueMap[v]) venueMap[v] = { total: 0, hits: 0 };
+        venueMap[v].total++;
+        if (r.isHit) venueMap[v].hits++;
+      });
+      const rnoMap = {};
+      band.forEach(r => {
+        const rno = r.rno != null ? `${r.rno}R` : '不明';
+        if (!rnoMap[rno]) rnoMap[rno] = { total: 0, hits: 0 };
+        rnoMap[rno].total++;
+        if (r.isHit) rnoMap[rno].hits++;
+      });
+      const evMap = { '〜0.9': { total:0,hits:0 }, '0.9〜1.0': { total:0,hits:0 }, '1.0〜1.1': { total:0,hits:0 }, '1.1〜1.3': { total:0,hits:0 }, '1.3〜': { total:0,hits:0 } };
+      band.forEach(r => {
+        if (r.ev == null) return;
+        const key = r.ev < 0.9 ? '〜0.9' : r.ev < 1.0 ? '0.9〜1.0' : r.ev < 1.1 ? '1.0〜1.1' : r.ev < 1.3 ? '1.1〜1.3' : '1.3〜';
+        evMap[key].total++;
+        if (r.isHit) evMap[key].hits++;
+      });
+
+      section('⑤ 30〜40%帯 過大評価 内訳調査');
+      push(['推定30〜40%の件数', totalBand, '実績的中率', _pctStr(hitsBand / totalBand), '目標', '35%']);
+      blank();
+      push(['会場別', '件数', '実績']);
+      Object.entries(venueMap)
+        .map(([v, s]) => ({ venue: v, ...s, actual: s.hits / s.total }))
+        .sort((a, b) => a.actual - b.actual)
+        .forEach(s => push([s.venue, s.total, _pctStr(s.actual)]));
+      blank();
+      push(['レース番号別', '件数', '実績']);
+      Object.entries(rnoMap)
+        .map(([rno, s]) => ({ rno, ...s, actual: s.hits / s.total }))
+        .sort((a, b) => parseInt(a.rno) - parseInt(b.rno))
+        .forEach(s => push([s.rno, s.total, _pctStr(s.actual)]));
+      blank();
+      push(['EV帯別', '件数', '実績']);
+      Object.entries(evMap).forEach(([key, s]) => {
+        push([`EV${key}`, s.total, s.total > 0 ? _pctStr(s.hits / s.total) : '—']);
+      });
+    }
+
+    // ── ⑥ 2着・3着 データvs買い目 切り分け診断 ──
+    const valid2 = all.filter(r => r.actual2nd != null && r.pred2ndRank != null);
+    const valid3 = all.filter(r => r.actual3rd != null && r.pred3rdRank != null);
+    if (valid2.length > 0 || valid3.length > 0) {
+      section('⑥ 2着・3着 データvs買い目 切り分け診断');
+
+      function rankDist(arr, rankField) {
+        const dist = {};
+        arr.forEach(r => {
+          const k = r[rankField] <= 4 ? r[rankField] : 5;
+          dist[k] = (dist[k] ?? 0) + 1;
+        });
+        return dist;
+      }
+      const dist2 = rankDist(valid2, 'pred2ndRank');
+      const dist3 = rankDist(valid3, 'pred3rdRank');
+      const total2 = valid2.length;
+      const total3 = valid3.length;
+
+      push(['予測順位分布', '順位', '2着件数', '2着割合', '3着件数', '3着割合']);
+      [1, 2, 3, 4, 5].forEach(rank => {
+        const label = rank === 5 ? '5位以下' : `${rank}位`;
+        const c2 = dist2[rank] ?? 0;
+        const c3 = dist3[rank] ?? 0;
+        push(['', label, total2 ? c2 : '', total2 ? _pctStr(c2 / total2) : '',
+                          total3 ? c3 : '', total3 ? _pctStr(c3 / total3) : '']);
+      });
+
+      // レース番号別 2着1位的中率
+      // （1着コース別の内訳は③④の会場×コース系パネルに統合済みのためここでは廃止）
+      const byRno2 = {};
+      valid2.forEach(r => {
+        const g = r.rno != null ? `${r.rno}R` : null;
+        if (!g) return;
+        if (!byRno2[g]) byRno2[g] = { total: 0, rank1: 0, rno: r.rno };
+        byRno2[g].total++;
+        if (r.pred2ndRank === 1) byRno2[g].rank1++;
+      });
+      blank();
+      push(['レース番号別 2着1位的中率', '件数', '的中率']);
+      Object.entries(byRno2)
+        .sort((a, b) => a[1].rno - b[1].rno)
+        .forEach(([g, s]) => push([g, s.total, _pctStr(s.rank1 / s.total)]));
+    }
+
+    // ── ⑦ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）──
+    const kimariStats = calcKimariCalibration(all);
+    if (kimariStats) {
+      section('⑦ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
+      push(['件数(実績・予測とも取得できたレース)', kimariStats.total]);
+      push(['軸艇一致件数(predKimariBoat=actual1st)', kimariStats.boatMatchTotal, _pctStr(kimariStats.boatMatchRate)]);
+      push(['軸艇一致時の決まり手的中率', kimariStats.typeAccuracyGivenBoatMatch != null ? _pctStr(kimariStats.typeAccuracyGivenBoatMatch) : '(軸艇一致0件)']);
+
+      const KIMARI_ORDER = ['逃げ', '差し', 'まくり', 'まくり差し', '恵まれ', '抜き'];
+      const allTypes = new Set(KIMARI_ORDER);
+      Object.keys(kimariStats.confusion).forEach(k => {
+        allTypes.add(k);
+        Object.keys(kimariStats.confusion[k]).forEach(p => allTypes.add(p));
+      });
+      const typeList = KIMARI_ORDER.filter(k => allTypes.has(k))
+        .concat([...allTypes].filter(k => !KIMARI_ORDER.includes(k)));
+
+      blank();
+      push(['混同行列（軸艇一致時のみ・行=実際／列=予測）', '実際\\予測', ...typeList]);
+      typeList.forEach(actualK => {
+        const row = kimariStats.confusion[actualK] || {};
+        push(['', actualK, ...typeList.map(predK => row[predK] ?? 0)]);
+      });
+    }
+
+    // ── ⑧ 最終確率キャリブレーション（推定的中確率 vs 実績的中率・買い目セット単位）──
+    // [2026-07-16 追加] hitProbEst（1レースあたり、生成された買い目セット全体が
+    // 当たる確率の合計＝EV計算の元になる「最終確率」）は、これまで
+    // updateCalibPoints（内部の自己補正テーブル更新）にしか使われておらず、
+    // 実際に「推定X%帯の買い目セットが実績で何%当たっているか」を目に見える
+    // 形で検証したものがなかった。①〜⑦は1着/2着/3着など各段階を個別に見て
+    // いるだけで、それらを掛け合わせた最終出力の精度は未検証だった。
+    //
+    // calibrateProb 適用後（hitProbEst・最終出力）と適用前（_rawHitProbEst・
+    // 生の三重積）の両方を同じビンで比較し、「自己補正が実際に効いているか」
+    // も併せて確認できるようにする。
+    const allRawForFinal = all.map(r => {
+      const raw = (r._rawHitProbEst != null) ? r._rawHitProbEst : r.hitProbEst;
+      return (raw === r.hitProbEst) ? r : Object.assign({}, r, { hitProbEst: raw });
+    });
+    const finalProbBinStats = calcCalibration(all);           // 補正後（実運用で使われる値）
+    const rawProbBinStats   = calcCalibration(allRawForFinal); // 補正前（三重積の生値）
+    const finalError   = calcCalibrationError(finalProbBinStats);
+    const rawError     = calcCalibrationError(rawProbBinStats);
+    const finalViolations = countMonotonicViolations(finalProbBinStats);
+    section('⑧ 最終確率キャリブレーション（推定的中確率 vs 実績的中率・買い目セット単位）');
+    push(['対象', '加重平均誤差', '単調性逆転数']);
+    push(['補正後(hitProbEst・実運用値)', finalError != null ? _pctStr(finalError) : '', finalViolations]);
+    push(['補正前(生の三重積)', rawError != null ? _pctStr(rawError) : '', '']);
+    blank();
+    push(['推定帯', '件数(補正後)', '推定平均(補正後)', '実績(補正後)', '差(補正後)',
+                    '件数(補正前)', '推定平均(補正前)', '実績(補正前)', '差(補正前)']);
+    finalProbBinStats.forEach((b, i) => {
+      const rb = rawProbBinStats[i];
+      const diffF = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      const diffR = (rb && rb.actual != null && rb.estAvg != null) ? rb.actual - rb.estAvg : null;
+      push([
+        b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diffF != null ? _pctStr(diffF) : '',
+        rb ? rb.total : '', rb ? _pctStr(rb.estAvg) : '', rb ? _pctStr(rb.actual) : '', diffR != null ? _pctStr(diffR) : ''
+      ]);
+    });
+
+    // ── ⑨ 展開シナリオ確率キャリブレーション（2着/3着・全艇分布ベース）──
+    // [2026-07-16 追加] ⑧までは「1着×2着×3着」を掛け合わせた後の値
+    // （hitProbEst＝買い目セット単位）しか見ていなかったが、これは買い目の
+    // 点数・閾値という下流の判断が混ざってしまう。ここでは買い目選定より
+    // 前の、展開シナリオそのものの確率（weighted2ndMap/weighted3rdMap）を
+    // ①と同じ「推定帯ごとに全艇の的中/非的中を比較」する方式で検証する。
+    const place2ScenarioStats = calcScenarioMapCalibration(all, 'weighted2ndMap', 'actual2nd');
+    const place3ScenarioStats = calcScenarioMapCalibration(all, 'weighted3rdMap', 'actual3rd');
+    const place2ScenarioError = calcCalibrationError(place2ScenarioStats);
+    const place3ScenarioError = calcCalibrationError(place3ScenarioStats);
+    const place2ScenarioViolations = countMonotonicViolations(place2ScenarioStats);
+    const place3ScenarioViolations = countMonotonicViolations(place3ScenarioStats);
+    section('⑨ 展開シナリオ確率キャリブレーション（2着/3着・買い目選定前の全艇分布）');
+    push(['対象', '加重平均誤差', '単調性逆転数']);
+    push(['2着（weighted2ndMap）', place2ScenarioError != null ? _pctStr(place2ScenarioError) : '', place2ScenarioViolations]);
+    push(['3着（weighted3rdMap・2着で周辺化した近似値）', place3ScenarioError != null ? _pctStr(place3ScenarioError) : '', place3ScenarioViolations]);
+    blank();
+    push(['推定帯', '件数(2着)', '推定平均(2着)', '実績(2着)', '差(2着)',
+                    '件数(3着)', '推定平均(3着)', '実績(3着)', '差(3着)']);
+    place2ScenarioStats.forEach((b, i) => {
+      const b3 = place3ScenarioStats[i];
+      const diff2 = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+      const diff3 = (b3 && b3.actual != null && b3.estAvg != null) ? b3.actual - b3.estAvg : null;
+      push([
+        b.label, b.total, _pctStr(b.estAvg), _pctStr(b.actual), diff2 != null ? _pctStr(diff2) : '',
+        b3 ? b3.total : '', b3 ? _pctStr(b3.estAvg) : '', b3 ? _pctStr(b3.actual) : '', diff3 != null ? _pctStr(diff3) : ''
+      ]);
+    });
+
+    return '\uFEFF' + lines.join('\r\n'); // BOM付き（Excelで文字化けしないように）
+  }
+
+  // ── [2026-07-13 追加] デバッグ用: predKimari確認 ──
+  // _lastAllResults はこのIIFE内のローカル変数のためコンソールから直接見えない。
+  // 確認用に1件サンプルを返す公開関数を追加（既存ロジックには無関係）。
+  window._debugKimariSample = function () {
+    if (!_lastAllResults || _lastAllResults.length === 0) {
+      console.log('[calibration] _lastAllResults が空です。先にパネルを描画してください。');
+      return null;
+    }
+    const sample = _lastAllResults.find(r => r.predKimariType != null);
+    const total = _lastAllResults.length;
+    const withPred = _lastAllResults.filter(r => r.predKimariType != null).length;
+    console.log(`[calibration] 全${total}件中 predKimariType あり: ${withPred}件`);
+    console.log(sample || '（predKimariType を持つレースが1件もありません）');
+    return sample;
+  };
+
+  // ── 公開: CSVダウンロードを実行 ──
+  // ボタンから window._downloadCalibrationCSV() として呼ばれる。
+  // 引数なし＝常に「直近に描画したパネルのデータ」を書き出す。
+  window._downloadCalibrationCSV = function () {
+    try {
+      if (!_lastAllResults || _lastAllResults.length === 0) {
+        alert('CSV化できるデータがありません（パネル未描画、または集計中です）');
+        return;
+      }
+      const csv  = _buildCalibrationCSV(_lastAllResults);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const now  = new Date();
+      const pad  = n => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `calibration_${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.warn('[calibration] CSV出力エラー:', e);
+      alert('CSV出力に失敗しました: ' + e.message);
+    }
+  };
+
+  // ── 公開: 補正テーブルをJSONダウンロード ──
+  // ボタンから window._downloadCalibPointsJSON() として呼ばれる。
+  // ダウンロードした calib_points.json を scripts/data/ 直下に置くと、
+  // auto_push.py が次回push時に data/*.json を自動でgit addするため、
+  // 特別な対応なしに配布される（DATA_DIR.glob("*.json") で拾われる）。
+  //
+  // 【これで解決すること】
+  //   CALIB_POINTS 等はこれまで各端末の localStorage で独立に学習され、
+  //   admin の複数端末間・premiumユーザー間で「独自補正 最終確率」が
+  //   食い違う原因になっていた。この JSON を data/ に配布し、
+  //   computeScenCombosWithEV.js 側が起動時に fetch して全端末に同一の
+  //   テーブルを適用することで、最終確率が常に同じ値になる。
+  window._downloadCalibPointsJSON = function () {
+    try {
+      const missing = [];
+      if (typeof window.CALIB_POINTS === 'undefined') missing.push('CALIB_POINTS');
+      if (typeof window.COURSE1_CALIB_POINTS === 'undefined') missing.push('COURSE1_CALIB_POINTS');
+      if (typeof window.COURSE_OTHER_CALIB_POINTS === 'undefined') missing.push('COURSE_OTHER_CALIB_POINTS');
+      if (missing.length > 0) {
+        alert(`補正テーブルが読み込まれていません: ${missing.join(', ')}\ncomputeScenCombosWithEV.js が正しく読み込まれているか確認してください。`);
+        return;
+      }
+      const payload = {
+        CALIB_POINTS: window.CALIB_POINTS,
+        COURSE1_CALIB_POINTS: window.COURSE1_CALIB_POINTS,
+        COURSE_OTHER_CALIB_POINTS: window.COURSE_OTHER_CALIB_POINTS,
+        // [2026-07-13 追加] 会場別1コース補正テーブル。学習済み会場が
+        // 一つも無い場合は {} になりうる（必須項目には含めない＝missing判定対象外）。
+        VENUE_COURSE1_CALIB_POINTS: window.VENUE_COURSE1_CALIB_POINTS || {},
+        // [2026-07-13 追加] 会場別2〜6号艇コース補正テーブル。同様に {} になりうる。
+        VENUE_COURSE_OTHER_CALIB_POINTS: window.VENUE_COURSE_OTHER_CALIB_POINTS || {},
+        updatedAt: new Date().toISOString(),
+      };
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'calib_points.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert('calib_points.json をダウンロードしました。\nscripts/data/ フォルダに上書き保存すると、次回のpushで全端末に配布されます。');
+    } catch (e) {
+      console.warn('[calibration] calib_points.json 出力エラー:', e);
+      alert('JSON出力に失敗しました: ' + e.message);
+    }
+  };
+
+  // ── DOM への描画 ──
+  function _ensureContainer() {
+    let el = document.getElementById('top-ai-calibration-panel');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'top-ai-calibration-panel';
+    const ref = document.getElementById('top-ai-stats-history-summary');
+    if (ref && ref.parentNode) {
+      ref.parentNode.insertBefore(el, ref.nextSibling);
+    } else {
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  // ── デバッグ用: コンソールから確認する ──
+  // 使い方: window._checkVenueCourse(allResultsScenAll)
+  //         window._checkPlace23ByCourse(allResultsScenAll)
+  window._checkVenueCourse = function (results) {
+    const data = calcCalibrationByVenueCourse(results);
+    Object.entries(data).forEach(([venue, rows]) => {
+      console.log(`── ${venue} ──`);
+      console.table(rows.map(r => ({
+        course: r.course,
+        count: r.count,
+        est: r.estAvg != null ? (r.estAvg * 100).toFixed(1) + '%' : '—',
+        actual: r.actual != null ? (r.actual * 100).toFixed(1) + '%' : '—',
+        diff: r.diff != null ? (r.diff >= 0 ? '+' : '') + (r.diff * 100).toFixed(1) + '%' : '—',
+      })));
+    });
+    return data;
+  };
+  window._checkPlace23ByCourse = function (results) {
+    const { place2, place3 } = calcPlace23ByWinningCourse(results);
+    console.log('── 2着予測精度（1着枠番別） ──');
+    console.table(Object.entries(place2).map(([c, s]) => s ? {
+      course: c, total: s.total,
+      rank1: (s.rank1Rate * 100).toFixed(1) + '%',
+      top2: (s.top2Rate * 100).toFixed(1) + '%',
+      top3: (s.top3Rate * 100).toFixed(1) + '%',
+    } : { course: c, total: 0 }));
+    console.log('── 3着予測精度（1着枠番別） ──');
+    console.table(Object.entries(place3).map(([c, s]) => s ? {
+      course: c, total: s.total,
+      rank1: (s.rank1Rate * 100).toFixed(1) + '%',
+      top2: (s.top2Rate * 100).toFixed(1) + '%',
+      top3: (s.top3Rate * 100).toFixed(1) + '%',
+    } : { course: c, total: 0 }));
+    return { place2, place3 };
+  };
+
+  // ── 公開関数（これだけ既存コードから呼ぶ）──
+  // 関数は常に定義する。admin でない場合は中でスキップするだけ。
+  window._renderCalibrationPanel = function (allResultsScenAll) {
+    const _diagAll   = (allResultsScenAll || []).length;
+    const _diagValid = (allResultsScenAll || []).filter(r => r.hitProbEst != null).length;
+
+    // ── [修正] admin-mode タイミング問題への対処 ──
+    // init()（SHA-256認証）は async のため、defer スクリプト完了後も
+    // admin-mode クラスが body に付いていないことがある。
+    // → 未付与の場合は最大3秒間ポーリングし、付与され次第データを引き継いで再実行。
+    if (!document.body.classList.contains('admin-mode')) {
+      let _retryCount = 0;
+      const _retryId = setInterval(function () {
+        _retryCount++;
+        if (document.body.classList.contains('admin-mode')) {
+          clearInterval(_retryId);
+          window._renderCalibrationPanel(allResultsScenAll);
+        } else if (_retryCount >= 30) { // 100ms × 30 = 3秒でタイムアウト
+          clearInterval(_retryId);
+        }
+      }, 100);
+      return;
+    }
+    try {
+      const container = _ensureContainer();
+      const all       = allResultsScenAll || [];
+      const totalAll  = all.length;
+      _lastAllResults = all; // CSV保存ボタン用に保持
+
+      // 修正: allResultsScenAll が [] のまま呼ばれたとき（非同期計算完了前）は
+      // 「集計中」表示にしてデータ不足と区別する
+      if (totalAll === 0) {
+        container.innerHTML = `
+          <div class="ai-stats-card" style="margin-bottom:0.6rem">
+            <div style="display:grid;grid-template-columns:1fr;gap:10px">
+              <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+                <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:4px">📐 確率キャリブレーション</div>
+                <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.3rem 0">集計中...</div>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      // ―― ① 補正テーブル更新には「生の推定値」を使用する ――
+      // [2026-06-20 修正] 二重補正による自己崩壊ループ対策。
+      //   旧実装は all（= computeScenCombosWithEV 側で既に calibrateProb() 済みの
+      //   hitProbEst を持つ配列）を「生データ」のつもりで binStatsRaw に集計し、
+      //   それを updateCalibPoints に渡していた。
+      //   → 補正テーブルが「自分自身が補正した後の値」を学習材料にしてしまい、
+      //     更新を繰り返すほど補正が増幅される自己崩壊ループに陥っていた。
+      //   computeScenCombosWithEV.js 側で補正前の値を r._rawHitProbEst に
+      //   保持するよう修正したため、ここではそれを使う（無ければ hitProbEst で代替）。
+      const allRaw = all.map(r => {
+        const raw = (r._rawHitProbEst != null) ? r._rawHitProbEst : r.hitProbEst;
+        return (raw === r.hitProbEst) ? r : Object.assign({}, r, { hitProbEst: raw });
+      });
+      const binStatsRaw = calcCalibration(allRaw);
+      if (typeof updateCalibPoints === 'function') updateCalibPoints(binStatsRaw);
+
+      // ―― ② パネル表示用の集計 ――
+      // [2026-06-23 修正] 表示には calcWinProbCalibration（艇×レース集計、
+      // 母数は最大 totalAll×6）を使う。calcCalibration（hitProbEst集計、
+      // 母数は最大 totalAll）は上の binStatsRaw/updateCalibPoints 専用のまま
+      // 維持し、表示側のビン分けと混同しない（混ぜると hitProbEst の自己補正
+      // テーブル CALIB_POINTS が無関係な統計で歪み、EV計算が壊れるため）。
+      const winProbBinStats = calcWinProbCalibration(all);
+      const totalValidWin   = winProbBinStats.reduce((s, b) => s + b.total, 0);
+
+      const calError   = calcCalibrationError(winProbBinStats);
+      const violations = countMonotonicViolations(winProbBinStats);
+      const p2stats    = calcPlace2Calibration(all);
+      const p3stats    = calcPlace3Calibration(all);
+      // [2026-07-13 追加] 会場×コース別1着率、会場別×1着枠番別2/3着予測精度
+      // （コース単体版・1着枠番単体版パネルは会場分割版に統合したため表示は廃止。
+      //   ただし calcCalibrationByCourse は下の補正テーブル更新で引き続き使用）
+      const venueCourseStats = calcCalibrationByVenueCourse(all);
+      const place23ByVenue   = calcPlace23ByVenueCourse(all);
+
+      // ―― ③ コース別補正テーブル更新には1号艇の「生の推定値」を使用する ――
+      // hitProbEst と同じ自己崩壊ループ対策。r.boatProbsRaw[1] が
+      // computeScenCombosWithEV.js 側で保持している補正前の nigeProb。
+      // 無ければ（旧データ等）boatProbs[1] のままフォールバックする。
+      try {
+        const allRawCourse = all.map(r => {
+          if (!r.boatProbsRaw || r.boatProbsRaw[1] == null) return r;
+          const rawBp = Object.assign({}, r.boatProbs, { 1: r.boatProbsRaw[1] });
+          return Object.assign({}, r, { boatProbs: rawBp });
+        });
+        // [2026-07-18 修正] コース1補正テーブルの学習元を「平均1点
+        // (calcCalibrationByCourse)」から「確率帯ごとの複数点
+        // (calcWinProbCalibrationByCourse)」に変更。単一点方式では
+        // 平均推定値以上のすべての確率が同じ実績値へフラット化される
+        // 構造的欠陥があり、CSV①診断（40-60%帯+15.7pt・60%+帯+17.9pt）
+        // でも帯によって乖離幅が大きく異なることが確認されたため、
+        // コース2〜6と同じ区分線形補間方式に統一する。
+        const courseBinStatsRaw = calcWinProbCalibrationByCourse(allRawCourse);
+        if (typeof updateCourse1CalibPoints === 'function') updateCourse1CalibPoints(courseBinStatsRaw[1]);
+
+        // [2026-07-13 追加] 会場別1コース補正テーブルの学習。
+        // 全国版と同じ「生の推定値」（allRawCourse）を会場×コース単位で集計し、
+        // 会場ごとにサンプル十分な場合のみ VENUE_COURSE1_CALIB_POINTS を更新する
+        // （サンプル不足の会場は updateVenueCourse1CalibPoints 内部でスキップされ、
+        // calibrateCourse1Prob 側が全国平均に自動フォールバックする）。
+        const venueCourseStatsRaw = calcCalibrationByVenueCourse(allRawCourse);
+        if (typeof updateVenueCourse1CalibPoints === 'function') updateVenueCourse1CalibPoints(venueCourseStatsRaw);
+      } catch (_ccErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
+
+      // ―― ④ 2〜6号艇の補正テーブル更新には各艇の「生の推定値」を使用する ――
+      // [2026-07-03 追加] ①③と同じ自己崩壊ループ対策。
+      // boatProbsRaw[course]（computeScenCombosWithEV.js § 1.6 が保持する
+      // 補正前の final_prob）があればそちらで boatProbs[course] を上書きしてから
+      // 集計する。無ければ（旧データ・導入直後で raw 未保存等）boatProbs の
+      // ままフォールバックする（無補正時は raw==補正後なので実害なし）。
+      try {
+        const allRawOther = all.map(r => {
+          if (!r.boatProbsRaw) return r;
+          const overrides = {};
+          [2, 3, 4, 5, 6].forEach(c => {
+            if (r.boatProbsRaw[c] != null) overrides[c] = r.boatProbsRaw[c];
+          });
+          if (Object.keys(overrides).length === 0) return r;
+          return Object.assign({}, r, { boatProbs: Object.assign({}, r.boatProbs, overrides) });
+        });
+        const courseBinStatsRaw = calcWinProbCalibrationByCourse(allRawOther);
+        if (typeof updateCourseOtherCalibPoints === 'function') updateCourseOtherCalibPoints(courseBinStatsRaw);
+
+        // [2026-07-14 修正] 会場別 2〜6号艇コース補正テーブルの学習。
+        // ③ブロックでは allRawCourse（1コースのみ生値化）を誤って再利用しており、
+        // 2〜6号艇が既に全国補正済みの値から学習する二重補正バグになっていた。
+        // 正しくは、このブロックで作られている allRawOther（2〜6号艇も生値化）を
+        // 会場×コース単位で集計し直して使う。
+        const venueCourseStatsOtherRaw = calcCalibrationByVenueCourse(allRawOther);
+        if (typeof updateVenueCourseOtherCalibPoints === 'function') updateVenueCourseOtherCalibPoints(venueCourseStatsOtherRaw);
+      } catch (_ccoErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
+
+      container.innerHTML = `
+        <div class="ai-stats-card" style="margin-bottom:0.6rem">
+          <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+            <label style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px;cursor:pointer" title="ONにして再バックテストすると boatProbsV2 が populate される。既存の予測・買い目・EVには影響しません。">
+              <input type="checkbox" ${window._calibExperiment?.flags?.useNewTenjiModel ? 'checked' : ''}
+                onchange="window._calibExperiment.flags.useNewTenjiModel=this.checked; window._calibExperiment.flags.fixRenorm=this.checked; window._calibExperiment.saveFlags(); console.log('[実験フラグ] useNewTenjiModel/fixRenorm =', this.checked, '再バックテスト実行後 window._compareV2() で確認してください');">
+              🧪 実験: 新展示モデル(A2)+再正規化修正(A1)
+            </label>
+            <button onclick="window._downloadCalibPointsJSON()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">
+              🔄 補正テーブルをJSON保存（全端末配布用）
+            </button>
+            <button onclick="window._downloadCalibrationCSV()" style="font-size:10px;font-weight:700;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer">
+              📥 全パネルをCSV保存
+            </button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
+            ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
+            ${buildPlace2CalibHTML(p2stats, p3stats)}
+            <div class="admin-only">${buildPlace23VenueCourseHTML(place23ByVenue)}</div>
+            <div class="admin-only">${buildVenueCourseHTML(venueCourseStats)}</div>
+          </div>
+          ${buildOverestimateAnalysisHTML(all)}
+          ${buildDiagnosisHTML(all)}
+        </div>`;
+    } catch (e) {
+      console.warn('[calibration] render error:', e);
+    }
+  };
+
+})();
