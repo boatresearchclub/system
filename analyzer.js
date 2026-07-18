@@ -2008,7 +2008,15 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
     }
   }
 
-  const kimariTypes = Object.keys(scenarioVKimari).filter(k => scenarioVKimari[k] > 0 && k in KIMARI_HARD_EXCLUDE && k !== '抜き');
+  // [2026-07-18 修正] 従来は '抜き' をここだけ明示除外していたが、他の箇所
+  //   （KIMARI_HARD_EXCLUDE / blendPersonalKimari の BLEND_TARGETS / 風・スリット
+  //   補正 slitMul 等）ではすべて他の決まり手と同列に扱われており、ここだけ
+  //   除外する理由のコメントも残っていなかった（設計判断の書き忘れの可能性が高い）。
+  //   実測（calibration_20260718 CSV⑦）でも「抜き」を予測決まり手として一度も
+  //   出力していないことが確認された。除外を続けると、実際に抜きで決着した
+  //   レース（全体の約3%）の2着・3着確率が他の決まり手のデータを流用した
+  //   不正確な値になるため、除外条件を撤廃する。
+  const kimariTypes = Object.keys(scenarioVKimari).filter(k => scenarioVKimari[k] > 0 && k in KIMARI_HARD_EXCLUDE);
 
   // ── winner艇の個人kimari率をscenarioVKimariにブレンド ──
   const SCENARIO_BLEND_STRENGTH = 0.7;

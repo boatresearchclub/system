@@ -154,7 +154,12 @@
     flags: Object.assign(
       {
         useNewTenjiModel: false,   // A2: バックテストの展示補正をrenderer.jsと同じ calcTenjiScore ベースに統一
-        fixRenorm:        false,  // A1: 2〜6号艇補正後の全体再正規化から1号艇を除外
+        // [2026-07-18 確定] calibration_20260718 CSV③で全22会場・全て同方向
+        // （1号艇 平均+8.5〜29pt過小評価／2〜6号艇 過大評価）という結果が出たため、
+        // 「2〜6号艇補正の下方修正幅ぶん1号艇の値が押し戻される」再正規化バグを
+        // 確定原因と判断し、実験フラグから本採用（true固定）に切り替える。
+        // A1: 2〜6号艇補正後の全体再正規化から1号艇を除外
+        fixRenorm:        true,
       },
       _loadExperimentFlagsFromLS() || {}
     ),
@@ -249,13 +254,26 @@
   //   の3点テーブルとする。将来 calcCalibrationByCourse 側がビン別集計に
   //   対応したら、ここも hitProbEst 同様の多点補間に拡張できる。
   // ─────────────────────────────────────────────────────────────────────────
-  const _COURSE1_CALIB_LS_KEY = 'scen_calib_course1_v2'; // [2026-06-25] v1→v2: 60日データで再学習
+  const _COURSE1_CALIB_LS_KEY = 'scen_calib_course1_v3'; // [2026-07-18] v2→v3: モデル統一(calcTenkaiProbsExtended一本化)に伴い再学習
 
   // [2026-06-25] course1 v1旧キーを破棄（60日再学習のため）
   try {
     if (localStorage.getItem('scen_calib_course1_v1') != null) {
       localStorage.removeItem('scen_calib_course1_v1');
       console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_course1_v1)を破棄しました。');
+    }
+  } catch (_e) {}
+  // [2026-07-18 追加] v2旧キーを破棄。
+  //   v2は「計算経路によって calcTenkaiProbs / calcTenkaiProbsExtended が混在していた
+  //   時代」の生値（主に古いゼロサムモデルの出力）に対して学習されたテーブルであり、
+  //   本日 calcTenkaiProbsExtended に一本化した後の生値（Stage1: nige_prob をほぼ
+  //   独立変数として通す新モデル）とは分布が別物になった。そのまま使うと
+  //   calibration_20260718 CSV③で確認された「全22会場で1号艇+14〜29pt過小評価」を
+  //   悪化させ続けるため、無条件で破棄して v3 として再学習させる。
+  try {
+    if (localStorage.getItem('scen_calib_course1_v2') != null) {
+      localStorage.removeItem('scen_calib_course1_v2');
+      console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_course1_v2)を破棄しました（モデル統一に伴う再学習のため）。');
     }
   } catch (_e) {}
   function _loadCourse1CalibFromLS() {
@@ -268,11 +286,17 @@
     return null;
   }
 
-  // デフォルト: 2026-06-20 実測（694件）推定74.7%→実績60.8%を反映
+  // [2026-07-18 変更] デフォルトを「補正なし(y=x)」にリセット。
+  //   旧デフォルト [0.747, 0.608] は 2026-06-20 実測（694件）を反映したものだが、
+  //   これは統一前の calcTenkaiProbs（古いゼロサムモデル、生値が0.7台に出やすい）
+  //   に対する校正であり、統一後の calcTenkaiProbsExtended（Stage1で生値が
+  //   0.3〜0.6台中心に出る）にそのまま適用すると x<0.747 の区間が
+  //   実測に基づかない直線補外になり、系統的な過小補正（③の主因）を生んでいた。
+  //   新モデルでの実測が十分蓄積され次第、updateCourse1CalibPoints が
+  //   localStorage(v3)に学習結果を保存し、以後はそちらが使われる。
   const COURSE1_CALIB_POINTS = _loadCourse1CalibFromLS() || [
     [0.00, 0.00],
-    [0.747, 0.608],
-    [1.00, 0.608], // 右端は最後の実測水準でフラット外挿（100%への収束は仮定しない）
+    [1.00, 1.00],
   ];
   window.COURSE1_CALIB_POINTS = COURSE1_CALIB_POINTS; // calibration.js のJSON書き出しボタンから参照するため公開
 
@@ -289,7 +313,15 @@
   //   calibrateCourse1Prob 側で全国平均（COURSE1_CALIB_POINTS）に
   //   フォールバックする。
   // ─────────────────────────────────────────────────────────────────────────
-  const _VENUE_COURSE1_CALIB_LS_KEY = 'scen_calib_venue_course1_v1';
+  const _VENUE_COURSE1_CALIB_LS_KEY = 'scen_calib_venue_course1_v2'; // [2026-07-18] v1→v2: モデル統一に伴い再学習
+
+  // [2026-07-18 追加] v1旧キーを破棄（全国版と同じ理由：統一前の生値で学習された会場別テーブルのため）
+  try {
+    if (localStorage.getItem('scen_calib_venue_course1_v1') != null) {
+      localStorage.removeItem('scen_calib_venue_course1_v1');
+      console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_venue_course1_v1)を破棄しました（モデル統一に伴う再学習のため）。');
+    }
+  } catch (_e) {}
 
   function _loadVenueCourse1CalibFromLS() {
     try {
@@ -593,8 +625,17 @@
   //   calibration.js 側はそちらを優先して学習に使うこと（updateCourseOtherCalibPoints
   //   の呼び出し元で対応）。
   // ─────────────────────────────────────────────────────────────────────────
-  const _COURSE_OTHER_CALIB_LS_KEY = 'scen_calib_course_other_v1';
+  const _COURSE_OTHER_CALIB_LS_KEY = 'scen_calib_course_other_v2'; // [2026-07-18] v1→v2: モデル統一に伴い再学習
   const OTHER_COURSES = [2, 3, 4, 5, 6];
+
+  // [2026-07-18 追加] v1旧キーを破棄（1号艇テーブルと同じ理由。2〜6号艇の生値も
+  //   calcTenkaiProbsExtended への統一で分布が変わっているため）
+  try {
+    if (localStorage.getItem('scen_calib_course_other_v1') != null) {
+      localStorage.removeItem('scen_calib_course_other_v1');
+      console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_course_other_v1)を破棄しました（モデル統一に伴う再学習のため）。');
+    }
+  } catch (_e) {}
 
   function _loadCourseOtherCalibFromLS() {
     try {
@@ -637,7 +678,15 @@
   //   calibrateOtherCourseProb 側で全国平均（COURSE_OTHER_CALIB_POINTS）に
   //   フォールバックする。
   // ─────────────────────────────────────────────────────────────────────────
-  const _VENUE_COURSE_OTHER_CALIB_LS_KEY = 'scen_calib_venue_course_other_v1';
+  const _VENUE_COURSE_OTHER_CALIB_LS_KEY = 'scen_calib_venue_course_other_v2'; // [2026-07-18] v1→v2: モデル統一に伴い再学習
+
+  // [2026-07-18 追加] v1旧キーを破棄
+  try {
+    if (localStorage.getItem('scen_calib_venue_course_other_v1') != null) {
+      localStorage.removeItem('scen_calib_venue_course_other_v1');
+      console.warn('[computeScenCombosWithEV] 旧キー(scen_calib_venue_course_other_v1)を破棄しました（モデル統一に伴う再学習のため）。');
+    }
+  } catch (_e) {}
 
   function _loadVenueCourseOtherCalibFromLS() {
     try {
