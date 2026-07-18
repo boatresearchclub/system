@@ -958,13 +958,18 @@ def write_result_json(days_back=None):
     return written > 0
 
 
-def write_history_json(days_back=None):
+def write_history_json(days_back=None, force=False):
     """
     過去 days_back 日分のCSVを data/history_YYYYMMDD.json として書き出す。
     フェーズ1: inject_history_to_html() と並行稼働。干渉なし。
 
     出力フォーマット:
         data/history_20260510.json = {"鳴門": {...vdata...}, "桐生": {...}, ...}
+
+    [2026-07-18 追加] force=True の場合、既存の history_*.json も
+    再計算して上書きする。prob_scenario_engine.py 等、推定ロジック側を
+    修正したあとの再バックフィル用（--backfill-history-force で指定）。
+    通常運用（force=False）では従来通り既存ファイルはスキップする。
     """
     if days_back is None:
         days_back = HISTORY_DAYS
@@ -980,8 +985,9 @@ def write_history_json(days_back=None):
         date_nd    = target.strftime("%Y%m%d")
 
         # 既に出力済みのファイルはスキップ（起動時の重複パースを防ぐ）
+        # force=True のときはロジック修正の反映のため既存ファイルも作り直す
         out_path = DATA_DIR / f"history_{date_nd}.json"
-        if out_path.exists():
+        if out_path.exists() and not force:
             continue
 
         day_data = {}
@@ -3147,15 +3153,18 @@ def main():
     # 対象日数分のCSV/RESULT_DIRファイルが実際に残っていない日はスキップされる
     # （write_history_json / write_result_json は既存ファイルからしか生成しない）。
     # 実行後は data/index.json も更新して終了する（監視ループには入らない）。
-    if "--backfill-history" in sys.argv:
+    if "--backfill-history" in sys.argv or "--backfill-history-force" in sys.argv:
+        force_mode = "--backfill-history-force" in sys.argv
+        flag = "--backfill-history-force" if force_mode else "--backfill-history"
         try:
-            idx = sys.argv.index("--backfill-history")
+            idx = sys.argv.index(flag)
             days_back = int(sys.argv[idx + 1]) if idx + 1 < len(sys.argv) else HISTORY_KEEP_DAYS
         except (ValueError, IndexError):
             days_back = HISTORY_KEEP_DAYS
-        log(f"[バックフィル] history_*.json / result_*.json を過去{days_back}日分まとめて生成します")
+        mode_label = "既存分も再計算(force)" if force_mode else "未生成分のみ"
+        log(f"[バックフィル] history_*.json / result_*.json を過去{days_back}日分まとめて生成します（{mode_label}）")
         DATA_DIR.mkdir(exist_ok=True)
-        write_history_json(days_back=days_back)
+        write_history_json(days_back=days_back, force=force_mode)
         write_result_json(days_back=days_back)
         write_data_index()
         log("[バックフィル] 完了")
