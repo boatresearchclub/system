@@ -413,35 +413,112 @@
   };
 
   /**
-   * calibration.js の calcCalibrationByCourse() 結果（course=1の要素）で
-   * COURSE1_CALIB_POINTS を更新する。hitProbEst の updateCalibPoints と同じ
-   * 自己崩壊ループ対策（最低サンプル数・異常値ガード）を踏襲する。
+   * calibration.js の calcWinProbCalibrationByCourse() 結果の course=1 配列
+   * （確率帯ごとの {label, count, hits, actual, estAvg} の配列）で
+   * COURSE1_CALIB_POINTS を更新する。
    *
-   * @param {Array} courseStats  calcCalibrationByCourse() の戻り値（6要素）
+   * [2026-07-18 修正] 旧実装は calcCalibrationByCourse()（コースごとの
+   * 平均1点のみ）を受け取り、[[0,0],[平均推定,平均実績],[1,平均実績]] という
+   * 3点だけのフラットな補正曲線を生成していた。この方式では平均推定値以上の
+   * すべての確率が同じ実績値へ潰されてしまう（例: 57.6%以上の推定が
+   * 全部56.9%に固定）。
+   *
+   * CSV①診断（確率キャリブレーション・全艇×全レース）で
+   *   0–10%帯: 誤差ほぼ無し
+   *   40–60%帯: +15.7pt
+   *   60%+帯  : +17.9pt
+   * と、乖離の大きさが確率帯によって大きく異なることが判明したため、
+   * updateCourseOtherCalibPoints（2〜6号艇の全国テーブル）と同じ
+   * 「確率帯ごとの複数点による区分線形補間」方式に統一する。
+   *
+   * 入力形式は2通りをサポートする（calibration.js が旧形式のまま
+   * 呼び出しても本番を壊さないための後方互換）:
+   *   (A) 新形式（推奨・現行の calibration.js が渡す形式）:
+   *       確率帯ごとの配列 [{estAvg, actual, count}, ...]
+   *       = calcWinProbCalibrationByCourse(results)[1]
+   *   (B) 旧形式（後方互換のみ・非推奨）:
+   *       calcCalibrationByCourse() の戻り値（6要素、course=1〜6、各コース
+   *       平均1点）。この形式は帯情報を持たないため、従来通りの
+   *       フラット曲線にフォールバックする。
+   *
+   * @param {Array} course1Stats  calcWinProbCalibrationByCourse() の course=1 配列
+   *                               （または後方互換用の旧 calcCalibrationByCourse() 配列）
    */
-  window.updateCourse1CalibPoints = function (courseStats) {
-    if (!Array.isArray(courseStats)) return;
-    const c1 = courseStats.find(s => s.course === 1);
-    if (!c1 || c1.estAvg == null || c1.actual == null) return;
+  window.updateCourse1CalibPoints = function (course1Stats) {
+    if (!Array.isArray(course1Stats) || course1Stats.length === 0) return;
 
-    const MIN_SAMPLES_HARD = 50; // コース別は艇単位×レースなので最低50件
-    if (c1.count < MIN_SAMPLES_HARD) {
-      console.warn(`[updateCourse1CalibPoints] サンプル不足 (${c1.count}件 < ${MIN_SAMPLES_HARD}件) のため更新をスキップしました。`);
-      return;
-    }
-    // 高確率帯で実績が極端に低い崩壊値は反映しない（hitProbEst と同じガード）
-    if (c1.estAvg >= HIGH_PROB_BIN_MIN && c1.actual <= EXTREME_LOW_ACTUAL_THRESH) {
-      console.warn('[updateCourse1CalibPoints] 異常値（崩壊値）のため更新をスキップしました。', c1);
+    const MIN_SAMPLES_HARD_BIN = 50; // 帯ごとの最低サンプル数（updateCourseOtherCalibPointsと同じ閾値）
+
+    // ── 旧形式（calcCalibrationByCourse の course=1〜6 平均1点配列）の後方互換 ──
+    // 'course' キーを持つ要素があれば旧形式とみなす。
+    const looksLegacy = 'course' in course1Stats[0];
+    if (looksLegacy) {
+      console.warn(
+        '[updateCourse1CalibPoints] 旧形式（コース平均1点）が渡されました。' +
+        'calibration.js 側を calcWinProbCalibrationByCourse() の course=1 配列を' +
+        '渡すよう更新してください（現状は暫定的に従来のフラット曲線を生成します）。'
+      );
+      const c1 = course1Stats.find(s => s.course === 1);
+      if (!c1 || c1.estAvg == null || c1.actual == null) return;
+      if (c1.count < MIN_SAMPLES_HARD_BIN) {
+        console.warn(`[updateCourse1CalibPoints] サンプル不足 (${c1.count}件 < ${MIN_SAMPLES_HARD_BIN}件) のため更新をスキップしました。`);
+        return;
+      }
+      if (c1.estAvg >= HIGH_PROB_BIN_MIN && c1.actual <= EXTREME_LOW_ACTUAL_THRESH) {
+        console.warn('[updateCourse1CalibPoints] 異常値（崩壊値）のため更新をスキップしました。', c1);
+        return;
+      }
+      const legacyPoints = [[0.00, 0.00], [c1.estAvg, c1.actual], [1.00, c1.actual]];
+      if (!_isSaneCalibPoints(legacyPoints)) {
+        console.warn('[updateCourse1CalibPoints] 更新後テーブルが異常と判定されたため、適用を中止しました。', legacyPoints);
+        return;
+      }
+      COURSE1_CALIB_POINTS.length = 0;
+      legacyPoints.forEach(pt => COURSE1_CALIB_POINTS.push(pt));
+      try { localStorage.setItem(_COURSE1_CALIB_LS_KEY, JSON.stringify(COURSE1_CALIB_POINTS)); } catch (_e) {}
       return;
     }
 
-    const newPoints = [[0.00, 0.00], [c1.estAvg, c1.actual], [1.00, c1.actual]];
-    if (!_isSaneCalibPoints(newPoints)) {
-      console.warn('[updateCourse1CalibPoints] 更新後テーブルが異常と判定されたため、適用を中止しました。', newPoints);
+    // ── 新形式: 確率帯（ビン）ごとの区分線形補間 ──
+    // updateCourseOtherCalibPoints と全く同じロジック（サンプル数ガード・
+    // 崩壊値ガード・単調性維持のための重複除去・最終サニティチェック）を踏襲する。
+    const usable = course1Stats
+      .filter(b => b && b.estAvg != null && b.actual != null && b.count >= MIN_SAMPLES_HARD_BIN)
+      .sort((a, b) => a.estAvg - b.estAvg);
+
+    if (usable.length === 0) {
+      console.warn('[updateCourse1CalibPoints] 全帯でサンプル不足のため更新をスキップしました（既存テーブルを維持）。');
       return;
     }
+
+    // 崩壊値ガード: 高確率帯で実績が極端に低い場合は更新しない
+    const collapsed = usable.some(b => b.estAvg >= HIGH_PROB_BIN_MIN && b.actual <= EXTREME_LOW_ACTUAL_THRESH);
+    if (collapsed) {
+      console.warn('[updateCourse1CalibPoints] 異常値（崩壊値）のため更新をスキップしました。', usable);
+      return;
+    }
+
+    // 両端を [0,0] / [1, 最終帯の実績] で挟む
+    const lastActual = usable[usable.length - 1].actual;
+    const newPoints = [[0.00, 0.00], ...usable.map(b => [b.estAvg, b.actual]), [1.00, lastActual]];
+
+    // x が単調増加になるよう重複・逆転を除去（同一estAvgが並んだ場合は後者を優先）
+    const dedup = [];
+    newPoints.forEach(pt => {
+      if (dedup.length > 0 && pt[0] <= dedup[dedup.length - 1][0]) {
+        dedup[dedup.length - 1] = pt;
+      } else {
+        dedup.push(pt);
+      }
+    });
+
+    if (!_isSaneCalibPoints(dedup)) {
+      console.warn('[updateCourse1CalibPoints] 更新後テーブルが異常と判定されたため、適用を中止しました。', dedup);
+      return;
+    }
+
     COURSE1_CALIB_POINTS.length = 0;
-    newPoints.forEach(pt => COURSE1_CALIB_POINTS.push(pt));
+    dedup.forEach(pt => COURSE1_CALIB_POINTS.push(pt));
     try { localStorage.setItem(_COURSE1_CALIB_LS_KEY, JSON.stringify(COURSE1_CALIB_POINTS)); } catch (_e) {}
   };
 

@@ -616,15 +616,22 @@
 
   // ══════════════════════════════════════════════════════════════════
   // [2026-07-03 追加] 2〜6号艇 コース別×確率帯別 勝率キャリブレーション
+  // [2026-07-18 修正] コース1も対象に含めるよう拡張。
   // ──────────────────────────────────────────────────────────────────
   // calcCalibrationByCourse はコースごとに単一の平均値しか出さないため、
   // computeScenCombosWithEV.js の updateCourseOtherCalibPoints に渡す
   // 「帯ごとの実測」を作れない。calcWinProbCalibration と同じ BINS を
-  // コース別に束ね直し、{ 2: [...], 3: [...], ..., 6: [...] } を返す。
-  // コース1は既存の calibrateCourse1Prob/updateCourse1CalibPoints が
-  // 単一点方式で担当しているため、ここでは対象外（2〜6号艇のみ）。
+  // コース別に束ね直し、{ 1: [...], 2: [...], ..., 6: [...] } を返す。
+  //
+  // [2026-07-18 修正] 従来コース1は calibrateCourse1Prob/updateCourse1CalibPoints
+  // が単一点方式（[[0,0],[平均推定,平均実績],[1,平均実績]]）で担当しており、
+  // 対象外としていた。しかし診断（CSV①確率キャリブレーション）で
+  // 40-60%帯+15.7pt・60%+帯+17.9ptと帯によって乖離幅が大きく異なることが
+  // 判明し、単一点方式では高確率帯が一律にフラット化されてしまう構造的欠陥が
+  // 確認された。集計ロジック自体はコースに依存しない汎用処理のため、
+  // コース1を除外する理由はなく、他コースと同じ帯別集計に統一する。
   function calcWinProbCalibrationByCourse(results) {
-    const courses = [2, 3, 4, 5, 6];
+    const courses = [1, 2, 3, 4, 5, 6];
     const out = {};
 
     courses.forEach(course => {
@@ -1584,8 +1591,15 @@
           const rawBp = Object.assign({}, r.boatProbs, { 1: r.boatProbsRaw[1] });
           return Object.assign({}, r, { boatProbs: rawBp });
         });
-        const courseStatsRaw = calcCalibrationByCourse(allRawCourse);
-        if (typeof updateCourse1CalibPoints === 'function') updateCourse1CalibPoints(courseStatsRaw);
+        // [2026-07-18 修正] コース1補正テーブルの学習元を「平均1点
+        // (calcCalibrationByCourse)」から「確率帯ごとの複数点
+        // (calcWinProbCalibrationByCourse)」に変更。単一点方式では
+        // 平均推定値以上のすべての確率が同じ実績値へフラット化される
+        // 構造的欠陥があり、CSV①診断（40-60%帯+15.7pt・60%+帯+17.9pt）
+        // でも帯によって乖離幅が大きく異なることが確認されたため、
+        // コース2〜6と同じ区分線形補間方式に統一する。
+        const courseBinStatsRaw = calcWinProbCalibrationByCourse(allRawCourse);
+        if (typeof updateCourse1CalibPoints === 'function') updateCourse1CalibPoints(courseBinStatsRaw[1]);
 
         // [2026-07-13 追加] 会場別1コース補正テーブルの学習。
         // 全国版と同じ「生の推定値」（allRawCourse）を会場×コース単位で集計し、
