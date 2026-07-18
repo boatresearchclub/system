@@ -1228,10 +1228,10 @@ function renderBuy(rno){
   };
 
   // [2026-07-12 削除] スリット補正（前艇比較のラップタイム評価）は撤廃。
-  // 「スリット補正」の表示スロットは、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀）の
+  // 「スリット補正」の表示スロットは、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島）の
   // タイム由来1着率(p1)加算値を表示する用途に転用する（下のfinal_prob確定ループ内で設定）。
 
-  // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀）かどうか
+  // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島）かどうか
   // （calcTenjiScoreが __isSuminoe を立てる）
   const isMeasuredTenjiVenue = !!(tenjiScoreMap && tenjiScoreMap.__isSuminoe);
 
@@ -1819,7 +1819,7 @@ function renderBuy(rno){
 
     // ── 3連対率セル（管理者限定）──
     // 基準値: 出走表と同じ MASTER_EXT.player_index[name].annual_place3（年間3連対率）
-    // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
+    // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
     // それ以外の会場は実測デルタを持たないため基準値のみ表示（根拠のない加算はしない）。
     // [2026-07-17 追加] 6艇比較で補正後の値が最も低い艇には「切」バッジを付ける。
     let place3rCell;
@@ -1944,9 +1944,9 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobに展開補正を加味して正規化し、コース別キャリブレーションまで適用した1着率（展示・スリット補正は含まない／合計100%）">基準</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）。（）内は実際に1着率へ加算される値のpt換算目安（renorm前のため最終確率列の差分とは一致しない参考値）">展示補正</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-13〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀）のみ表示。該当diffが属する本当の生テーブル値(整数・補間なし)。展示補正列（コース別クリップ後・補間済みの実効値）と大きく異なる艇はクリップが効いている。それ以外の会場は—">スリット補正</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-13〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島）のみ表示。該当diffが属する本当の生テーブル値(整数・補間なし)。展示補正列（コース別クリップ後・補間済みの実効値）と大きく異なる艇はクリップが効いている。それ以外の会場は—">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示。6艇比較で最も低い艇には「切」バッジ表示">3連対率</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="出走表の3連対率（年間）に、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島）のみ展示補正（3連対率デルタ）を加えた値。それ以外の会場は基準値のみ表示。6艇比較で最も低い艇には「切」バッジ表示">3連対率</th>
         </tr></thead>
         <tbody>${probRows}</tbody>
       </table>
