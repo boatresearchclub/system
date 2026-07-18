@@ -1387,7 +1387,7 @@
       // ── 必要な関数の存在確認 ──
       if (typeof calcScenarioData         !== 'function') return _empty;
       if (typeof calcScenarioComboProb    !== 'function') return _empty;
-      if (typeof calcTenkaiProbs          !== 'function') return _empty;
+      if (typeof calcTenkaiProbsExtended  !== 'function') return _empty;
 
       // ── レースデータ取得 ──
       const rd = vdata?.races?.[String(rno)];
@@ -1419,163 +1419,27 @@
           _saved = window._setDataForCalc(vdata, venue);
         }
 
-        // calcTenkaiProbs で ranked2 を構築
+        // ── [修正 2026-07-18] 3箇所目(本線)も calcTenkaiProbsExtended に統一 ──
+        // 旧実装はここで calcTenkaiProbs（層1・展示/気象補正なし）を呼んだ後、
+        // tenkaiCoef/tenjiCoef/slitCoef による独自の加算ボーナス方式で final_prob を
+        // 再現しようとしていたが、analyzer.js の calcTenkaiProbsExtended（Stage1:
+        // 1号艇の独立逃げ確率 → Stage2: 2〜6号艇への条件付き配分、layer3として展示×気象を
+        // 乗算合成するモデル）とは構造から別物であることが判明（要突き合わせ、として
+        // 残タスク化されていたが今回で確認済み）。renderer.js（本番表示）・非キャッシュ経路
+        // ・キャッシュ経路の3箇所は既にExtendedへ統一済みだったため、ここが最後の生き残りだった。
+        // → calibrateCourse1Prob 等の補正テーブルが「学習する対象」と「適用される対象」が
+        //   別モデルのままだと、テーブルをいくらリセット/再学習しても
+        //   系統誤差が解消しない（実測: 全23会場で1号艇が平均+8.5pt過小評価、方向が完全に揃っていた）。
         const _arek = (typeof rd.arek === 'number' && rd.arek > 0) ? rd.arek : 54.7;
-        ranked2 = calcTenkaiProbs(rawBoats, _arek);
+        ranked2 = calcTenkaiProbsExtended(rawBoats, _arek, tenjiScoreMap, venue);
         if (!ranked2 || ranked2.length < 2) return _empty;
 
-        // ── final_prob を計算（renderBuy と同一ロジック）──
-        // calcTenkaiProbs は prob 順だが、renderBuy は展示・スリット補正後の
-        // final_prob でソートして fp1st を決める。
-        // ここで final_prob を計算しないと fp1st がズレて買い目が変わる。
         try {
-          const _probTotal = ranked2.reduce((s, b) => s + b.prob, 0) || 1;
-          const _useMaster = (typeof hasMasterExt === 'function') && hasMasterExt() &&
-                             !!(typeof MASTER_EXT !== 'undefined' && MASTER_EXT?.venue_kimari?.[venue]);
-          const _tenkaiOnlyTotal = ranked2.reduce((s, x) => s + (x.tenkai_score ?? x.tenkai_prob), 0) || 1;
-          const _boatByNo = {};
-          rawBoats.forEach(b => { _boatByNo[b.boat] = b; });
-          const _tenjiRawMap = {};
-          if (tenjiScoreMap && typeof tenjiScoreMap === 'object') {
-            Object.keys(tenjiScoreMap).filter(k => /^\d+$/.test(k)).forEach(k => {
-              const entry = tenjiScoreMap[k];
-              if (entry && typeof entry.tenji === 'number') _tenjiRawMap[parseInt(k)] = entry.tenji;
-            });
+          // Extended版は既にfinal_probを正規化済みで返す。念のため未設定の艇だけ保険で埋める。
+          if (ranked2.some(b => b.final_prob == null)) {
+            const _probTotal = ranked2.reduce((s, b) => s + b.prob, 0) || 1;
+            ranked2.forEach(b => { if (b.final_prob == null) b.final_prob = b.prob / _probTotal; });
           }
-          const { wBase: _wBase, wTenkai: _wTenkai, wTenji: _wTenji, wSlit: _wSlit } =
-            (typeof calcDynamicWeights === 'function') ? calcDynamicWeights(_arek) : { wBase:1, wTenkai:1, wTenji:1, wSlit:0 };
-
-          const BONUS_BASE_TENKAI = 0.15; // [2026-06-27] 旧・比率方式専用の定数。差分方式(TENKAI_DIFF_GAIN)に移行したため現在は未使用（_tenkaiCoef表示用の互換計算にのみ間接的に名残あり）。削除は影響範囲確認後に行う。
-          const BONUS_BASE_TENJI  = 0.15;
-          const SLIT_BONUS_BASE   = 0.15;
-          const MAKURI_ALERT_BONUS = 0.20;
-          const hasTenji_ = Object.keys(_tenjiRawMap).length > 0;
-
-          // [2026-06-27 修正] 展開補正の「比率(÷)→係数」方式を「差分(-)→ボーナス」方式に変更。
-          //   旧実装: tenkaiCoef = tenkaiNorm / baseNorm を [0.3, 3.0] にクランプ
-          //     → baseNorm が極端に大きい艇(例: 1号艇91.8%)はわずかな展開上の不利でも
-          //       比率が一気に下振れし、逆に baseNorm が極端に小さい艇(数%の艇)は
-          //       わずかな展開上の有利でも比率が爆発し、5艇全員が上限3.0に張り付いて
-          //       「差」が消える、という基準確率の偏りに応じた感度の暴走が発生していた。
-          //     （実例: 1号艇 基準91.8%→展開補正▼0.64、他5艇 基準2%前後→展開補正▲3.00全員一致
-          //       → 最終的に1号艇が91.8%→38.4%まで落ちる異常値の原因）
-          //   新実装: tenkaiDiff = tenkaiNorm - baseNorm（展開スコアの絶対的なズレ）を
-          //     そのままボーナス量の元にする。比率を経由しないため、baseNorm の大小に
-          //     よらず「展開要因がもたらす補正の絶対量」が艇ごとの実際の強弱に比例する。
-          // 1パス目: 係数計算
-          ranked2.forEach(b => {
-            const baseNorm = b.prob / _probTotal;
-            const prevBoat = _boatByNo[b.boat - 1] || null;
-
-            // ── 展開差分（比率ではなく絶対差）──
-            let tenkaiDiff = 0.0;
-            if (_useMaster && baseNorm > 0) {
-              const tenkaiNorm = (b.tenkai_score ?? b.tenkai_prob) / _tenkaiOnlyTotal;
-              tenkaiDiff = tenkaiNorm - baseNorm;
-            }
-            // ST差分（隣艇との相対比較）。旧コードは係数(1.0前後)に直接加算していたが、
-            // 差分ベースに統一するため baseNorm スケールに合わせて縮小して加算する。
-            if (prevBoat) {
-              const myStRank   = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[b.name]?.[String(b.boat)]?.st_rank : null;
-              const prevStRank = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[prevBoat.name]?.[String(prevBoat.boat)]?.st_rank : null;
-              if (myStRank != null && prevStRank != null) {
-                tenkaiDiff += (prevStRank - myStRank) * 0.10 * Math.max(baseNorm, 0.02);
-              }
-            }
-            // 旧 tenkaiCoef 互換値（UI表示・ログ用にのみ保持。スコア計算には使わない）
-            const tenkaiCoef = baseNorm > 0
-              ? Math.min(3.0, Math.max(0.3, (baseNorm + tenkaiDiff) / baseNorm))
-              : 1.0;
-
-            let tenjiCoef = 1.0;
-            if (tenjiScoreMap && typeof tenjiScoreMap === 'object') tenjiCoef = tenjiScoreMap[`__coef_${b.boat}`] ?? 1.0;
-            if (prevBoat && hasTenji_) {
-              const myTenji   = _tenjiRawMap[b.boat]        ?? null;
-              const prevTenji = _tenjiRawMap[prevBoat.boat] ?? null;
-              if (myTenji != null && prevTenji != null) {
-                tenjiCoef = Math.min(2.0, Math.max(0.5, tenjiCoef + (prevTenji - myTenji) * 0.50));
-              }
-            }
-
-            let slitCoef = 1.0;
-            if (prevBoat && hasTenji_ && _wSlit > 0 && typeof SLIT_LAP_THRESHOLDS !== 'undefined') {
-              const myTenji    = _tenjiRawMap[b.boat]          ?? null;
-              const prevTenji  = _tenjiRawMap[prevBoat.boat]   ?? null;
-              const myStRank   = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[b.name]?.[String(b.boat)]?.st_rank         ?? null : null;
-              const prevStRank = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[prevBoat.name]?.[String(prevBoat.boat)]?.st_rank ?? null : null;
-              let slitDiff = null;
-              if (myTenji != null && prevTenji != null && myStRank != null && prevStRank != null) {
-                slitDiff = (prevTenji - myTenji) + (prevStRank - myStRank) * 0.02;
-              } else if (myTenji != null && prevTenji != null) {
-                slitDiff = prevTenji - myTenji;
-              } else if (myStRank != null && prevStRank != null) {
-                slitDiff = (prevStRank - myStRank) * 0.02;
-              }
-              if (slitDiff !== null) {
-                const found   = SLIT_LAP_THRESHOLDS.find(t => slitDiff >= t.min);
-                const rawCoef = found ? found.coef : 1.0;
-                slitCoef = 1.0 + (rawCoef - 1.0) * _wSlit;
-              }
-              const tenjiAlertDiff = (myTenji != null && prevTenji != null) ? Math.round((prevTenji - myTenji) * 100) / 100 : null;
-              const tenjiAlertOk = tenjiAlertDiff != null && tenjiAlertDiff >= 0.10;
-              const myStA  = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[b.name]?.[String(b.boat)]?.st_rank ?? null : null;
-              const preStA = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[prevBoat.name]?.[String(prevBoat.boat)]?.st_rank ?? null : null;
-              const stAlertOk = myStA != null && preStA != null && (preStA - myStA >= 0.5);
-              if (tenjiAlertOk && stAlertOk) slitCoef += MAKURI_ALERT_BONUS;
-              slitCoef = Math.min(2.0, Math.max(0.5, slitCoef));
-            }
-
-            b._baseNorm   = baseNorm;
-            b._tenkaiCoef = tenkaiCoef;   // 互換値（表示・デバッグ用のみ）
-            b._tenkaiDiff = tenkaiDiff;   // ボーナス計算で実際に使う値（差分ベース）
-            b._tenjiCoef  = tenjiCoef;
-            b._slitCoef   = slitCoef;
-            b._wTenjiCourse = _wTenji;
-          });
-
-          // 2パス目: 加算ボーナス方式 + 後艇スリットペナルティ
-          ranked2.forEach(b => {
-            const nextBoat = _boatByNo[b.boat + 1] || null;
-            // [2026-06-27 修正] tenkaiBonus は旧 (coef-1)*BONUS_BASE 方式から
-            // 差分(_tenkaiDiff)を直接使う方式に変更。
-            // TENKAI_DIFF_GAIN は旧方式とのスケール整合用の係数（BONUS_BASE_TENKAIに相当する
-            // 感応度として導入。実測データで再チューニング可能な値として分離している）。
-            const TENKAI_DIFF_GAIN = 1.0;
-            const tenkaiBonus = TENKAI_DIFF_GAIN * b._tenkaiDiff * _wTenkai;
-            const tenjiBonus  = BONUS_BASE_TENJI  * (b._tenjiCoef  - 1.0) * b._wTenjiCourse;
-            const slitBonus   = SLIT_BONUS_BASE   * (b._slitCoef   - 1.0) * _wSlit;
-
-            let slitPenalty = 0;
-            if (nextBoat && hasTenji_ && _wSlit > 0 && typeof SLIT_LAP_THRESHOLDS !== 'undefined') {
-              const myTenjiN   = _tenjiRawMap[b.boat]           ?? null;
-              const nextTenji  = _tenjiRawMap[nextBoat.boat]    ?? null;
-              const myStRankN  = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[b.name]?.[String(b.boat)]?.st_rank              ?? null : null;
-              const nextStRank = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[nextBoat.name]?.[String(nextBoat.boat)]?.st_rank ?? null : null;
-              let nextDiff = null;
-              if (myTenjiN != null && nextTenji != null && myStRankN != null && nextStRank != null) {
-                nextDiff = (myTenjiN - nextTenji) + (myStRankN - nextStRank) * 0.02;
-              } else if (myTenjiN != null && nextTenji != null) {
-                nextDiff = myTenjiN - nextTenji;
-              } else if (myStRankN != null && nextStRank != null) {
-                nextDiff = (myStRankN - nextStRank) * 0.02;
-              }
-              if (nextDiff !== null && nextDiff > 0) {
-                const found    = SLIT_LAP_THRESHOLDS.find(t => nextDiff >= t.min);
-                const nextCoef = found ? found.coef : 1.0;
-                slitPenalty = SLIT_BONUS_BASE * (nextCoef - 1.0) * _wSlit;
-              }
-              const nextTenjiAlertOk = myTenjiN != null && nextTenji != null && (nextTenji - myTenjiN <= -0.10);
-              const nxtStA  = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[nextBoat.name]?.[String(nextBoat.boat)]?.st_rank ?? null : null;
-              const myStA2  = typeof MASTER_EXT !== 'undefined' ? MASTER_EXT?.course_master?.[b.name]?.[String(b.boat)]?.st_rank ?? null : null;
-              const nextStAlertOk = myStA2 != null && nxtStA != null && (nxtStA - myStA2 <= -0.5);
-              if (nextTenjiAlertOk && nextStAlertOk) slitPenalty += SLIT_BONUS_BASE * 0.20 * _wSlit;
-            }
-
-            b._multi_score = Math.max(0.001, b._baseNorm + tenkaiBonus + tenjiBonus + slitBonus - slitPenalty);
-          });
-
-          const _multiTotal = ranked2.reduce((s, b) => s + b._multi_score, 0) || 1;
-          ranked2.forEach(b => { b.final_prob = b._multi_score / _multiTotal; });
 
           // ── [2026-06-20 追加] コース別キャリブレーション補正 ──
           // ここまでの final_prob は実測で「1号艇平均74.7%→実績60.8%」という
@@ -1644,77 +1508,16 @@
           } catch (_cco) { /* 補正失敗時は無補正のまま続行（フォールバック） */ }
 
           // ─────────────────────────────────────────────────────────────────
-          // [2026-07-17 追加/A2 診断] 本番(renderer.js)と同じ calcTenjiScore ベースの
-          // 展示補正モデルで final_prob を並行計算する（読み取り専用・検証専用）。
-          //   window._calibExperiment.flags.useNewTenjiModel が true の場合のみ実行。
-          //   既存の b.final_prob / ranked2 の並び順・EV計算・買い目には一切影響しない。
-          //   結果は b.final_prob_v2 / b.__calV2 に格納し、boatProbsV2 として返却する。
+          // [2026-07-18 撤去] 旧・A2診断ブロック（calcTenjiScoreベースのfinal_prob_v2
+          // 並行計算）はここにあったが、上で ranked2 の算出そのものを
+          // calcTenkaiProbsExtended（本番と同一モデル）に切り替えたため、
+          // 「本番相当モデルを試しに並行計算してみる」という診断の目的は消滅した。
+          // また、このブロックは _baseNorm / _tenkaiDiff / _wTenkai / _wTenji という
+          // 旧・独自ロジックの中間変数を参照しており、上の置き換え後は未定義になるため
+          // 単純併存はできない。boatProbsV2 は元々 final_prob_v2 が null のときは
+          // 空のまま返る設計（フラグOFF時と同じ挙動）なので、削除しても既存呼び出し側は
+          // 壊れない。
           // ─────────────────────────────────────────────────────────────────
-          try {
-            if (window._calibExperiment?.flags?.useNewTenjiModel
-                && typeof calcTenjiScore === 'function'
-                && tenjiScoreMap && Object.keys(tenjiScoreMap).length > 0) {
-
-              const _tsm2 = calcTenjiScore(ranked2, tenjiScoreMap, venue, _arek);
-              const _isMeasuredVenue = !!(_tsm2 && _tsm2.__isSuminoe);
-
-              const TENJI_P1_CLIP_BY_COURSE_V2 = {
-                1: [0.94, 1.06], 2: [0.90, 1.12], 3: [0.85, 1.20],
-                4: [0.80, 1.25], 5: [0.85, 1.20], 6: [0.88, 1.15],
-              };
-              const BONUS_BASE_TENJI_V2 = 0.15;
-
-              ranked2.forEach(b => {
-                const tenkaiBonusV2 = 1.0 * (b._tenkaiDiff || 0) * _wTenkai;
-                const preScoreV2 = Math.max(0.001, b._baseNorm + tenkaiBonusV2);
-                if (_isMeasuredVenue) {
-                  const [lo, hi] = TENJI_P1_CLIP_BY_COURSE_V2[b.boat] ?? [0.85, 1.20];
-                  const rawPtV2 = _tsm2?.[`__rawP1_${b.boat}`] ?? ((( _tsm2?.[`__coef_${b.boat}`] ?? 1.0) - 1.0) * 100);
-                  const loPt = (lo - 1.0) * 100, hiPt = (hi - 1.0) * 100;
-                  const clippedPtV2 = Math.min(hiPt, Math.max(loPt, rawPtV2));
-                  b._multi_score_v2 = Math.max(0.001, preScoreV2 + clippedPtV2 / 100);
-                } else {
-                  const tenjiCoefV2 = _tsm2?.[`__coef_${b.boat}`] ?? 1.0;
-                  const tenjiBonusV2 = BONUS_BASE_TENJI_V2 * (tenjiCoefV2 - 1.0) * _wTenji;
-                  b._multi_score_v2 = Math.max(0.001, preScoreV2 + tenjiBonusV2);
-                }
-              });
-              const _multiTotalV2 = ranked2.reduce((s, b) => s + b._multi_score_v2, 0) || 1;
-              ranked2.forEach(b => { b.final_prob_v2 = b._multi_score_v2 / _multiTotalV2; });
-
-              // 1号艇・2〜6号艇の較正も現行と同じ手順で適用（A1のrenorm修正込み）
-              const _boat1V2 = ranked2.find(b => b.boat === 1);
-              if (_boat1V2 && typeof calibrateCourse1Prob === 'function') {
-                const _rawC1V2 = _boat1V2.final_prob_v2;
-                const _calC1V2 = calibrateCourse1Prob(_rawC1V2, _boat1V2.name, venue);
-                if (_calC1V2 != null && !isNaN(_calC1V2)) {
-                  const _othersV2 = ranked2.filter(b => b.boat !== 1);
-                  const _othersV2Total = _othersV2.reduce((s, b) => s + b.final_prob_v2, 0) || 1;
-                  const _remainV2 = Math.max(0, 1 - _calC1V2);
-                  _othersV2.forEach(b => { b.final_prob_v2 = _remainV2 * (b.final_prob_v2 / _othersV2Total); });
-                  _boat1V2.final_prob_v2 = _calC1V2;
-                }
-              }
-              if (typeof calibrateOtherCourseProb === 'function') {
-                ranked2.forEach(b => {
-                  if (b.boat == null || b.boat === 1 || b.final_prob_v2 == null) return;
-                  const _calOtherV2 = calibrateOtherCourseProb(b.final_prob_v2, b.boat, venue);
-                  if (_calOtherV2 != null && !isNaN(_calOtherV2)) b.final_prob_v2 = _calOtherV2;
-                });
-                // A1修正込みの再正規化（2〜6号艇の枠内のみ）
-                const _boat1V2b = ranked2.find(b => b.boat === 1);
-                const _othersV2b = ranked2.filter(b => b.boat !== 1);
-                const _othersV2bTotal = _othersV2b.reduce((s, b) => s + (b.final_prob_v2 || 0), 0);
-                if (_boat1V2b && _othersV2bTotal > 0) {
-                  const _remainV2b = Math.max(0, 1 - _boat1V2b.final_prob_v2);
-                  _othersV2b.forEach(b => { b.final_prob_v2 = _remainV2b * (b.final_prob_v2 / _othersV2bTotal); });
-                }
-              }
-              window._calibExperiment.debug.lastTenjiV2 = { venue, rno, isMeasuredVenue: _isMeasuredVenue };
-            }
-          } catch (_a2err) {
-            console.warn('[computeScenCombosWithEV/A2診断] 並行計算に失敗しました（既存挙動には影響なし）', _a2err);
-          }
 
           ranked2.sort((a, b) => b.final_prob - a.final_prob);
         } catch (_efp) {
