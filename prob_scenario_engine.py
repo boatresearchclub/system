@@ -997,7 +997,20 @@ def calc_prob_from_master(
             if other_wins and overall_w > max(other_wins) * 1.30:
                 _cap = 1.15
         combined  = min(st_corr * form_corr, _cap)
-        scores.append(base_rate * combined)
+
+        # [2026-07-18] 根本修正: 勝率(確率)を線形合成するのをやめ、
+        # オッズ(p/(1-p))に変換してから合成する（Bradley-Terry型）。
+        #
+        # 【問題】従来は base_rate（確率そのもの）× combined を6艇分合計して
+        #   比率正規化していた。確率は上限1.0で頭打ちになるため、強い艇の
+        #   優位性が線形にしか反映されず、本命ほど実際より弱く出る歪みが
+        #   構造的に発生していた（calibration実測: 40-60%帯+15.8%,
+        #   60%+帯+18.1%の過小評価と一致）。
+        # 【対応】base_rateをオッズに変換して合成することで、強い艇ほど
+        #   優位性が正しく強調されるようにする。オッズ空間で正規化した後、
+        #   6艇合計で割って確率に戻す処理は従来と同じ。
+        odds = min(base_rate, 0.999) / (1.0 - min(base_rate, 0.999))
+        scores.append(odds * combined)
         dq_list.append(dq)
 
         raw_win_rate = (cm.get("ts_win_rate") or cm.get("win_rate")) if cm else None
