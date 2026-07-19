@@ -2299,18 +2299,8 @@ function renderBuy(rno){
            <span>合成オッズ <strong>${_soStr}</strong>（基準${synthMin}倍未満）。参考買い目として表示していますが、購入は自己判断でお願いします。</span>
          </div>`
       : '';
-    // ── 見送り推奨バナー（➊高人気圧縮 ➋中人気ロス ➌limited会場 ➍SS他艇高あれ指数）──
-    const passWarning = passReason
-      ? `<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;margin:4px 0 6px;
-                     background:rgba(220,53,69,0.08);border:1px solid rgba(220,53,69,0.30);
-                     border-radius:6px;font-size:11px;color:#c0392b">
-           <span style="font-size:15px;flex-shrink:0;line-height:1.4">🚫</span>
-           <div style="line-height:1.6">
-             <div style="font-weight:700;margin-bottom:2px">見送り推奨</div>
-             <div style="color:var(--text2)">${passReason}</div>
-           </div>
-         </div>`
-      : '';
+    // ── 見送り推奨バナーは廃止（常に非表示）──
+    const passWarning = '';
     // 管理者のみ表示するパネル本体（display:none はswitchBuyModeで制御、admin-onlyクラスは付けない）
     const adminContent = `
       <div id="${modeId}" style="display:none">
@@ -2498,7 +2488,7 @@ function buildEvFilterPanel(buy3list, buy2list, resultSan3, resultNiren,
   function buildEvRows(list, resultSet) {
     if (list.length === 0) {
       return `<div style="padding:16px 8px;color:var(--red);font-size:12px;text-align:center;font-weight:700;line-height:1.6">
-        【ケン（見送り推奨）】<br>期待値${EV_THRESHOLD.toFixed(2)}以上の買い目がありません
+        期待値${EV_THRESHOLD.toFixed(2)}以上の買い目がありません
       </div>`;
     }
     let html = '';
@@ -5319,7 +5309,7 @@ function renderScenEVSection(){
   // ── 買い目が1つも残らない場合は「ケン」推奨を表示して終了 ──────
   if (allEvCombos.length === 0) {
     el.innerHTML = `<div class="scen-ev-empty" style="padding:16px 10px;color:var(--red);font-size:13px;line-height:1.6;text-align:center;font-weight:700;border:1px dashed var(--red);border-radius:8px;background:rgba(255,59,48,0.06)">
-      【ケン（見送り推奨）】期待値が基準を超える買い目がありません。
+      期待値が基準を超える買い目がありません。
     </div>`;
     return;
   }
