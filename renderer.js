@@ -1226,6 +1226,14 @@ function renderBuy(rno){
     5: [0.85, 1.20],
     6: [0.88, 1.15],
   };
+  // [2026-07-19] 全艇クリップ撤廃を検証中。false にすると上のクリップ表を無視し、
+  //   生のスリット補正値（テーブル参照＋補間のみ、丸め・制限なし）をそのまま
+  //   1着率の加減値として使う。
+  //   ⚠️ 1号艇クリップは [2026-05-13] の回収率悪化(-20%)インシデントを踏まえた
+  //   安全策だったため、撤廃中は「会場×コース別1着率の精度」パネル（特に1号艇列）と
+  //   backtest_engine.py の回収率の両方を見て、悪化していないか必ず確認すること。
+  //   問題が出た場合は true に戻せば即座に元のクリップ挙動に復帰できる。
+  const TENJI_P1_CLIP_ENABLED = false;
 
   // [2026-07-12 削除] スリット補正（前艇比較のラップタイム評価）は撤廃。
   // 「スリット補正」の表示スロットは、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島/福岡）の
@@ -1260,7 +1268,10 @@ function renderBuy(rno){
       const rawPt        = b._tenjiRawP1 ?? ((rawCoef - 1.0) * 100);
       const loPt         = (lo - 1.0) * 100;
       const hiPt         = (hi - 1.0) * 100;
-      const clippedPt    = Math.min(hiPt, Math.max(loPt, rawPt)); // コース別クリップ適用後（pt）
+      // [2026-07-19] TENJI_P1_CLIP_ENABLED=false の間はクリップを通さず生値をそのまま使う。
+      const clippedPt    = TENJI_P1_CLIP_ENABLED
+        ? Math.min(hiPt, Math.max(loPt, rawPt)) // コース別クリップ適用後（pt）
+        : rawPt;                                 // クリップ撤廃中: 生値そのまま
       const tenjiAddend  = clippedPt / 100; // 加算するデルタ（確率空間）
       b._multi_score = Math.max(0.001, preScore + tenjiAddend);
       // 「スリット補正」表示スロットを、コース別クリップでどれだけ削られたかの診断表示に転用
