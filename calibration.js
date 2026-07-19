@@ -277,6 +277,123 @@
       </div>`;
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // [モニタリング追加] 展開シナリオ確率キャリブレーション（2着/3着・常時表示版）
+  // ──────────────────────────────────────────────────────────────────
+  // 従来は _buildCalibrationCSV の「⑨」でしか算出していなかった
+  // calcScenarioMapCalibration(all, 'weighted2ndMap'/'weighted3rdMap', ...) の
+  // 結果を、①の buildCalibrationHTML と同じ「推定%帯 vs 実績%」ビン表示で
+  // 常時パネルに出す。買い目選定（点数フィルタ等）が挟まる前の
+  // 「シナリオ確率そのもの」の精度を見るためのもの。
+  //
+  // 注意: weighted3rdMap は「2着が誰であったか」で周辺化した近似値であり、
+  // 展開シナリオUIのツリー（1・2着の組み合わせに条件づけた3着分布＝
+  // merged3rdMap）そのものとは異なる（calcScenarioMapCalibration の
+  // コメント参照）。3着側の数値はあくまで参考値として扱う。
+  // ══════════════════════════════════════════════════════════════════
+  function buildScenarioProbCalibHTML(place2Stats, place3Stats) {
+    const total2 = place2Stats.reduce((s, b) => s + b.total, 0);
+    const total3 = place3Stats.reduce((s, b) => s + b.total, 0);
+
+    if (total2 < 30 && total3 < 30) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:4px">📈 展開シナリオ確率キャリブレーション</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.3rem 0">
+            データ不足（2着${total2}件／3着${total3}件）<br>30件以上で表示
+          </div>
+        </div>`;
+    }
+
+    const err2  = calcCalibrationError(place2Stats);
+    const err3  = calcCalibrationError(place3Stats);
+    const viol2 = countMonotonicViolations(place2Stats);
+    const viol3 = countMonotonicViolations(place3Stats);
+
+    function errStr(err) {
+      if (err == null) return '—';
+      const label = err <= 0.05 ? '優秀' : err <= 0.10 ? '良好' : err <= 0.15 ? '要注意' : '問題あり';
+      return `${(err * 100).toFixed(1)}%誤差・${label}`;
+    }
+    function errColor(err) {
+      return err == null ? 'var(--text3)'
+           : err <= 0.10 ? 'var(--green)'
+           : err <= 0.15 ? 'var(--orange)'
+           : 'var(--red, #e05)';
+    }
+    function monStr(v) {
+      return v === 0 ? '✓ 単調増加' : v === 1 ? `△ 逆転${v}箇所` : `✗ 逆転${v}箇所`;
+    }
+    function monColor(v) {
+      return v === 0 ? 'var(--green)' : v === 1 ? 'var(--orange)' : 'var(--red, #e05)';
+    }
+
+    const maxBar = 90; // px（①より少し狭くして2着/3着を並べる分の余白を確保）
+    function miniTable(binStats, label, total) {
+      const rows = binStats.map(b => {
+        if (b.total === 0) {
+          return `
+            <tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:2px 5px;font-size:9px;color:var(--text3);white-space:nowrap">${b.label}</td>
+              <td colspan="4" style="padding:2px 5px;font-size:9px;color:var(--text3);text-align:center">—</td>
+            </tr>`;
+        }
+        const estPct   = b.estAvg != null ? (b.estAvg * 100).toFixed(0) + '%' : '—';
+        const actPct   = b.actual != null ? (b.actual * 100).toFixed(0) + '%' : '—';
+        const actWidth = b.actual != null ? Math.round(b.actual * maxBar) : 0;
+        const estWidth = b.estAvg != null ? Math.round(b.estAvg * maxBar) : 0;
+        const diff     = (b.actual != null && b.estAvg != null) ? b.actual - b.estAvg : null;
+        const diffStr  = diff != null ? (diff >= 0 ? `+${(diff*100).toFixed(0)}` : `${(diff*100).toFixed(0)}`) + '%' : '—';
+        const diffColor = diff == null ? 'var(--text3)'
+                         : Math.abs(diff) <= 0.05 ? 'var(--green)'
+                         : Math.abs(diff) <= 0.10 ? 'var(--orange)'
+                         : 'var(--red, #e05)';
+        const lowN = b.total < 10;
+        return `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:3px 5px;font-size:9px;color:var(--text3);white-space:nowrap">${b.label}</td>
+            <td style="padding:3px 5px;min-width:70px">
+              <div style="position:relative;height:12px;background:var(--bg2);border-radius:2px;overflow:hidden">
+                <div style="position:absolute;left:0;top:0;height:100%;width:${estWidth}px;background:var(--border);border-radius:2px;opacity:0.6"></div>
+                <div style="position:absolute;left:0;top:0;height:100%;width:${actWidth}px;background:${actWidth >= estWidth ? 'var(--green)' : 'var(--orange)'};border-radius:2px;opacity:0.85"></div>
+              </div>
+            </td>
+            <td style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3)">${estPct}</td>
+            <td style="padding:3px 5px;text-align:right;font-size:10px;font-weight:700;color:var(--text${lowN ? '3' : ''})">${actPct}${lowN ? '<span style="font-size:8px;color:var(--text3)">*</span>' : ''}</td>
+            <td style="padding:3px 5px;text-align:right;font-size:9px;font-weight:700;color:${diffColor}">${diffStr}</td>
+          </tr>`;
+      }).join('');
+      return `
+        <div style="font-size:10px;font-weight:700;color:var(--text3);margin:6px 0 2px">${label}（${total}件・艇×レース）</div>
+        <table style="width:100%;border-collapse:collapse"><tbody>${rows}</tbody></table>`;
+    }
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">📈 展開シナリオ確率キャリブレーション</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:6px">買い目選定前の2着/3着推定% vs 実績%（全艇×全レース）</div>
+
+        <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:3px">
+            <span style="font-size:10px;color:var(--text3)">2着 加重誤差／単調性</span>
+            <span style="font-size:10px;font-weight:700"><span style="color:${errColor(err2)}">${errStr(err2)}</span> ／ <span style="color:${monColor(viol2)}">${monStr(viol2)}</span></span>
+          </div>
+          <div style="display:flex;justify-content:space-between">
+            <span style="font-size:10px;color:var(--text3)">3着 加重誤差／単調性</span>
+            <span style="font-size:10px;font-weight:700"><span style="color:${errColor(err3)}">${errStr(err3)}</span> ／ <span style="color:${monColor(viol3)}">${monStr(viol3)}</span></span>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto">
+          ${miniTable(place2Stats, '2着（weighted2ndMap）', total2)}
+          ${miniTable(place3Stats, '3着（weighted3rdMap・近似値）', total3)}
+        </div>
+        <div style="font-size:9px;color:var(--text3);margin-top:4px">
+          灰バー=推定、色バー=実績　* N&lt;10の参考値　3着は2着で周辺化した近似値のため参考程度に
+        </div>
+      </div>`;
+  }
+
   // ── HTML生成 ──
   function buildCalibrationHTML(binStats, calError, violations, totalValid) {
     if (totalValid < 30) {
@@ -1580,6 +1697,10 @@
       //   ただし calcCalibrationByCourse は下の補正テーブル更新で引き続き使用）
       const venueCourseStats = calcCalibrationByVenueCourse(all);
       const place23ByVenue   = calcPlace23ByVenueCourse(all);
+      // [モニタリング追加] 展開シナリオそのものの確率（買い目選定前）のキャリブレーション。
+      // 従来は _buildCalibrationCSV の「⑨」でのみ計算していたものを常時パネル化する。
+      const place2ScenarioStats = calcScenarioMapCalibration(all, 'weighted2ndMap', 'actual2nd');
+      const place3ScenarioStats = calcScenarioMapCalibration(all, 'weighted3rdMap', 'actual3rd');
 
       // ―― ③ コース別補正テーブル更新には1号艇の「生の推定値」を使用する ――
       // hitProbEst と同じ自己崩壊ループ対策。r.boatProbsRaw[1] が
@@ -1656,6 +1777,7 @@
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
             ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
             ${buildPlace2CalibHTML(p2stats, p3stats)}
+            ${buildScenarioProbCalibHTML(place2ScenarioStats, place3ScenarioStats)}
             <div class="admin-only">${buildPlace23VenueCourseHTML(place23ByVenue)}</div>
             <div class="admin-only">${buildVenueCourseHTML(venueCourseStats)}</div>
           </div>
