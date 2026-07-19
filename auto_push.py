@@ -1868,10 +1868,27 @@ def _enqueue_tenji_push(msg: str) -> None:
     _tenji_push_queue.put((next(_push_seq), "raw", None, msg))
 
 
+# ── デバウンス設定 ──────────────────────────────────────────────
+# ★ [2026-07-19 追加] 展示情報の更新は複数会場のバックグラウンド取得が
+#   ほぼ同時に完了することがあり、その都度即pushしていると
+#   GitHub Pages側のデプロイが次々に前のデプロイをCancelledにする
+#   連鎖が起き、いつまでも1回もデプロイが完了しない状態になり得る
+#   （実際にActionsログで確認済み）。
+#   → 最初の1件を受け取ってから TENJI_DEBOUNCE_SEC 秒だけ待ち、
+#     その間に届いた追加の展示更新は同じ1回のpushにまとめる。
+#   → 更新が途切れず続く最悪ケースでも TENJI_MAX_BATCH_WAIT_SEC 秒
+#     経過したら打ち切って強制pushし、無期限に先送りされる
+#     （＝リアルタイム性を失う）事態を防ぐ。
+TENJI_DEBOUNCE_SEC       = 4   # この秒数内に届いた更新は1回のpushにまとめる
+TENJI_MAX_BATCH_WAIT_SEC = 15  # 更新が続いてもこの秒数で必ず一度pushする
+
+
 def _tenji_push_queue_worker():
     """
     展示情報専用のpushキューを処理する専用スレッド。
-    デプロイ待ちは行わず、常に即push（_push_queue_worker の priority=0 相当）。
+    デプロイ待ち（_DEPLOY_WAIT_SEC）は行わないが、短時間に連続する
+    複数の変更は TENJI_DEBOUNCE_SEC 秒だけまとめてから1回のpushにする
+    （GitHub Pagesのデプロイキャンセル連鎖を防ぐため）。
     """
     while True:
         try:
@@ -1882,15 +1899,35 @@ def _tenji_push_queue_worker():
         if item is None:  # 終了シグナル
             break
 
-        _seq, kind, files, msg = item
+        # ── まとめpush用にメッセージを蓄積 ──
+        # git add は各呼び出し元（_enqueue_tenji_push を呼ぶ側）で
+        # 事前に実行済みのため、ここでは commit + push だけをまとめて行う。
+        msgs = [item[3]]
+        batch_start = time.time()
+
+        while True:
+            elapsed = time.time() - batch_start
+            if elapsed >= TENJI_MAX_BATCH_WAIT_SEC:
+                log(f"  [TenjiPushQueue] 最大待機({TENJI_MAX_BATCH_WAIT_SEC}秒)到達 → まとめてpush")
+                break
+            remaining = TENJI_DEBOUNCE_SEC - elapsed
+            if remaining <= 0:
+                break
+            try:
+                nxt = _tenji_push_queue.get(timeout=remaining)
+            except queue.Empty:
+                break
+            msgs.append(nxt[3])
+            _tenji_push_queue.task_done()
+
+        if len(msgs) > 1:
+            msg = f"tenji update {datetime.now().strftime('%Y-%m-%d %H:%M')} [まとめpush x{len(msgs)}件]"
+        else:
+            msg = msgs[0]
         log(f"  [TenjiPushQueue] ⚡ 展示情報push開始 ({msg})")
 
         try:
             with _git_lock:
-                if kind == "files" and files:
-                    for f in files:
-                        _run_nolock(["git", "add", str(f)])
-
                 code, out = _run_nolock(["git", "status", "--porcelain"])
                 tracked = [l for l in out.strip().splitlines() if not l.startswith("??")]
                 if not tracked:

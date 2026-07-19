@@ -890,15 +890,15 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
   const boatCircleS = n =>
     `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
 
-  // 軸候補: 実測会場のみ、3連対率補正(__p3r_)が+10%pt以上の艇（複数可）
+  // 軸候補: 実測会場のみ、タイム差(__diff_)が+0.40秒以上の艇（複数可）
   if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
     const pivotBoats = [];
     ranked2.forEach(b => {
-      const p3r = tenjiScoreMap[`__p3r_${b.boat}`];
-      if (p3r == null) return;
-      if (p3r >= 10) pivotBoats.push({ boat: b.boat, p3r });
+      const diff = tenjiScoreMap[`__diff_${b.boat}`];
+      if (diff == null) return;
+      if (diff >= 0.40) pivotBoats.push({ boat: b.boat, diff });
     });
-    pivotBoats.sort((a, b) => b.p3r - a.p3r);
+    pivotBoats.sort((a, b) => b.diff - a.diff);
     if (pivotBoats.length > 0) {
       const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;
@@ -1226,14 +1226,6 @@ function renderBuy(rno){
     5: [0.85, 1.20],
     6: [0.88, 1.15],
   };
-  // [2026-07-19] 全艇クリップ撤廃を検証中。false にすると上のクリップ表を無視し、
-  //   生のスリット補正値（テーブル参照＋補間のみ、丸め・制限なし）をそのまま
-  //   1着率の加減値として使う。
-  //   ⚠️ 1号艇クリップは [2026-05-13] の回収率悪化(-20%)インシデントを踏まえた
-  //   安全策だったため、撤廃中は「会場×コース別1着率の精度」パネル（特に1号艇列）と
-  //   backtest_engine.py の回収率の両方を見て、悪化していないか必ず確認すること。
-  //   問題が出た場合は true に戻せば即座に元のクリップ挙動に復帰できる。
-  const TENJI_P1_CLIP_ENABLED = false;
 
   // [2026-07-12 削除] スリット補正（前艇比較のラップタイム評価）は撤廃。
   // 「スリット補正」の表示スロットは、実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島/福岡）の
@@ -1268,10 +1260,7 @@ function renderBuy(rno){
       const rawPt        = b._tenjiRawP1 ?? ((rawCoef - 1.0) * 100);
       const loPt         = (lo - 1.0) * 100;
       const hiPt         = (hi - 1.0) * 100;
-      // [2026-07-19] TENJI_P1_CLIP_ENABLED=false の間はクリップを通さず生値をそのまま使う。
-      const clippedPt    = TENJI_P1_CLIP_ENABLED
-        ? Math.min(hiPt, Math.max(loPt, rawPt)) // コース別クリップ適用後（pt）
-        : rawPt;                                 // クリップ撤廃中: 生値そのまま
+      const clippedPt    = Math.min(hiPt, Math.max(loPt, rawPt)); // コース別クリップ適用後（pt）
       const tenjiAddend  = clippedPt / 100; // 加算するデルタ（確率空間）
       b._multi_score = Math.max(0.001, preScore + tenjiAddend);
       // 「スリット補正」表示スロットを、コース別クリップでどれだけ削られたかの診断表示に転用
@@ -2290,11 +2279,16 @@ function renderBuy(rno){
   const inNegPanelHtml = buildInNegBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo);
 
   // イン鉄板条件（タブの強調表示判定）
+  // [2026-07-19修正] 展示情報取得前（!hasTenji）は最終確率テーブル自体が
+  // 「－」表示で信頼できない値として隠されているのに、タブ強調表示だけ
+  // hasTenjiを見ておらず生の final_prob で判定してしまっていたのを修正。
   const _boat1ForIT = ranked2.find(b => b.boat === 1);
-  const _isInTepCond = _boat1ForIT && (_boat1ForIT.final_prob ?? 0) >= 0.75;
+  const _isInTepCond = hasTenji && _boat1ForIT && (_boat1ForIT.final_prob ?? 0) >= 0.75;
 
   // イン否定条件（タブの強調表示判定）【改修: σ基準ユーティリティを使用】
-  const { condMet: _isInNegCond, usingStd: _inNegUsingStd } = _calcInNegCond(ranked2);
+  const _inNegRaw = _calcInNegCond(ranked2);
+  const _isInNegCond  = hasTenji && _inNegRaw.condMet;
+  const _inNegUsingStd = _inNegRaw.usingStd;
 
   // ── タブUI ──
   const modeTabs = `
@@ -5135,45 +5129,15 @@ function prefillScenEVCache(dateStr) {
           let _tsm = null;
           if (_tData) { try { _tsm = calcTenjiScore(_ranked, _tData, venue, _arek); } catch(e2){} }
           const _pTotal = _ranked.reduce((s,b)=>s+b.prob,0)||1;
-          // [2026-07-19修正] 本線(renderBuy)と別系統だった旧・指数重み方式を廃止。
-          //   旧実装は tc(展示係数)を wTenkai と wTenji の両方に使い回しており、
-          //   ①展開係数(tenkai)が計算に一切反映されない ②展示係数が二重に効く、
-          //   という2つのバグがあり、テーブル表示の final_prob とバナー判定用の
-          //   1号艇 final_prob が食い違う原因になっていた。
-          //   ここでは renderBuy 本線と同じ「差分加算方式」に統一する
-          //   （wBase は本線同様未使用＝廃止。荒れ会場補正は wTenkai に一本化）。
-          //   ただし実測展示会場のコース別クリップテーブル等は重いため簡略化しており、
-          //   厳密な数値は本線(renderBuy)の final_prob を優先する。
-          const { wTenkai: _wt, wTenji: _wj } = calcDynamicWeights(_arek);
-          const _ttotal = _ranked.reduce((s,x)=>s+(x.tenkai_prob_pure ?? x.tenkai_score ?? x.tenkai_prob),0)||1;
-          const TENKAI_DIFF_GAIN_BANNER = 1.0;
-          const BONUS_BASE_TENJI_BANNER = 0.15;
+          const { wBase: _wb, wTenkai: _wt, wTenji: _wj } = calcDynamicWeights(_arek);
+          const _ttotal = _ranked.reduce((s,x)=>s+(x.tenkai_score??x.tenkai_prob),0)||1;
           _ranked.forEach(b => {
-            const baseNorm   = b.prob/_pTotal;
-            const tenkaiNorm = (b.tenkai_prob_pure ?? b.tenkai_score ?? b.tenkai_prob)/_ttotal;
-            const tenkaiDiff = baseNorm > 0 ? (tenkaiNorm - baseNorm) : 0;
+            const bn = b.prob/_pTotal;
             let tc=1.0; if(_tsm) tc=_tsm[`__coef_${b.boat}`]??1.0;
-            const tenkaiBonus = TENKAI_DIFF_GAIN_BANNER * tenkaiDiff * _wt;
-            const tenjiBonus  = BONUS_BASE_TENJI_BANNER * (tc - 1.0) * _wj;
-            b._multi_score = Math.max(0.001, baseNorm + tenkaiBonus + tenjiBonus);
+            b._multi_score = Math.pow(bn,_wb)*Math.pow(tc,_wt)*Math.pow(tc,_wj);
           });
           const _mt = _ranked.reduce((s,b)=>s+b._multi_score,0)||1;
           _ranked.forEach(b=>{ b.final_prob=b._multi_score/_mt; });
-          // 本線と同じコース別キャリブレーションを適用し、テーブル表示との整合性を保つ
-          try {
-            const _b1c = _ranked.find(b => b.boat === 1);
-            if (_b1c && typeof calibrateCourse1Prob === 'function') {
-              const _raw1c = _b1c.final_prob;
-              const _cal1c = calibrateCourse1Prob(_raw1c, _b1c.name ?? null);
-              if (_cal1c != null && !isNaN(_cal1c) && Math.abs(_cal1c - _raw1c) > 1e-9) {
-                const _othersC = _ranked.filter(b => b.boat !== 1);
-                const _othersCTotal = _othersC.reduce((s, b) => s + b.final_prob, 0) || 1;
-                const _remainC = Math.max(0, 1 - _cal1c);
-                _othersC.forEach(b => { b.final_prob = _remainC * (b.final_prob / _othersCTotal); });
-                _b1c.final_prob = _cal1c;
-              }
-            }
-          } catch (_ccBanner) { /* 補正失敗時は無補正のまま続行 */ }
           const _b1 = _ranked.find(b=>b.boat===1);
           fp1Banner       = _b1?.final_prob ?? null;
           venueAvg1Banner = (vdata.inn_data||{}).course_rates?.[1] ?? null;
