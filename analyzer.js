@@ -802,7 +802,10 @@ function calcTenkaiProbs(boats, arek){
     '逃げ':       new Set(['2','3','4','5','6']),
     '差し':       new Set(['1']),
     'まくり':     new Set(['1']),
-    'まくり差し': new Set(['1','2','3']),  // 3コースも除外（物理的に届きにくい）
+    // [2026-07-19 修正] 3コースの除外を撤廃。実測（out/pattern_records.csv 17.5万レース）では
+    // 3コースのまくり差し勝ちは会場によって35〜42%発生しており、除外は事実誤りだった。
+    // prob_scenario_engine.py の KIMARI_HARD_EXCLUDE（{"1","2"}のみ）とも整合させる。
+    'まくり差し': new Set(['1','2']),
     '抜き':       new Set(),
   };
 
@@ -1350,7 +1353,9 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
   const ATTACK_VALID_COURSE = {
     '差し':       new Set(['2', '3', '4', '5', '6']),
     'まくり':     new Set(['2', '3', '4', '5', '6']),
-    'まくり差し': new Set(['4', '5', '6']),
+    // [2026-07-19 修正] 3コースを追加（実測: 3コースのまくり差し勝ちは35〜42%発生。
+    // 除外していたのは物理的な思い込みで、データと矛盾していた）
+    'まくり差し': new Set(['3', '4', '5', '6']),
   };
 
   const boat1 = boats.find(b => b.boat === 1) || null;
@@ -1927,7 +1932,8 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
     '逃げ':       new Set(['2','3','4','5','6']),
     '差し':       new Set(['1']),
     'まくり':     new Set(['1']),
-    'まくり差し': new Set(['1','2','3']),  // 3コースも除外（calcTenkaiProbsと統一）
+    // [2026-07-19 修正] 上のcalcTenkaiProbs側と合わせて3コース除外を撤廃（実測と矛盾していたため）
+    'まくり差し': new Set(['1','2']),
     '抜き':       new Set(),
   };
   function isValidFirst(boat, kimari){
