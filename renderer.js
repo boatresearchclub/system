@@ -970,16 +970,19 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     }
   }
 
-  // 切り候補: 展示補正後3連対率（年間実績＋当日展示デルタ）を6艇比較して最も低い1艇を表示。
-  //   相対比較のみで、閾値条件は無し。実測会場でなくても年間実績だけで比較できれば表示する。
+  // 切り候補: [2026-07-19 変更] 「6艇中最低1艇」の相対比較から、
+  //   最終3連対率（展示補正込み）が10%以下の艇（複数可）に変更。該当0艇ならバッジ非表示。
+  const CUT_PLACE3_THRESHOLD = 0.10;
   {
-    let minVal = Infinity;
-    let cutBoat = null;
+    const cutBoats = [];
     Object.entries(p3rAdjustedByBoat).forEach(([boatStr, adj]) => {
-      if (adj < minVal) { minVal = adj; cutBoat = Number(boatStr); }
+      if (adj <= CUT_PLACE3_THRESHOLD) cutBoats.push({ boat: Number(boatStr), adj });
     });
-    if (cutBoat != null) {
-      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${boatCircleS(cutBoat)}</span>`;
+    cutBoats.sort((a, b) => a.adj - b.adj);
+
+    if (cutBoats.length > 0) {
+      const circles = cutBoats.map(x => boatCircleS(x.boat)).join('');
+      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${circles}</span>`;
     }
   }
 
@@ -1790,11 +1793,13 @@ function renderBuy(rno){
   const buy2 = buy2Hit_raw;
 
 
-  // ── 展示補正後3連対率を6艇比較し、最も低い艇を「切」候補としてマーク ──
+  // ── 展示補正後3連対率が10%以下の艇を「切」候補としてマーク ──
+  // [2026-07-19 変更] 「6艇中最も低い1艇」の相対比較から、絶対閾値(10%以下)判定に変更。
+  // 該当0艇ならどの艇にも「切」バッジは付かない。複数艇が該当すれば全員に付く。
   // 出走表と同じ年間3連対率(annual_place3)に、実測テーブル会場のみ当日展示の
-  // 3連対率デルタ(__p3r_)を加算した「補正後の値」で6艇を比較する。相対比較のみ、閾値条件は無し。
+  // 3連対率デルタ(__p3r_)を加算した「補正後の値」で判定する。
   // データが無い艇（annual_place3 null）は比較対象から除外する。
-  // データが無い艇（annual_place3 null）は比較対象から除外する。
+  const CUT_PLACE3_THRESHOLD = 0.10;
   const p3rAdjustedByBoat = {};
   ranked2.forEach(b => {
     const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
@@ -1806,13 +1811,10 @@ function renderBuy(rno){
     }
     p3rAdjustedByBoat[b.boat] = adj;
   });
-  let p3rCutBoat = null;
-  {
-    let minVal = Infinity;
-    Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
-      if (val < minVal) { minVal = val; p3rCutBoat = Number(boatStr); }
-    });
-  }
+  const p3rCutBoatSet = new Set();
+  Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
+    if (val <= CUT_PLACE3_THRESHOLD) p3rCutBoatSet.add(Number(boatStr));
+  });
 
   // ─ STEP6: 確率テーブル生成
   const probRows = ranked2.map((bt,i)=>{
@@ -1879,11 +1881,11 @@ function renderBuy(rno){
     // 基準値: 出走表と同じ MASTER_EXT.player_index[name].annual_place3（年間3連対率）
     // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島/福岡）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
     // それ以外の会場は実測デルタを持たないため基準値のみ表示（根拠のない加算はしない）。
-    // [2026-07-17 追加] 6艇比較で補正後の値が最も低い艇には「切」バッジを付ける。
+    // [2026-07-19 変更] 6艇比較で補正後の値が最も低い艇→補正後の値が10%以下の艇に変更。
     let place3rCell;
     {
       const base3r = getCourseMaster(bt.name, String(bt.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // コース別3連対率（無ければ年間トータル値にフォールバック）
-      const isCutCandidate = p3rCutBoat != null && bt.boat === p3rCutBoat;
+      const isCutCandidate = p3rCutBoatSet.has(bt.boat);
       const cutBadge = isCutCandidate
         ? `<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切</span>`
         : '';
