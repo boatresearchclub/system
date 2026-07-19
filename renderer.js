@@ -4510,11 +4510,14 @@ function updatePersistentBanners(rno){
 
     // ── スリットリードバナー: 展示タイム0.1秒以上差のみ（ST条件なし） ──
     // 条件: 前艇比 展示タイム0.1秒以上速い（スリットALからST条件を除いたもの）
+    // [2026-07-19 追加] スリットAL条件（ST+展示の両方）を満たした艇は、この
+    //   展示のみ条件だと常に重複してヒットしてしまうため、スリットALに出た艇は除外する。
     const slitLeadBoatsBan = [];
     for(let bn = 2; bn <= 6; bn++){
       const thisB = boats.find(b => b.boat === bn);
       const prevB = boats.find(b => b.boat === bn - 1);
       if(!thisB || !prevB) continue;
+      if(makuriBoatsBan.includes(bn)) continue;  // スリットAL側で既に表示済みの艇は除外
       const myT = tenjiBanData[String(bn)]?.tenji ?? null;
       const prT = tenjiBanData[String(bn-1)]?.tenji ?? null;
       // 浮動小数点誤差対策: 小数第2位で丸めてから比較

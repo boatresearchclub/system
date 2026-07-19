@@ -2226,12 +2226,69 @@ const TYPE_LABELS = {
 function renderTypeList() {
   const cat = state.typeCat || "awaken";
   const q = (document.getElementById("type-search").value || "").trim();
+  const content = document.getElementById("content");
+
+  // 検索語がある場合は全カテゴリ横断で一致を表示
+  if (q) {
+    const hits = [];
+    Object.keys(TYPE_LABELS).forEach(c => {
+      (PLAYER_TYPES[c] || []).forEach(r => {
+        if (r.id.includes(q) || (r.name && r.name.includes(q))) {
+          hits.push({...r, cat: c});
+        }
+      });
+    });
+    document.getElementById("type-count").textContent = `全カテゴリ横断: ${hits.length} 件ヒット`;
+
+    if (hits.length === 0) {
+      content.innerHTML = `<div style="max-width:900px;"><h2>検索結果</h2>
+        <p style="color:var(--text3);font-size:13px;margin-top:10px;">「${q}」に一致する選手は見つかりませんでした。</p></div>`;
+      return;
+    }
+    let rowsHtml = hits.map(r => {
+      const m = TYPE_LABELS[r.cat];
+      const deltaCell = m.cols
+        ? `<td style="text-align:right;color:${r.delta>=0?'var(--green)':'var(--red)'};font-weight:600;">${r.delta>=0?'+':''}${r.delta.toFixed(1)}pt</td>`
+        : `<td style="text-align:right;color:var(--text3);">—</td>`;
+      const rateCell = m.cols ? `<td style="text-align:right;">${r.rate.toFixed(1)}%</td>` : `<td style="text-align:right;color:var(--text3);">—</td>`;
+      const boatCell = r.boat ? `${r.boat}号艇` : "—";
+      return `
+      <tr>
+        <td><span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--bg4);color:var(--blue);font-size:11px;font-weight:600;">${m.title}</span></td>
+        <td>${r.id}</td>
+        <td>${r.name}</td>
+        <td style="text-align:center;">${boatCell}</td>
+        ${rateCell}
+        ${deltaCell}
+      </tr>`;
+    }).join("");
+    content.innerHTML = `
+      <div style="max-width:960px;">
+        <h2 style="margin-bottom:4px;">検索結果「${q}」</h2>
+        <p style="color:var(--text3);font-size:12px;margin-bottom:14px;">該当する全カテゴリを横断表示しています（同一選手が複数カテゴリに該当する場合、複数行で表示）。</p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border2);text-align:left;">
+              <th style="padding:6px 8px;">カテゴリ</th>
+              <th style="padding:6px 8px;">登録番号</th>
+              <th style="padding:6px 8px;">選手名</th>
+              <th style="padding:6px 8px;text-align:center;">号艇</th>
+              <th style="padding:6px 8px;text-align:right;">通算1着率</th>
+              <th style="padding:6px 8px;text-align:right;">タイム時変動</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`;
+    return;
+  }
+
+  // 検索語なし：選択中カテゴリの一覧を表示
   const rows = PLAYER_TYPES[cat] || [];
-  const filtered = q ? rows.filter(r => r.id.includes(q) || (r.name && r.name.includes(q))) : rows;
-  document.getElementById("type-count").textContent = `${filtered.length} / ${rows.length} 名`;
+  const filtered = rows;
+  document.getElementById("type-count").textContent = `${filtered.length} 名`;
 
   const meta = TYPE_LABELS[cat];
-  const content = document.getElementById("content");
 
   if (meta.cols) {
     // ソート: 変動幅の絶対値が大きい順（初期表示）
