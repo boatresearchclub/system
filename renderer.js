@@ -865,6 +865,10 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
 
   let __tenkaiTabSeq = 0; // ブロックごとに一意なDOM idを振るための連番
 
+  // [2026-07-19 追加] タブは常にこの4種固定（抜き・逃げはタブ化しない。ユーザー要望）。
+  // 「全体」は従来通り全決まり手（抜き・逃げ含む）を加重平均した値のまま変更なし。
+  const FIXED_TAB_KIMARIS = ['差し', 'まくり', 'まくり差し'];
+
   const scenarioBlocks = groupList.map((grp) => {
     const totalProb = grp.scenarios.reduce((s, x) => s + x.prob, 0);
 
@@ -884,49 +888,67 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
       .map(x => ({ boat: x.boat, name: x.name, p2: x.p2sum / p2Total }))
       .sort((a, b) => b.p2 - a.p2);
 
-    // ── タブ対象の決まり手: 確率上位2つ（従来のバッジ表示と同じ選定基準）──
-    const topKimaris = grp.scenarios
-      .slice()
-      .sort((a, b) => b.prob - a.prob)
-      .slice(0, 2);
-
     const blockId = `tenkai-${grp.boat}-${__tenkaiTabSeq++}`;
 
-    // ── タブボタン: 「全体」＋ 決まり手ごと。クリックで下のパネルを切替 ──
+    // ── タブボタン: 「全体」＋ 固定4種（実際にはこのうち差し・まくり・まくり差しの3つ）──
+    // そのコースでは起こり得ない決まり手（例: 1コースの「差し」）は、ボタンは常に表示するが
+    // クリックすると「データなし」の説明を出す（グレーアウト表示）。
     const allTabActiveBg    = 'var(--bg3, rgba(108,122,148,.16))';
     const allTabActiveColor = 'var(--text)';
-    const tabButtonsHtml = [
-      `<button type="button" onclick="__tenkaiSwitchTab('${blockId}','all',this)"
-        data-tab-key="all" data-active-bg="${allTabActiveBg}" data-active-color="${allTabActiveColor}"
-        style="cursor:pointer;border:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;
-          background:${allTabActiveBg};color:${allTabActiveColor};flex-shrink:0">全体</button>`,
-      ...topKimaris.map(s => {
-        const kColor = KIMARI_COLOR[s.kimari] || 'var(--accent2)';
-        const kBg    = KIMARI_BG[s.kimari]    || 'rgba(108,122,148,.1)';
-        return `<button type="button" onclick="__tenkaiSwitchTab('${blockId}','${s.kimari}',this)"
-          data-tab-key="${s.kimari}" data-active-bg="${kBg}" data-active-color="${kColor}"
-          style="cursor:pointer;border:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;
-            background:var(--bg2);color:var(--text3);flex-shrink:0">${s.kimari}<span style="font-weight:400;font-size:10px;margin-left:3px">${(s.prob*100).toFixed(1)}%</span></button>`;
-      }),
-    ].join('');
 
-    // ── パネル本体: 全体（初期表示）＋ 決まり手ごと（非表示）を全て事前生成 ──
+    function scenFor(kimari){
+      return grp.scenarios.find(s => s.kimari === kimari) || null;
+    }
+
+    const tabDefs = [
+      { key: 'all', label: '全体', hasData: true, prob: totalProb },
+      ...FIXED_TAB_KIMARIS.map(k => {
+        const scen = scenFor(k);
+        return { key: k, label: k, hasData: !!scen, prob: scen ? scen.prob : 0 };
+      }),
+    ];
+
+    const tabButtonsHtml = tabDefs.map(t => {
+      const isAll   = t.key === 'all';
+      const kColor  = isAll ? allTabActiveColor : (KIMARI_COLOR[t.key] || 'var(--accent2)');
+      const kBg     = isAll ? allTabActiveBg    : (KIMARI_BG[t.key]    || 'rgba(108,122,148,.1)');
+      const active  = isAll; // 初期表示は常に「全体」
+      const pctHtml = (!isAll)
+        ? `<span style="font-weight:400;font-size:10px;margin-left:3px">${t.hasData ? (t.prob*100).toFixed(1) + '%' : '-'}</span>`
+        : '';
+      return `<button type="button" onclick="__tenkaiSwitchTab('${blockId}','${t.key}',this)"
+        data-tab-key="${t.key}" data-active-bg="${kBg}" data-active-color="${kColor}"
+        style="cursor:pointer;border:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;
+          background:${active ? kBg : 'var(--bg2)'};color:${active ? kColor : 'var(--text3)'};
+          opacity:${t.hasData ? '1' : '.55'};flex-shrink:0">${t.label}${pctHtml}</button>`;
+    }).join('');
+
+    // ── パネル本体: 全体（初期表示）＋ 固定4種（非表示）を全て事前生成 ──
+    const noDataHtml = `<div style="padding:10px 4px;font-size:12px;color:var(--text3)">
+      このコースでは考えにくい決まり手のため、データがありません。</div>`;
+
     const panelAllHtml = `<div data-panel-key="all" style="padding-left:4px">${renderP2Lines(mergedPlace2, merged3rdMap[grp.boat])}</div>`;
-    const panelKimariHtml = topKimaris.map(s => {
-      const kThird = kimariThirdMap[grp.boat]?.[s.kimari] || {};
-      return `<div data-panel-key="${s.kimari}" style="padding-left:4px;display:none">${renderP2Lines(s.place2List, kThird)}</div>`;
+    const panelKimariHtml = FIXED_TAB_KIMARIS.map(k => {
+      const scen = scenFor(k);
+      const body = scen
+        ? renderP2Lines(scen.place2List, kimariThirdMap[grp.boat]?.[k] || {})
+        : noDataHtml;
+      return `<div data-panel-key="${k}" style="padding-left:4px;display:none">${body}</div>`;
     }).join('');
 
     return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
         ${boatCircle(grp.boat)}
         <span style="font-size:13px;font-weight:700;flex-shrink:0">${grp.name}</span>
-        ${tabButtonsHtml}
         <span style="font-size:13px;font-family:var(--mono);font-weight:700;color:var(--text);margin-left:auto;flex-shrink:0">${(totalProb*100).toFixed(1)}%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        ${tabButtonsHtml}
       </div>
       <div id="${blockId}">${panelAllHtml}${panelKimariHtml}</div>
     </div>`;
   }).join('');
+
 
   const tenjiBadge = hasTenji
     ? `<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(0,102,255,.12);color:var(--accent2);margin-left:8px;vertical-align:middle">展示情報込み</span>`
@@ -937,52 +959,38 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
   const boatCircleS = n =>
     `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
 
-  // [2026-07-19 追加] 展示補正後3連対率（年間実績＋当日展示デルタ）を先にまとめて算出。
-  // 軸候補（80%超判定）・切り候補（最低1艇）の両方でこの値を共有する。
-  const AXIS_PLACE3_THRESHOLD = 0.80;
-  const p3rAdjustedByBoat = {};
-  ranked2.forEach(b => {
-    const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
-    if (base3r == null) return; // 実績データが無い艇は比較対象外
-    let adj = base3r;
-    if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
-      const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
-      adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
-    }
-    p3rAdjustedByBoat[b.boat] = adj;
-  });
-
-  // 軸候補: [2026-07-19 変更] タイム差(__diff_)ベースの条件を廃止し、
-  //   最終3連対率（展示補正込み）が80%を超えた艇のみを軸候補とする（会場問わず、複数可）。
-  {
-    const place3Pivots = [];
+  // 軸候補: 実測会場のみ、タイム差(__diff_)が+0.40秒以上の艇（複数可）
+  if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
+    const pivotBoats = [];
     ranked2.forEach(b => {
-      const adj = p3rAdjustedByBoat[b.boat];
-      if (adj != null && adj >= AXIS_PLACE3_THRESHOLD) {
-        place3Pivots.push({ boat: b.boat, adj });
-      }
+      const diff = tenjiScoreMap[`__diff_${b.boat}`];
+      if (diff == null) return;
+      if (diff >= 0.40) pivotBoats.push({ boat: b.boat, diff });
     });
-    place3Pivots.sort((a, b) => b.adj - a.adj);
-
-    if (place3Pivots.length > 0) {
-      const circles = place3Pivots.map(x => boatCircleS(x.boat)).join('');
+    pivotBoats.sort((a, b) => b.diff - a.diff);
+    if (pivotBoats.length > 0) {
+      const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;
     }
   }
 
-  // 切り候補: [2026-07-19 変更] 「6艇中最低1艇」の相対比較から、
-  //   最終3連対率（展示補正込み）が10%以下の艇（複数可）に変更。該当0艇ならバッジ非表示。
-  const CUT_PLACE3_THRESHOLD = 0.10;
+  // 切り候補: 展示補正後3連対率（年間実績＋当日展示デルタ）を6艇比較して最も低い1艇を表示。
+  //   相対比較のみで、閾値条件は無し。実測会場でなくても年間実績だけで比較できれば表示する。
   {
-    const cutBoats = [];
-    Object.entries(p3rAdjustedByBoat).forEach(([boatStr, adj]) => {
-      if (adj <= CUT_PLACE3_THRESHOLD) cutBoats.push({ boat: Number(boatStr), adj });
+    let minVal = Infinity;
+    let cutBoat = null;
+    ranked2.forEach(b => {
+      const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
+      if (base3r == null) return; // 実績データが無い艇は比較対象外
+      let adj = base3r;
+      if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
+        const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
+        adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
+      }
+      if (adj < minVal) { minVal = adj; cutBoat = b.boat; }
     });
-    cutBoats.sort((a, b) => a.adj - b.adj);
-
-    if (cutBoats.length > 0) {
-      const circles = cutBoats.map(x => boatCircleS(x.boat)).join('');
-      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${circles}</span>`;
+    if (cutBoat != null) {
+      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${boatCircleS(cutBoat)}</span>`;
     }
   }
 
@@ -1793,13 +1801,11 @@ function renderBuy(rno){
   const buy2 = buy2Hit_raw;
 
 
-  // ── 展示補正後3連対率が10%以下の艇を「切」候補としてマーク ──
-  // [2026-07-19 変更] 「6艇中最も低い1艇」の相対比較から、絶対閾値(10%以下)判定に変更。
-  // 該当0艇ならどの艇にも「切」バッジは付かない。複数艇が該当すれば全員に付く。
+  // ── 展示補正後3連対率を6艇比較し、最も低い艇を「切」候補としてマーク ──
   // 出走表と同じ年間3連対率(annual_place3)に、実測テーブル会場のみ当日展示の
-  // 3連対率デルタ(__p3r_)を加算した「補正後の値」で判定する。
+  // 3連対率デルタ(__p3r_)を加算した「補正後の値」で6艇を比較する。相対比較のみ、閾値条件は無し。
   // データが無い艇（annual_place3 null）は比較対象から除外する。
-  const CUT_PLACE3_THRESHOLD = 0.10;
+  // データが無い艇（annual_place3 null）は比較対象から除外する。
   const p3rAdjustedByBoat = {};
   ranked2.forEach(b => {
     const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
@@ -1811,10 +1817,13 @@ function renderBuy(rno){
     }
     p3rAdjustedByBoat[b.boat] = adj;
   });
-  const p3rCutBoatSet = new Set();
-  Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
-    if (val <= CUT_PLACE3_THRESHOLD) p3rCutBoatSet.add(Number(boatStr));
-  });
+  let p3rCutBoat = null;
+  {
+    let minVal = Infinity;
+    Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
+      if (val < minVal) { minVal = val; p3rCutBoat = Number(boatStr); }
+    });
+  }
 
   // ─ STEP6: 確率テーブル生成
   const probRows = ranked2.map((bt,i)=>{
@@ -1881,11 +1890,11 @@ function renderBuy(rno){
     // 基準値: 出走表と同じ MASTER_EXT.player_index[name].annual_place3（年間3連対率）
     // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島/福岡）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
     // それ以外の会場は実測デルタを持たないため基準値のみ表示（根拠のない加算はしない）。
-    // [2026-07-19 変更] 6艇比較で補正後の値が最も低い艇→補正後の値が10%以下の艇に変更。
+    // [2026-07-17 追加] 6艇比較で補正後の値が最も低い艇には「切」バッジを付ける。
     let place3rCell;
     {
       const base3r = getCourseMaster(bt.name, String(bt.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // コース別3連対率（無ければ年間トータル値にフォールバック）
-      const isCutCandidate = p3rCutBoatSet.has(bt.boat);
+      const isCutCandidate = p3rCutBoat != null && bt.boat === p3rCutBoat;
       const cutBadge = isCutCandidate
         ? `<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切</span>`
         : '';
@@ -2329,31 +2338,8 @@ function renderBuy(rno){
   const hitPanelHtml = buildModePanel(buy3Hit, buy2Hit, 'buy-mode-hit', hitUnderSynth, HIT_SYNTH_MIN, passReasonHit);
   const recPanelHtml = buildModePanel(buy3Rec, buy2Rec, 'buy-mode-rec', recUnderSynth, REC_SYNTH_MIN, passReasonRec);
 
-  // ── [2026-07-19 追加] 最終3連対率(展示補正込み)が80%を超えた艇を展開シナリオの
-  // 強制軸として渡す。実測テーブル会場のみ展示デルタ(__p3r_)を加算した値で判定。
-  // 複数艇が閾値を超えた場合は最も高い艇を採用。データが無い艇は対象外。
-  const AXIS_PLACE3_OVERRIDE_THRESHOLD = 0.80;
-  let axisOverrideBoat = null;
-  {
-    const isMeasuredTenjiVenue_ = !!(tenjiScoreMap && tenjiScoreMap.__isSuminoe);
-    let bestVal = 0;
-    ranked2.forEach(b => {
-      const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
-      if(base3r == null) return;
-      let adj = base3r;
-      if(isMeasuredTenjiVenue_ && hasTenji && tenjiScoreMap){
-        const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
-        adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
-      }
-      if(adj >= AXIS_PLACE3_OVERRIDE_THRESHOLD && adj > bestVal){
-        bestVal = adj;
-        axisOverrideBoat = b.boat;
-      }
-    });
-  }
-
   // ── シナリオ買いパネル生成 ──
-  const scenPanelHtml = buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo, rno, axisOverrideBoat);
+  const scenPanelHtml = buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo, rno);
 
   // ── イン鉄板パネル生成 ──
   const inTepPanelHtml = buildInTepBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo);
@@ -3115,7 +3101,7 @@ function calcScenarioComboProb(comboStr, winnerBoat, sd) {
 // 未設定（null）なら従来の通常ロジック。
 let _pickupRaceTagType = null;
 
-function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo, rno, axisOverrideBoat){
+function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo, rno){
 
   // ★★★ sd が undefined または valid=false の場合は再計算 ★★★
   let resolvedSd = sd;
@@ -3185,13 +3171,9 @@ function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBad
   // ══════════════════════════════════════════════════════════════
 
   // fp1st を先に仮決めしてHHI計算に使う（イン否定/鉄板は後で上書き）
-  // [2026-07-19 追加] axisOverrideBoat（最終3連対率80%超）があれば最優先で採用。
-  // HHI/確信度ランクの算出もこの軸で行うことで、後段のfp1st確定と矛盾させない。
-  const _fp1stTmp = axisOverrideBoat != null
-    ? axisOverrideBoat
-    : isInNeg
-      ? (ranked2.find(b => b.boat !== 1)?.boat ?? ranked2[0]?.boat)
-      : ranked2[0]?.boat;
+  const _fp1stTmp = isInNeg
+    ? (ranked2.find(b => b.boat !== 1)?.boat ?? ranked2[0]?.boat)
+    : ranked2[0]?.boat;
 
   function calcHHI(winnerBoat) {
     const probs = kimariTypes?.map(k => scenarioProb?.[winnerBoat]?.[k] ?? 0) ?? [];
@@ -3246,16 +3228,11 @@ function buildScenarioBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBad
   const _allow2ndAxis = _fp2ndProb >= FP2ND_MIN_FOR_2AXIS;
 
   // ── 軸艇の決定 ──
-  // [2026-07-19 追加] 最終3連対率80%超の強制軸を最優先
   // イン逃げ否定: 1号艇を除いた final_prob 最上位を1着軸に
   // イン逃げ鉄板: 1号艇を固定軸に
   // 通常:     final_prob 1位（従来通り）
   let fp1st, fp2nd;
-  if(axisOverrideBoat != null){
-    fp1st = axisOverrideBoat;
-    // 2着軸はfp1st除いたfinal_prob最上位（ranked2はfinal_prob降順ソート済み）
-    fp2nd = ranked2.find(b => b.boat !== fp1st)?.boat ?? ranked2[1]?.boat;
-  } else if(isInNeg){
+  if(isInNeg){
     const outerTop = ranked2.find(b => b.boat !== 1);
     fp1st = outerTop?.boat ?? ranked2[0]?.boat;
     fp2nd = ranked2.find(b => b.boat !== 1 && b.boat !== fp1st)?.boat ?? ranked2[1]?.boat;
@@ -4510,14 +4487,11 @@ function updatePersistentBanners(rno){
 
     // ── スリットリードバナー: 展示タイム0.1秒以上差のみ（ST条件なし） ──
     // 条件: 前艇比 展示タイム0.1秒以上速い（スリットALからST条件を除いたもの）
-    // [2026-07-19 追加] スリットAL条件（ST+展示の両方）を満たした艇は、この
-    //   展示のみ条件だと常に重複してヒットしてしまうため、スリットALに出た艇は除外する。
     const slitLeadBoatsBan = [];
     for(let bn = 2; bn <= 6; bn++){
       const thisB = boats.find(b => b.boat === bn);
       const prevB = boats.find(b => b.boat === bn - 1);
       if(!thisB || !prevB) continue;
-      if(makuriBoatsBan.includes(bn)) continue;  // スリットAL側で既に表示済みの艇は除外
       const myT = tenjiBanData[String(bn)]?.tenji ?? null;
       const prT = tenjiBanData[String(bn-1)]?.tenji ?? null;
       // 浮動小数点誤差対策: 小数第2位で丸めてから比較

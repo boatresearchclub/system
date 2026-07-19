@@ -1666,10 +1666,7 @@ def fetch_odds_for_venues(venues_in_csv: dict) -> bool:
     当日CSVに存在する会場のオッズを「1巡」取得して odds_data/ に保存する。
 
     fetch_odds.py の fetch_all_races() を呼び出す薄いラッパー。
-    注記: 現在このファイル内からは呼び出されていない（未使用）。
-    実際の継続的なオッズ取得は main_loop.py の task_odds が別プロセスで
-    担当している。auto_push.py はそちらが書き出す ODDS_DIR の変化を
-    検知してpushするだけの役割。
+    ループ制御は呼び出し元（_odds_loop_worker）が行う。
     失敗しても例外を外に投げず False を返す（メインループを止めない）。
 
     Returns
@@ -1700,11 +1697,9 @@ def fetch_odds_for_venues(venues_in_csv: dict) -> bool:
         return False
 
 
-# 注記: 実際のオッズ取得（fetch_all_races の継続呼び出し）は main_loop.py の
-# task_odds が別プロセスで担当している。fetch_odds_for_venues() をここで
-# 定期的に呼び出すループワーカーを一時的に追加していたが、main_loop.py と
-# 役割が重複し二重取得になるため削除した（[2026-07-19]）。
-# auto_push.py の役割は ODDS_DIR の変化を検知して push することのみ。
+# ── オッズ永続ループワーカー ───────────────────────────────────────────────────
+# このスレッドが fetch_all_races() を繰り返し呼び出す。
+# スレッドが例外で死んでもメインループが検知して再起動する。
 import threading as _threading
 
 # data.js への書き込みを排他制御するロック
@@ -1741,28 +1736,13 @@ _push_queue: queue.PriorityQueue = queue.PriorityQueue()
 _push_seq = _itertools.count()   # 同優先度内のFIFO順を保証するタイブレーカー
 _DEPLOY_WAIT_SEC = 130  # GitHub Pagesデプロイ完了までの待機秒数（約2分）
 
-# ── 全pushワーカー共有の「直前の成功push時刻」 ──────────────────────
-# _push_queue_worker（通常pushの緊急枠）と _tenji_push_queue_worker は
-# 別スレッド・別キューだが、同じGitHubリポジトリに対してpushするため、
-# 片方の直後にもう片方がpushするとやはりデプロイキャンセルが起き得る。
-# → 両ワーカーでこの時刻を共有し、緊急push系はどちらの経路であっても
-#   最後の成功pushからPUSH_URGENT_MIN_INTERVAL_SEC秒は間隔を空ける。
-_last_urgent_push_time = 0.0
-
 # ── 緊急push(priority=0)用デバウンス設定 ──────────────────────────
 # ★ [2026-07-19 追加] 結果・フライング・race_index・tenjihoseiplus など
 #   複数系統の緊急pushが短時間に連続すると、展示情報と同様に
-#   GitHub Pagesのデプロイキャンセル連鎖が起きる。
-#   実測ではデプロイ完了に約70〜120秒かかっており、単純な数秒デバウンス
-#   （事象が数秒以内に固まって起きた場合のみ束ねる）だけでは、
-#   数十秒〜1分間隔で自然に発生する更新はまとめきれずキャンセルが続いた。
-#   → 「直前の成功pushからPUSH_URGENT_MIN_INTERVAL_SEC秒は必ず空ける」
-#     ルールを追加し、その間に届いた更新は溜め込んで1回にまとめる。
-#     更新が止まっていれば PUSH_URGENT_DEBOUNCE_SEC 秒の静穏で即push、
-#     更新が続いても PUSH_URGENT_MAX_BATCH_WAIT_SEC 秒で必ず一度pushする。
-PUSH_URGENT_DEBOUNCE_SEC       = 4   # 静穏判定：この秒数、新規が来なければ確定
-PUSH_URGENT_MIN_INTERVAL_SEC   = 90  # 直前の成功pushからこの秒数は必ず空ける（デプロイ完了の目安）
-PUSH_URGENT_MAX_BATCH_WAIT_SEC = 150 # 更新が続いてもこの秒数で必ず一度pushする（絶対上限）
+#   GitHub Pagesのデプロイキャンセル連鎖が起きるため、tenji専用キューと
+#   同じ考え方でここにもデバウンスを入れる。
+PUSH_URGENT_DEBOUNCE_SEC       = 4   # この秒数内に届いた緊急pushは1回にまとめる
+PUSH_URGENT_MAX_BATCH_WAIT_SEC = 15  # 緊急pushが続いてもこの秒数で必ず一度pushする
 
 def _push_queue_worker():
     """
@@ -1778,8 +1758,7 @@ def _push_queue_worker():
     priority=1（通常）: 前のpushから _DEPLOY_WAIT_SEC 秒待ってから実行する。
       → CSV・起動時pushなどデプロイ安定性を優先するデータに使用。
     """
-    last_push_time = 0.0  # priority=1（通常push）専用のデプロイ待ち計測
-    global _last_urgent_push_time
+    last_push_time = 0.0
     while True:
         try:
             item = _push_queue.get(timeout=5)
@@ -1802,36 +1781,20 @@ def _push_queue_worker():
         else:
             log(f"  [PushQueue] ⚡ 緊急push → デプロイ待ちスキップ ({msg})")
 
-            # ── デバウンス+最低間隔: 短時間内〜直前pushから間もない間に
-            #    届いた追加の緊急pushを1回にまとめる ──
+            # ── デバウンス: 短時間内に届いた追加の緊急pushを1回にまとめる ──
             # 通常push(priority=1)が混ざっていた場合は巻き込まず、
             # キューに戻して次の周回に委ねる（自分のデプロイ待ちを守るため）。
             batch_start = time.time()
             while True:
-                now = time.time()
-                elapsed = now - batch_start
-                since_last = (now - _last_urgent_push_time) if _last_urgent_push_time > 0 else None
-
+                elapsed = time.time() - batch_start
                 if elapsed >= PUSH_URGENT_MAX_BATCH_WAIT_SEC:
                     log(f"  [PushQueue] 最大待機({PUSH_URGENT_MAX_BATCH_WAIT_SEC}秒)到達 → まとめてpush")
                     break
-
-                if since_last is not None and since_last < PUSH_URGENT_MIN_INTERVAL_SEC:
-                    # 直前pushからまだ間隔が足りない → 静穏判定はせず、
-                    # 間隔が満たされるまで引き続き溜め込む
-                    timeout = min(
-                        PUSH_URGENT_MIN_INTERVAL_SEC - since_last,
-                        PUSH_URGENT_MAX_BATCH_WAIT_SEC - elapsed,
-                    )
-                else:
-                    # 間隔条件は満たしている → 通常の静穏デバウンスへ
-                    remaining = PUSH_URGENT_DEBOUNCE_SEC - elapsed
-                    if remaining <= 0:
-                        break
-                    timeout = remaining
-
+                remaining = PUSH_URGENT_DEBOUNCE_SEC - elapsed
+                if remaining <= 0:
+                    break
                 try:
-                    nxt = _push_queue.get(timeout=max(timeout, 0.1))
+                    nxt = _push_queue.get(timeout=remaining)
                 except queue.Empty:
                     break
                 if nxt[0] >= PUSH_NORMAL:
@@ -1908,7 +1871,6 @@ def _push_queue_worker():
 
             if code == 0:
                 last_push_time = time.time()
-                _last_urgent_push_time = last_push_time  # tenji専用キューとも共有
                 log(f"  [PushQueue] ✓ push完了: {msg}")
             else:
                 log(f"  [PushQueue] ✕✕✕ push失敗（リトライ上限到達）: {msg}")
@@ -1943,25 +1905,28 @@ def _enqueue_tenji_push(msg: str) -> None:
     _tenji_push_queue.put((next(_push_seq), "raw", None, msg))
 
 
-# ── 展示専用push（tenji）のデバウンス設定について ──────────────────
-# ★ [2026-07-19 追加→統合] 展示情報の更新は複数会場のバックグラウンド取得が
+# ── デバウンス設定 ──────────────────────────────────────────────
+# ★ [2026-07-19 追加] 展示情報の更新は複数会場のバックグラウンド取得が
 #   ほぼ同時に完了することがあり、その都度即pushしていると
 #   GitHub Pages側のデプロイが次々に前のデプロイをCancelledにする
-#   連鎖が起きる（実際にActionsログで確認済み）。
-#   → _push_queue_worker の緊急枠と同じ PUSH_URGENT_DEBOUNCE_SEC /
-#     PUSH_URGENT_MIN_INTERVAL_SEC / PUSH_URGENT_MAX_BATCH_WAIT_SEC を
-#     _last_urgent_push_time 経由で共有し、経路が違っても
-#     デプロイキャンセルを防げるようにしている（定数はこのファイル上部で定義）。
+#   連鎖が起き、いつまでも1回もデプロイが完了しない状態になり得る
+#   （実際にActionsログで確認済み）。
+#   → 最初の1件を受け取ってから TENJI_DEBOUNCE_SEC 秒だけ待ち、
+#     その間に届いた追加の展示更新は同じ1回のpushにまとめる。
+#   → 更新が途切れず続く最悪ケースでも TENJI_MAX_BATCH_WAIT_SEC 秒
+#     経過したら打ち切って強制pushし、無期限に先送りされる
+#     （＝リアルタイム性を失う）事態を防ぐ。
+TENJI_DEBOUNCE_SEC       = 4   # この秒数内に届いた更新は1回のpushにまとめる
+TENJI_MAX_BATCH_WAIT_SEC = 15  # 更新が続いてもこの秒数で必ず一度pushする
 
 
 def _tenji_push_queue_worker():
     """
     展示情報専用のpushキューを処理する専用スレッド。
-    デプロイ待ち（_DEPLOY_WAIT_SEC）は行わないが、_push_queue_worker の
-    緊急枠と同様に、直前の成功push（どちらの経路でも）からPUSH_URGENT_MIN_INTERVAL_SEC
-    秒は間隔を空け、その間に届いた複数の変更は1回のpushにまとめる。
+    デプロイ待ち（_DEPLOY_WAIT_SEC）は行わないが、短時間に連続する
+    複数の変更は TENJI_DEBOUNCE_SEC 秒だけまとめてから1回のpushにする
+    （GitHub Pagesのデプロイキャンセル連鎖を防ぐため）。
     """
-    global _last_urgent_push_time
     while True:
         try:
             item = _tenji_push_queue.get(timeout=5)
@@ -1978,27 +1943,15 @@ def _tenji_push_queue_worker():
         batch_start = time.time()
 
         while True:
-            now = time.time()
-            elapsed = now - batch_start
-            since_last = (now - _last_urgent_push_time) if _last_urgent_push_time > 0 else None
-
-            if elapsed >= PUSH_URGENT_MAX_BATCH_WAIT_SEC:
-                log(f"  [TenjiPushQueue] 最大待機({PUSH_URGENT_MAX_BATCH_WAIT_SEC}秒)到達 → まとめてpush")
+            elapsed = time.time() - batch_start
+            if elapsed >= TENJI_MAX_BATCH_WAIT_SEC:
+                log(f"  [TenjiPushQueue] 最大待機({TENJI_MAX_BATCH_WAIT_SEC}秒)到達 → まとめてpush")
                 break
-
-            if since_last is not None and since_last < PUSH_URGENT_MIN_INTERVAL_SEC:
-                timeout = min(
-                    PUSH_URGENT_MIN_INTERVAL_SEC - since_last,
-                    PUSH_URGENT_MAX_BATCH_WAIT_SEC - elapsed,
-                )
-            else:
-                remaining = PUSH_URGENT_DEBOUNCE_SEC - elapsed
-                if remaining <= 0:
-                    break
-                timeout = remaining
-
+            remaining = TENJI_DEBOUNCE_SEC - elapsed
+            if remaining <= 0:
+                break
             try:
-                nxt = _tenji_push_queue.get(timeout=max(timeout, 0.1))
+                nxt = _tenji_push_queue.get(timeout=remaining)
             except queue.Empty:
                 break
             msgs.append(nxt[3])
@@ -2056,7 +2009,6 @@ def _tenji_push_queue_worker():
                         log(f"  [TenjiPushQueue] ✕ force-with-lease push失敗（{attempt}回目）: {push_out.strip()[:200]}")
 
             if code == 0:
-                _last_urgent_push_time = time.time()  # _push_queue_worker とも共有
                 log(f"  [TenjiPushQueue] ✓ push完了: {msg}")
             else:
                 log(f"  [TenjiPushQueue] ✕✕✕ push失敗（リトライ上限到達）: {msg}")
