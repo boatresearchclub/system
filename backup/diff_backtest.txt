@@ -1,0 +1,58 @@
+--- /mnt/user-data/uploads/backtest.js	2026-07-10 22:25:37.868760000 +0000
++++ backtest.js	2026-07-10 22:33:56.222064723 +0000
+@@ -167,21 +167,42 @@
+   // localStorageキャッシュ: リロード後・過去日もここでヒット（_initScenComboCache で復元済み）
+   // 再計算: どちらもなければ従来通り計算（結果はキャッシュしない＝次回も再計算）
+   const _ck = `${venue}_${(vdata && vdata.date) || ''}_${rno}`;
+-  if (_scenComboCache[_ck] && _scenComboCache[_ck].length > 0) {
+-    return _scenComboCache[_ck].slice();
+-  }
+-  // メモリになければ localStorage を直接確認（_initScenComboCache が走る前に
+-  // collectResultsForDateScen が呼ばれた場合のフォールバック）
++
++  // ══════════════════════════════════════════════════════════
++  // [2026-07-11 修正] 結果未確定レースへのキャッシュ誤適用を防止
++  // computeScenCombos は backtest（確定済みレースのみ）だけでなく、
++  // renderer.js の prefillScenEVCache（当日・未確定レース含む TOP表示）
++  // からも呼ばれる。venue/date/rno のみをキーにしたキャッシュは
++  // ロジック版・データ更新を区別できないため、結果確定済みレースに
++  // 限定して信頼する。判定失敗時は安全側（再計算）に倒す。
++  // ══════════════════════════════════════════════════════════
++  let _isFinalized = false;
+   try {
+-    const _lsRaw = localStorage.getItem(`${_SCEN_CACHE_LS_PREFIX}${_ck}`);
+-    if (_lsRaw) {
+-      const _lsCombos = _lsRaw.split(',').filter(Boolean);
+-      if (_lsCombos.length > 0) {
+-        _scenComboCache[_ck] = _lsCombos; // メモリにも展開
+-        return _lsCombos.slice();
+-      }
++    if (typeof RESULT_DATA !== 'undefined' && typeof resultKey === 'function') {
++      const _slugFin = (typeof SLUG_MAP !== 'undefined' && SLUG_MAP[venue]) || venue;
++      const _rKeyFin = resultKey(_slugFin, (vdata && vdata.date) || '', rno);
++      const _rd0     = RESULT_DATA[_rKeyFin];
++      _isFinalized   = !!(_rd0 && _rd0.sanrentan && _rd0.sanrentan.length > 0);
+     }
+-  } catch(_e) { /* localStorage 読み取り失敗は無視して再計算へ */ }
++  } catch(_eFin) { _isFinalized = false; }
++
++  if (_isFinalized) {
++    if (_scenComboCache[_ck] && _scenComboCache[_ck].length > 0) {
++      return _scenComboCache[_ck].slice();
++    }
++    // メモリになければ localStorage を直接確認（_initScenComboCache が走る前に
++    // collectResultsForDateScen が呼ばれた場合のフォールバック）
++    try {
++      const _lsRaw = localStorage.getItem(`${_SCEN_CACHE_LS_PREFIX}${_ck}`);
++      if (_lsRaw) {
++        const _lsCombos = _lsRaw.split(',').filter(Boolean);
++        if (_lsCombos.length > 0) {
++          _scenComboCache[_ck] = _lsCombos; // メモリにも展開
++          return _lsCombos.slice();
++        }
++      }
++    } catch(_e) { /* localStorage 読み取り失敗は無視して再計算へ */ }
++  }
+ 
+   _ensureTenjiCache();
+   const rd = vdata.races[String(rno)];

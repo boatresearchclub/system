@@ -890,15 +890,15 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
   const boatCircleS = n =>
     `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
 
-  // 軸候補: 実測会場のみ、タイム差(__diff_)が+0.40秒以上の艇（複数可）
+  // 軸候補: 実測会場のみ、3連対率補正(__p3r_)が+10%pt以上の艇（複数可）
   if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
     const pivotBoats = [];
     ranked2.forEach(b => {
-      const diff = tenjiScoreMap[`__diff_${b.boat}`];
-      if (diff == null) return;
-      if (diff >= 0.40) pivotBoats.push({ boat: b.boat, diff });
+      const p3r = tenjiScoreMap[`__p3r_${b.boat}`];
+      if (p3r == null) return;
+      if (p3r >= 10) pivotBoats.push({ boat: b.boat, p3r });
     });
-    pivotBoats.sort((a, b) => b.diff - a.diff);
+    pivotBoats.sort((a, b) => b.p3r - a.p3r);
     if (pivotBoats.length > 0) {
       const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;

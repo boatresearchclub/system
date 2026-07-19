@@ -118,8 +118,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;  // バッジ表示用
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;   // 正規化スコア（均等）
     });
@@ -152,8 +150,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -188,8 +184,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -224,8 +218,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`] = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -260,8 +252,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -296,8 +286,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -332,8 +320,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -368,8 +354,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -405,8 +389,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -441,8 +423,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -477,8 +457,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -513,8 +491,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -547,8 +523,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -581,8 +555,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -615,8 +587,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -649,8 +619,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -683,8 +651,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
@@ -719,8 +685,6 @@ function calcTenjiScore(boats, tenjiData, venue, arek){
       map[`__coef2_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p2 / 100));
       map[`__coef3_${b.boat}`] = Math.min(2.0, Math.max(0.5, 1 + row.p3 / 100));
       map[`__diff_${b.boat}`]  = diff;
-      // p3r ±10% 以上で軸/切フラグ
-      map[`__pivot_${b.boat}`] = (row.p3r ?? 0) >= 10 ? 'axis' : (row.p3r ?? 0) <= -10 ? 'cut' : null;
       map[`__p3r_${b.boat}`]   = row.p3r ?? 0;  // 3連対率補正値（%pt）そのものを保持（表示用）
       map[b.boat] = 1 / boats.length;
     });
