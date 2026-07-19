@@ -207,6 +207,9 @@
     const boatMatchTotal = boatMatch.length;
     const typeMatch = boatMatch.filter(r => r.predKimariType === r.actualKimari);
     const boatMatchRate = boatMatchTotal / total;
+    // [注意] この全体正解率は「逃げ」のようなクラス比率の大きい決まり手に
+    // 引きずられる（多数派クラスを常に当てるだけで高くなる）ため、単体では
+    // モデルの実力を過大評価しやすい。クラス別recall（下記）と併読すること。
     const typeAccuracyGivenBoatMatch = boatMatchTotal > 0 ? typeMatch.length / boatMatchTotal : null;
 
     // 決まり手別 混同行列（軸艇一致時のみ集計。実際の決まり手 → 予測の決まり手 の件数）
@@ -218,7 +221,26 @@
       confusion[a][p] = (confusion[a][p] ?? 0) + 1;
     });
 
-    return { total, boatMatchTotal, boatMatchRate, typeAccuracyGivenBoatMatch, confusion };
+    // ── [追加] クラス別recall（実際にその決まり手だった中で、正しく予測できた割合）と
+    //   マクロ平均recall（クラスの出現頻度で重み付けしない単純平均）。
+    //   全体正解率が多数派クラス（逃げ）に支配されて実力を隠してしまう問題を補うため、
+    //   「少数派の決まり手をどれだけ拾えているか」を可視化する。
+    const recallByType = {};
+    Object.keys(confusion).forEach(actualK => {
+      const row = confusion[actualK];
+      const rowTotal = Object.values(row).reduce((s, v) => s + v, 0);
+      const correct = row[actualK] ?? 0;
+      recallByType[actualK] = { total: rowTotal, correct, recall: rowTotal > 0 ? correct / rowTotal : null };
+    });
+    const recallVals = Object.values(recallByType).map(v => v.recall).filter(v => v != null);
+    const macroRecall = recallVals.length > 0
+      ? recallVals.reduce((s, v) => s + v, 0) / recallVals.length
+      : null;
+
+    return {
+      total, boatMatchTotal, boatMatchRate, typeAccuracyGivenBoatMatch, confusion,
+      recallByType, macroRecall,
+    };
   }
 
   // ── 2着・3着 calibration HTML生成 ──
@@ -390,6 +412,74 @@
         </div>
         <div style="font-size:9px;color:var(--text3);margin-top:4px">
           灰バー=推定、色バー=実績　* N&lt;10の参考値　3着は2着で周辺化した近似値のため参考程度に
+        </div>
+      </div>`;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // [モニタリング追加] 決まり手キャリブレーション（常時表示版）
+  // ──────────────────────────────────────────────────────────────────
+  // 従来は CSV「⑦」でしか見られなかった決まり手キャリブレーションを
+  // 常時パネル化する。特に「全体正解率は高いが少数派クラスは拾えていない」
+  // という多数派クラス偏重の問題を、マクロ平均recallとクラス別recallで
+  // 一目でわかるようにする。
+  // ══════════════════════════════════════════════════════════════════
+  function buildKimariCalibHTML(kimariStats) {
+    if (!kimariStats || kimariStats.total < 30) {
+      return `
+        <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:4px">🎯 決まり手キャリブレーション</div>
+          <div style="color:var(--text3);font-size:11px;text-align:center;padding:0.3rem 0">
+            データ不足（${kimariStats ? kimariStats.total : 0}件）<br>30件以上で表示
+          </div>
+        </div>`;
+    }
+    const KIMARI_ORDER = ['逃げ', '差し', 'まくり', 'まくり差し', '恵まれ', '抜き'];
+    const overallColor = kimariStats.typeAccuracyGivenBoatMatch >= 0.8 ? 'var(--green)' : 'var(--orange)';
+    const macroColor   = kimariStats.macroRecall == null ? 'var(--text3)'
+                        : kimariStats.macroRecall >= 0.5 ? 'var(--green)'
+                        : kimariStats.macroRecall >= 0.3 ? 'var(--orange)'
+                        : 'var(--red, #e05)';
+    const rows = Object.keys(kimariStats.recallByType)
+      .sort((a, b) => KIMARI_ORDER.indexOf(a) - KIMARI_ORDER.indexOf(b))
+      .map(k => {
+        const v = kimariStats.recallByType[k];
+        const pct = v.recall != null ? (v.recall * 100).toFixed(0) + '%' : '—';
+        const color = v.recall == null ? 'var(--text3)'
+                    : v.recall >= 0.5 ? 'var(--green)'
+                    : v.recall >= 0.2 ? 'var(--orange)'
+                    : 'var(--red, #e05)';
+        const w = v.recall != null ? Math.round(v.recall * 90) : 0;
+        return `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:3px 5px;font-size:10px;color:var(--text3);white-space:nowrap">${k}</td>
+            <td style="padding:3px 5px;min-width:70px">
+              <div style="height:12px;background:var(--bg2);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${w}px;background:${color};border-radius:2px;opacity:0.85"></div>
+              </div>
+            </td>
+            <td style="padding:3px 5px;text-align:right;font-size:10px;font-weight:700;color:${color}">${pct}</td>
+            <td style="padding:3px 5px;text-align:right;font-size:9px;color:var(--text3)">${v.total}件</td>
+          </tr>`;
+      }).join('');
+
+    return `
+      <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-align:center;margin-bottom:2px">🎯 決まり手キャリブレーション</div>
+        <div style="font-size:10px;color:var(--text3);text-align:center;margin-bottom:6px">軸艇一致時（${kimariStats.boatMatchTotal}件）の決まり手的中</div>
+        <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:3px">
+            <span style="font-size:10px;color:var(--text3)">全体正解率（多数派に偏りやすい参考値）</span>
+            <span style="font-size:11px;font-weight:700;color:${overallColor}">${_pctStr(kimariStats.typeAccuracyGivenBoatMatch)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between">
+            <span style="font-size:10px;color:var(--text3)">マクロ平均recall（実力の目安）</span>
+            <span style="font-size:11px;font-weight:700;color:${macroColor}">${kimariStats.macroRecall != null ? _pctStr(kimariStats.macroRecall) : '—'}</span>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse"><tbody>${rows}</tbody></table>
+        <div style="font-size:9px;color:var(--text3);margin-top:5px">
+          recall=実際にその決まり手だった中で正しく予測できた割合。全体正解率とマクロ平均recallの差が大きいほど、多数派クラス（逃げ）だけを当てて少数派を拾えていない状態。
         </div>
       </div>`;
   }
@@ -1386,7 +1476,19 @@
       section('⑦ 決まり手キャリブレーション（予測決まり手 vs 実際の決まり手）');
       push(['件数(実績・予測とも取得できたレース)', kimariStats.total]);
       push(['軸艇一致件数(predKimariBoat=actual1st)', kimariStats.boatMatchTotal, _pctStr(kimariStats.boatMatchRate)]);
-      push(['軸艇一致時の決まり手的中率', kimariStats.typeAccuracyGivenBoatMatch != null ? _pctStr(kimariStats.typeAccuracyGivenBoatMatch) : '(軸艇一致0件)']);
+      push(['軸艇一致時の決まり手的中率（全体・多数派クラスに引きずられやすい参考値）',
+            kimariStats.typeAccuracyGivenBoatMatch != null ? _pctStr(kimariStats.typeAccuracyGivenBoatMatch) : '(軸艇一致0件)']);
+      push(['マクロ平均recall（クラス頻度で重み付けしない・実力の目安）',
+            kimariStats.macroRecall != null ? _pctStr(kimariStats.macroRecall) : '(算出不可)']);
+      blank();
+      push(['決まり手別recall（実際にその決まり手だった中で正しく予測できた割合）', '件数', 'recall']);
+      const KIMARI_ORDER_RECALL = ['逃げ', '差し', 'まくり', 'まくり差し', '恵まれ', '抜き'];
+      Object.keys(kimariStats.recallByType)
+        .sort((a, b) => KIMARI_ORDER_RECALL.indexOf(a) - KIMARI_ORDER_RECALL.indexOf(b))
+        .forEach(k => {
+          const v = kimariStats.recallByType[k];
+          push([k, v.total, v.recall != null ? _pctStr(v.recall) : '—']);
+        });
 
       const KIMARI_ORDER = ['逃げ', '差し', 'まくり', 'まくり差し', '恵まれ', '抜き'];
       const allTypes = new Set(KIMARI_ORDER);
@@ -1697,10 +1799,32 @@
       //   ただし calcCalibrationByCourse は下の補正テーブル更新で引き続き使用）
       const venueCourseStats = calcCalibrationByVenueCourse(all);
       const place23ByVenue   = calcPlace23ByVenueCourse(all);
+      // [モニタリング追加] 決まり手キャリブレーション（クラス別recall込み）を常時パネル化
+      const kimariStats = calcKimariCalibration(all);
       // [モニタリング追加] 展開シナリオそのものの確率（買い目選定前）のキャリブレーション。
       // 従来は _buildCalibrationCSV の「⑨」でのみ計算していたものを常時パネル化する。
+      // 表示には「補正後」の weighted2ndMap/weighted3rdMap（computeScenCombosWithEV.js の
+      // パッチが SCEN2/3_CALIB_POINTS で補正済みの値）を使う。
       const place2ScenarioStats = calcScenarioMapCalibration(all, 'weighted2ndMap', 'actual2nd');
       const place3ScenarioStats = calcScenarioMapCalibration(all, 'weighted3rdMap', 'actual3rd');
+
+      // ―― 展開シナリオ確率補正テーブルの自己学習には「生の推定値」を使う ――
+      // ①③④と同じ自己崩壊ループ対策。_rawWeighted2ndMap/_rawWeighted3rdMap は
+      // computeScenCombosWithEV.js のパッチが補正前の正規化済み値を保持している。
+      try {
+        if (typeof window.updateScenario2ndCalibPoints === 'function') {
+          const allRaw2 = all.map(r => r._rawWeighted2ndMap
+            ? Object.assign({}, r, { weighted2ndMap: r._rawWeighted2ndMap }) : r);
+          const raw2BinStats = calcScenarioMapCalibration(allRaw2, 'weighted2ndMap', 'actual2nd');
+          window.updateScenario2ndCalibPoints(raw2BinStats);
+        }
+        if (typeof window.updateScenario3rdCalibPoints === 'function') {
+          const allRaw3 = all.map(r => r._rawWeighted3rdMap
+            ? Object.assign({}, r, { weighted3rdMap: r._rawWeighted3rdMap }) : r);
+          const raw3BinStats = calcScenarioMapCalibration(allRaw3, 'weighted3rdMap', 'actual3rd');
+          window.updateScenario3rdCalibPoints(raw3BinStats);
+        }
+      } catch (_scErr) { /* 補正テーブル更新失敗は無視（既存テーブルを維持） */ }
 
       // ―― ③ コース別補正テーブル更新には1号艇の「生の推定値」を使用する ――
       // hitProbEst と同じ自己崩壊ループ対策。r.boatProbsRaw[1] が
@@ -1778,6 +1902,7 @@
             ${buildCalibrationHTML(winProbBinStats, calError, violations, totalValidWin)}
             ${buildPlace2CalibHTML(p2stats, p3stats)}
             ${buildScenarioProbCalibHTML(place2ScenarioStats, place3ScenarioStats)}
+            ${buildKimariCalibHTML(kimariStats)}
             <div class="admin-only">${buildPlace23VenueCourseHTML(place23ByVenue)}</div>
             <div class="admin-only">${buildVenueCourseHTML(venueCourseStats)}</div>
           </div>

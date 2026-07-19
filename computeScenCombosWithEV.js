@@ -237,6 +237,118 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // § 1.55  展開シナリオ 2着/3着 確率補正テーブル
+  //
+  //   【背景】calibration.js「⑨ 展開シナリオ確率キャリブレーション」で、
+  //   weighted2ndMap（買い目選定前・全艇分の2着確率）が推定30〜40%帯
+  //   （N=4121件・大サンプル）で -8.6pt の系統的過大評価と判明（2026-07-19実測）。
+  //   3着（weighted3rdMap）も20〜30%帯で-3.3pt程度のズレがある。
+  //
+  //   【方針】hitProbEst（§1）・1号艇 nigeProb（§1.5）と全く同じ区分線形補間方式で、
+  //   weighted2nd / weighted3rd の各艇確率を補正する。
+  //   自己崩壊ループ対策も同様（生の値は別途 _rawWeighted2ndMap 等として保持し、
+  //   補正テーブルの再学習には常に生の値を使う）。
+  //
+  //   【注意】この補正は collectResultsForDateScen が保存する weighted2ndMap /
+  //   weighted3rdMap（＝バックテスト集計・⑨パネル・pred2ndRank用の周辺化確率）
+  //   にのみ適用される。画面表示（展開シナリオツリーの「2着 38%」等の数値）は
+  //   analyzer.js の scenarioPlace2 / merged3rdMap という別経路の値であり、
+  //   このファイルの変更では画面表示の数値は変わらない。画面表示側の補正は
+  //   別途対応が必要（scenarioPlace2 は「kimari条件付き」の確率であり、
+  //   weighted2nd/3rd の「kimariで周辺化した」確率とは異なる粒度のため、
+  //   単純に同じ補正テーブルを流用することはできない）。
+  // ─────────────────────────────────────────────────────────────────────────
+  const _SCEN2_CALIB_LS_KEY = 'scen_calib_2nd_v1';
+  const _SCEN3_CALIB_LS_KEY = 'scen_calib_3rd_v1';
+
+  function _loadScenCalibFromLS(lsKey) {
+    try {
+      const raw = localStorage.getItem(lsKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (_isSaneCalibPoints(parsed)) return parsed;
+      console.warn(`[computeScenCombosWithEV] ${lsKey} の内容が異常なため復元をスキップします。`);
+    } catch (_e) {}
+    return null;
+  }
+
+  const SCEN2_CALIB_POINTS = _loadScenCalibFromLS(_SCEN2_CALIB_LS_KEY) || [[0.00, 0.00], [1.00, 1.00]];
+  const SCEN3_CALIB_POINTS = _loadScenCalibFromLS(_SCEN3_CALIB_LS_KEY) || [[0.00, 0.00], [1.00, 1.00]];
+  window.SCEN2_CALIB_POINTS = SCEN2_CALIB_POINTS; // JSON書き出し用に公開
+  window.SCEN3_CALIB_POINTS = SCEN3_CALIB_POINTS;
+
+  // 区分線形補間の汎用実装（calibrateProbと同一ロジック、テーブルのみ引数化）
+  function _interpCalib(points, rawProb) {
+    if (rawProb == null || isNaN(rawProb)) return rawProb;
+    const p = Math.max(0, Math.min(1, rawProb));
+    if (p <= points[0][0]) return points[0][1];
+    if (p >= points[points.length - 1][0]) return points[points.length - 1][1];
+    for (let i = 1; i < points.length; i++) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      if (p <= x1) {
+        const t = (p - x0) / (x1 - x0);
+        return y0 + t * (y1 - y0);
+      }
+    }
+    return p;
+  }
+  window.calibrateScenario2ndProb = function (rawProb) { return _interpCalib(SCEN2_CALIB_POINTS, rawProb); };
+  window.calibrateScenario3rdProb = function (rawProb) { return _interpCalib(SCEN3_CALIB_POINTS, rawProb); };
+
+  // 補正テーブルの自己学習更新（updateCalibPointsと同じガード条件を流用）
+  function _updateScenCalibPoints(pointsArr, lsKey, binStats, label) {
+    if (!Array.isArray(binStats)) return;
+    const MIN_TOTAL_SAMPLES_HARD = 100;
+    const MIN_TOTAL_SAMPLES_RECOMMENDED = 200;
+    const SMALL_SAMPLE_THRESH = 30;
+    const SMALL_SAMPLE_MAX_DEVIATION = 0.20;
+
+    const totalValidForUpdate = binStats.reduce((s, b) => s + (b.total || 0), 0);
+    if (totalValidForUpdate < MIN_TOTAL_SAMPLES_HARD) {
+      console.warn(`[${label}] 全体有効件数不足 (${totalValidForUpdate}件) のため更新をスキップしました。`);
+      return;
+    }
+    if (totalValidForUpdate < MIN_TOTAL_SAMPLES_RECOMMENDED) {
+      console.warn(`[${label}] 全体有効件数が推奨値未満 (${totalValidForUpdate}件) です。更新は実行しますが結果に注意してください。`);
+    }
+
+    const newPoints = [[0.00, 0.00]];
+    binStats.forEach(b => {
+      if (b.total >= 10 && b.estAvg != null && b.actual != null) {
+        if (b.estAvg >= HIGH_PROB_BIN_MIN && b.actual <= EXTREME_LOW_ACTUAL_THRESH) {
+          console.warn(`[${label}] 異常値スキップ: [${b.label}] est=${b.estAvg.toFixed(2)} actual=${(b.actual*100).toFixed(1)}% (N=${b.total})`);
+          return;
+        }
+        const deviation = Math.abs(b.actual - b.estAvg);
+        if (b.total < SMALL_SAMPLE_THRESH && deviation >= SMALL_SAMPLE_MAX_DEVIATION) {
+          console.warn(`[${label}] 小標本異常値スキップ: [${b.label}] N=${b.total}<${SMALL_SAMPLE_THRESH}, 乖離${(deviation*100).toFixed(1)}pt`);
+          return;
+        }
+        newPoints.push([b.estAvg, b.actual]);
+      }
+    });
+    const lastRealY = newPoints.length > 1 ? newPoints[newPoints.length - 1][1] : 0.5;
+    newPoints.push([1.00, lastRealY]);
+    if (newPoints.length >= 3) {
+      newPoints.sort((a, b) => a[0] - b[0]);
+      if (!_isSaneCalibPoints(newPoints)) {
+        console.warn(`[${label}] 更新後テーブルが異常と判定されたため適用を中止しました。`, newPoints);
+        return;
+      }
+      pointsArr.length = 0;
+      newPoints.forEach(pt => pointsArr.push(pt));
+      try { localStorage.setItem(lsKey, JSON.stringify(pointsArr)); } catch (_e) {}
+    }
+  }
+  window.updateScenario2ndCalibPoints = function (binStats) {
+    _updateScenCalibPoints(SCEN2_CALIB_POINTS, _SCEN2_CALIB_LS_KEY, binStats, 'updateScenario2ndCalibPoints');
+  };
+  window.updateScenario3rdCalibPoints = function (binStats) {
+    _updateScenCalibPoints(SCEN3_CALIB_POINTS, _SCEN3_CALIB_LS_KEY, binStats, 'updateScenario3rdCalibPoints');
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
   // § 1.5  コース別（艇単位）キャリブレーション補正テーブル
   //
   //   【背景】2026-06-20 コース別勝率キャリブレーションパネルにより、
@@ -2067,6 +2179,39 @@
           if (r.actual3rd != null && res.ranked3rdList?.length > 0) {
             const idx = res.ranked3rdList.indexOf(r.actual3rd);
             r.pred3rdRank = idx >= 0 ? idx + 1 : null;
+          }
+
+          // ── [展開シナリオ確率キャリブレーション適用] ──
+          // top_stats.js が作った weighted2ndMap/weighted3rdMap（正規化済み・生値）を、
+          // ここで SCEN2/3_CALIB_POINTS による補正後の値に置き換える。
+          // 生値は _rawWeighted2ndMap/_rawWeighted3rdMap として別途保持し、
+          // calibration.js 側の補正テーブル再学習に使う（自己崩壊ループ対策）。
+          // 補正はランキング順序を変えない（同一の単調増加関数を全艇に適用するため）ので
+          // pred2ndRank/pred3rdRank（上で計算済み）には影響しない。
+          function _normalizeMapLocal(weightedMap) {
+            if (!weightedMap) return null;
+            const vals = Object.values(weightedMap).filter(v => typeof v === 'number' && !isNaN(v));
+            const total = vals.reduce((s, v) => s + v, 0);
+            if (total <= 0) return null;
+            const out = {};
+            for (const [boat, v] of Object.entries(weightedMap)) {
+              if (typeof v === 'number' && !isNaN(v)) out[boat] = v / total;
+            }
+            return out;
+          }
+          const rawMap2 = _normalizeMapLocal(res.weighted2nd);
+          const rawMap3 = _normalizeMapLocal(res.weighted3rd);
+          if (rawMap2) {
+            r._rawWeighted2ndMap = rawMap2;
+            const calMap2 = {};
+            Object.entries(rawMap2).forEach(([b, v]) => { calMap2[b] = window.calibrateScenario2ndProb(v); });
+            r.weighted2ndMap = calMap2;
+          }
+          if (rawMap3) {
+            r._rawWeighted3rdMap = rawMap3;
+            const calMap3 = {};
+            Object.entries(rawMap3).forEach(([b, v]) => { calMap3[b] = window.calibrateScenario3rdProb(v); });
+            r.weighted3rdMap = calMap3;
           }
 
           // ── hitProbEst も更新（キャリブレーション補正済みの値で上書き）──
