@@ -1736,13 +1736,24 @@ _push_queue: queue.PriorityQueue = queue.PriorityQueue()
 _push_seq = _itertools.count()   # 同優先度内のFIFO順を保証するタイブレーカー
 _DEPLOY_WAIT_SEC = 130  # GitHub Pagesデプロイ完了までの待機秒数（約2分）
 
+# ── 緊急push(priority=0)用デバウンス設定 ──────────────────────────
+# ★ [2026-07-19 追加] 結果・フライング・race_index・tenjihoseiplus など
+#   複数系統の緊急pushが短時間に連続すると、展示情報と同様に
+#   GitHub Pagesのデプロイキャンセル連鎖が起きるため、tenji専用キューと
+#   同じ考え方でここにもデバウンスを入れる。
+PUSH_URGENT_DEBOUNCE_SEC       = 4   # この秒数内に届いた緊急pushは1回にまとめる
+PUSH_URGENT_MAX_BATCH_WAIT_SEC = 15  # 緊急pushが続いてもこの秒数で必ず一度pushする
+
 def _push_queue_worker():
     """
     pushキューを優先度順に処理する専用スレッド。
 
-    priority=0（緊急）: デプロイ待ちをスキップして即座にpushする。
-      → 展示・結果など数秒単位の即時性が必要なデータに使用。
-      → GitHub Pages Cancelledのリスクはあるが、情報鮮度を優先する。
+    priority=0（緊急）: デプロイ待ちをスキップする。
+      → 結果・フライング・race_index・tenjihoseiplus など数秒単位の
+        即時性が必要なデータに使用。
+      → ただし短時間に連続する緊急pushは PUSH_URGENT_DEBOUNCE_SEC 秒だけ
+        まとめてから1回のpushにする（GitHub Pagesのデプロイキャンセル
+        連鎖を防ぐため。展示情報専用の _tenji_push_queue と同じ考え方）。
 
     priority=1（通常）: 前のpushから _DEPLOY_WAIT_SEC 秒待ってから実行する。
       → CSV・起動時pushなどデプロイ安定性を優先するデータに使用。
@@ -1758,6 +1769,7 @@ def _push_queue_worker():
             break
 
         priority, _seq, kind, files, msg = item
+        msgs = [msg]
 
         # 通常push(priority=1)のみデプロイ待ちを適用。緊急push(priority=0)はスキップ。
         if priority >= PUSH_NORMAL:
@@ -1768,6 +1780,31 @@ def _push_queue_worker():
                 time.sleep(wait)
         else:
             log(f"  [PushQueue] ⚡ 緊急push → デプロイ待ちスキップ ({msg})")
+
+            # ── デバウンス: 短時間内に届いた追加の緊急pushを1回にまとめる ──
+            # 通常push(priority=1)が混ざっていた場合は巻き込まず、
+            # キューに戻して次の周回に委ねる（自分のデプロイ待ちを守るため）。
+            batch_start = time.time()
+            while True:
+                elapsed = time.time() - batch_start
+                if elapsed >= PUSH_URGENT_MAX_BATCH_WAIT_SEC:
+                    log(f"  [PushQueue] 最大待機({PUSH_URGENT_MAX_BATCH_WAIT_SEC}秒)到達 → まとめてpush")
+                    break
+                remaining = PUSH_URGENT_DEBOUNCE_SEC - elapsed
+                if remaining <= 0:
+                    break
+                try:
+                    nxt = _push_queue.get(timeout=remaining)
+                except queue.Empty:
+                    break
+                if nxt[0] >= PUSH_NORMAL:
+                    _push_queue.put(nxt)  # 通常pushは巻き込まず、そのままキューに戻す
+                    break
+                msgs.append(nxt[4])
+                _push_queue.task_done()
+
+        if len(msgs) > 1:
+            msg = f"update {datetime.now().strftime('%Y-%m-%d %H:%M')} [まとめpush x{len(msgs)}件]"
 
         try:
             # ── Step A: add & commit（_git_lock 内で短時間で完了）──────────

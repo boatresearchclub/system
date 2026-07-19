@@ -683,7 +683,7 @@ function renderDetail(rno){
         const stCell = stRank != null
           ? `<span style="display:block;text-align:center;font-size:12px">${stRank.toFixed(1)}</span>`
           : `<span style="color:var(--text3);font-size:11px;display:block;text-align:center">—</span>`;
-        const ap3 = MASTER_EXT?.player_index?.[bt.name]?.annual_place3;
+        const ap3 = getCourseMaster(bt.name, String(bt.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[bt.name]?.annual_place3;
         const place3Cell = ap3 != null
           ? `<span style="display:block;text-align:center;font-size:12px;color:var(--text)">${(ap3*100).toFixed(1)}%</span>`
           : `<span style="color:var(--text3);font-size:11px;display:block;text-align:center">—</span>`;
@@ -911,7 +911,7 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     let minVal = Infinity;
     let cutBoat = null;
     ranked2.forEach(b => {
-      const base3r = MASTER_EXT?.player_index?.[b.name]?.annual_place3;
+      const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
       if (base3r == null) return; // 実績データが無い艇は比較対象外
       let adj = base3r;
       if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
@@ -1739,7 +1739,7 @@ function renderBuy(rno){
   // データが無い艇（annual_place3 null）は比較対象から除外する。
   const p3rAdjustedByBoat = {};
   ranked2.forEach(b => {
-    const base3r = MASTER_EXT?.player_index?.[b.name]?.annual_place3;
+    const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
     if (base3r == null) return;
     let adj = base3r;
     if (isMeasuredTenjiVenue && hasTenji && tenjiScoreMap) {
@@ -1824,7 +1824,7 @@ function renderBuy(rno){
     // [2026-07-17 追加] 6艇比較で補正後の値が最も低い艇には「切」バッジを付ける。
     let place3rCell;
     {
-      const base3r = MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // 0〜1 の割合、なければ null
+      const base3r = getCourseMaster(bt.name, String(bt.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // コース別3連対率（無ければ年間トータル値にフォールバック）
       const isCutCandidate = p3rCutBoat != null && bt.boat === p3rCutBoat;
       const cutBadge = isCutCandidate
         ? `<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切</span>`
