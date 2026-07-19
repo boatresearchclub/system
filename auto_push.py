@@ -1666,7 +1666,10 @@ def fetch_odds_for_venues(venues_in_csv: dict) -> bool:
     当日CSVに存在する会場のオッズを「1巡」取得して odds_data/ に保存する。
 
     fetch_odds.py の fetch_all_races() を呼び出す薄いラッパー。
-    ループ制御は呼び出し元（_odds_loop_worker）が行う。
+    注記: 現在このファイル内からは呼び出されていない（未使用）。
+    実際の継続的なオッズ取得は main_loop.py の task_odds が別プロセスで
+    担当している。auto_push.py はそちらが書き出す ODDS_DIR の変化を
+    検知してpushするだけの役割。
     失敗しても例外を外に投げず False を返す（メインループを止めない）。
 
     Returns
@@ -1691,67 +1694,18 @@ def fetch_odds_for_venues(venues_in_csv: dict) -> bool:
             venues_in_csv, verbose=True, deadline_map=deadline_map
         )
         log(f"  ✓ オッズ1巡完了: {len(saved)}ファイル保存")
-        return True, _wait, _has_active
+        return True
     except Exception as e:
         log(f"  ✕ オッズ取得エラー: {e}")
-        return False, None, None
+        return False
 
 
-# ── オッズ永続ループワーカー ───────────────────────────────────────────────────
-# ★ [2026-07-19 追加] fetch_odds_for_venues() は定義されているだけで、
-#   これを繰り返し呼び出すはずの _odds_loop_worker が存在せず、
-#   スレッドとしても起動されていなかった（過去の編集で欠落したとみられる）。
-#   → 結果として fetch_odds.py によるオッズ取得自体が一度も走らず、
-#     ODDS_DIR に新しいファイルが増えないため、メインループの
-#     mtime差分検知（curr_odds/prev_odds）も常に「変化なし」判定になり、
-#     オッズが締切後もアプリに反映されない不具合の直接原因だった。
-# 当日CSVがある間、ODDS_FETCH_INTERVAL 秒間隔で fetch_all_races() を回し続ける。
-# fetch_all_races() が返す _wait（推奨待機秒数）があればそれを優先し、
-# なければ ODDS_FETCH_INTERVAL にフォールバックする。
-def _odds_loop_worker():
-    """
-    オッズ取得を継続的に回すワーカースレッド。
-    当日CSVに登場する全会場について fetch_odds_for_venues() を繰り返し呼び出す。
-    スレッドが例外で落ちないよう、内部で例外を握りつぶしてログのみ出す。
-    """
-    # モジュール全体の読み込み（get_venues_in_today_csvs 等、後方で定義される
-    # 関数の登録）が完了する前にこのスレッドが動き出さないよう、起動直後だけ
-    # 少し待つ（このスレッドはファイル冒頭寄りで起動されるため）。
-    time.sleep(2)
-
-    while True:
-        try:
-            venues_in_csv = get_venues_in_today_csvs()
-        except Exception as e:
-            log(f"  [OddsLoop] ⚠ 当日CSVの会場一覧取得に失敗: {e}")
-            venues_in_csv = {}
-
-        sleep_sec = ODDS_FETCH_INTERVAL
-
-        if not venues_in_csv:
-            log("  [OddsLoop] 本日のCSVがまだ無い → 待機")
-        else:
-            try:
-                result = fetch_odds_for_venues(venues_in_csv)
-                ok, wait_hint, has_active = result if isinstance(result, tuple) else (result, None, None)
-                if not ok:
-                    log("  [OddsLoop] 取得失敗 → 次回リトライ")
-                elif isinstance(wait_hint, (int, float)) and wait_hint > 0:
-                    # fetch_all_races が推奨する待機秒数があればそれを使う
-                    # （締切間際など、より短い間隔が推奨される場合に対応）
-                    sleep_sec = wait_hint
-            except Exception as e:
-                log(f"  [OddsLoop] ✕ 例外: {e} → {ODDS_FETCH_INTERVAL}秒後にリトライ")
-
-        time.sleep(sleep_sec)
-
-
-# このスレッドが fetch_all_races() を繰り返し呼び出す。
-# スレッドが例外で死んでもメインループが検知して再起動する。
+# 注記: 実際のオッズ取得（fetch_all_races の継続呼び出し）は main_loop.py の
+# task_odds が別プロセスで担当している。fetch_odds_for_venues() をここで
+# 定期的に呼び出すループワーカーを一時的に追加していたが、main_loop.py と
+# 役割が重複し二重取得になるため削除した（[2026-07-19]）。
+# auto_push.py の役割は ODDS_DIR の変化を検知して push することのみ。
 import threading as _threading
-
-_odds_loop_thread = _threading.Thread(target=_odds_loop_worker, daemon=True)
-_odds_loop_thread.start()
 
 # data.js への書き込みを排他制御するロック
 # 複数スレッドが同時に write_text() を呼ぶと Windows で OSError(22) が発生するため
