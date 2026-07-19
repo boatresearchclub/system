@@ -747,11 +747,36 @@ function renderDetail(rno){
 //
 // 恵まれ（転覆等による繰り上がり）は予測不可のため除外。
 //
+// [2026-07-19 追加] 展開シナリオの「全体／決まり手ごと」タブ切替。
+// 事前に全パネル（全体＋各決まり手）をDOMに生成しておき、クリックで表示/非表示を
+// 切り替えるだけ（再計算なし）。既存の計算ロジック・デザインには一切影響しない。
+if (typeof __tenkaiSwitchTab === 'undefined') {
+  var __tenkaiSwitchTab = function(blockId, key, btnEl){
+    const container = document.getElementById(blockId);
+    if(!container) return;
+    container.querySelectorAll('[data-panel-key]').forEach(p => {
+      p.style.display = (p.getAttribute('data-panel-key') === key) ? '' : 'none';
+    });
+    const tabRow = btnEl?.parentElement;
+    if(tabRow){
+      tabRow.querySelectorAll('[data-tab-key]').forEach(b => {
+        const isActive = b === btnEl;
+        b.style.background = isActive
+          ? b.getAttribute('data-active-bg')
+          : 'var(--bg2)';
+        b.style.color = isActive
+          ? b.getAttribute('data-active-color')
+          : 'var(--text3)';
+      });
+    }
+  };
+}
+
 function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTenji){
   const sd = calcScenarioData(ranked2, rawBoats, tenjiScoreMap);
   if(!sd.valid) return '';
 
-  const { scenarioProb, scenarioPlace2, kimariTypes, merged3rdMap } = sd;
+  const { scenarioProb, scenarioPlace2, kimariTypes, merged3rdMap, kimariThirdMap } = sd;
 
   const boatCircle = (n) =>
     `<span class="boat-circle b${n}" style="width:20px;height:20px;font-size:10px;line-height:20px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${n}</span>`;
@@ -811,34 +836,12 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     'まくり': 'rgba(255,59,59,.1)', 'まくり差し': 'rgba(255,122,0,.1)', '抜き': 'rgba(108,122,148,.1)'
   };
 
-  const scenarioBlocks = groupList.map((grp) => {
-    const totalProb = grp.scenarios.reduce((s, x) => s + x.prob, 0);
-    const isMulti = true; // 全kimariを加重平均するため常にtrue
-
-    // ── 2着確率を加重平均で合算 ──
-    // 各シナリオの place2List を prob で重み付けして同一艇番ごとに合算し正規化する
-    const mergedP2Map = {}; // boat番号 → { boat, name, p2sum }
-    for(const scen of grp.scenarios){
-      const w = scen.prob / (totalProb || 1); // シナリオ重み（合計1.0）
-      for(const item of scen.place2List){
-        if(!mergedP2Map[item.boat]){
-          mergedP2Map[item.boat] = { boat: item.boat, name: item.name, p2sum: 0 };
-        }
-        mergedP2Map[item.boat].p2sum += item.p2 * w;
-      }
-    }
-    // p2sum を正規化（合計が1.0になるよう）
-    const p2Total = Object.values(mergedP2Map).reduce((s, x) => s + x.p2sum, 0) || 1;
-    const mergedPlace2 = Object.values(mergedP2Map)
-      .map(x => ({ boat: x.boat, name: x.name, p2: x.p2sum / p2Total }))
-      .sort((a, b) => b.p2 - a.p2);
-
-    const top4Place = mergedPlace2.slice(0, 4);
-
-    // 各2着候補の行を生成
-    const p2Lines = top4Place.map(item => {
-      const third3     = merged3rdMap[grp.boat]?.[item.boat] || [];
-      // ── 3着率は merged3rdMap 格納時に正規化済みの normPct を使う ──
+  // [2026-07-19 追加] 2着/3着の行群を生成する共通ヘルパー。
+  // 元の p2Lines 生成ロジックをそのまま関数化しただけで、見た目・計算式は変更なし。
+  function renderP2Lines(place2List, thirdMapForBoat){
+    const top4Place = place2List.slice(0, 4);
+    return top4Place.map(item => {
+      const third3     = thirdMapForBoat?.[item.boat] || [];
       const third3html = third3.map(t3 => {
         return `<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap">
           ${boatCircle(t3.boat)}
@@ -858,26 +861,70 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
         </div>
       </div>`;
     }).join('');
+  }
 
-    // ── ヘッダー部分: 確率上位2つの決まり手バッジを表示 ──
+  let __tenkaiTabSeq = 0; // ブロックごとに一意なDOM idを振るための連番
+
+  const scenarioBlocks = groupList.map((grp) => {
+    const totalProb = grp.scenarios.reduce((s, x) => s + x.prob, 0);
+
+    // ── 2着確率を加重平均で合算（「全体」タブ用。既存ロジック、計算式は変更なし）──
+    const mergedP2Map = {}; // boat番号 → { boat, name, p2sum }
+    for(const scen of grp.scenarios){
+      const w = scen.prob / (totalProb || 1); // シナリオ重み（合計1.0）
+      for(const item of scen.place2List){
+        if(!mergedP2Map[item.boat]){
+          mergedP2Map[item.boat] = { boat: item.boat, name: item.name, p2sum: 0 };
+        }
+        mergedP2Map[item.boat].p2sum += item.p2 * w;
+      }
+    }
+    const p2Total = Object.values(mergedP2Map).reduce((s, x) => s + x.p2sum, 0) || 1;
+    const mergedPlace2 = Object.values(mergedP2Map)
+      .map(x => ({ boat: x.boat, name: x.name, p2: x.p2sum / p2Total }))
+      .sort((a, b) => b.p2 - a.p2);
+
+    // ── タブ対象の決まり手: 確率上位2つ（従来のバッジ表示と同じ選定基準）──
     const topKimaris = grp.scenarios
       .slice()
       .sort((a, b) => b.prob - a.prob)
       .slice(0, 2);
-    const kimariBadges = topKimaris.map(s => {
-      const kColor = KIMARI_COLOR[s.kimari] || 'var(--accent2)';
-      const kBg    = KIMARI_BG[s.kimari]    || 'rgba(108,122,148,.1)';
-      return `<span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;background:${kBg};color:${kColor};flex-shrink:0">${s.kimari}<span style="font-weight:400;font-size:10px;margin-left:3px">${(s.prob*100).toFixed(1)}%</span></span>`;
+
+    const blockId = `tenkai-${grp.boat}-${__tenkaiTabSeq++}`;
+
+    // ── タブボタン: 「全体」＋ 決まり手ごと。クリックで下のパネルを切替 ──
+    const allTabActiveBg    = 'var(--bg3, rgba(108,122,148,.16))';
+    const allTabActiveColor = 'var(--text)';
+    const tabButtonsHtml = [
+      `<button type="button" onclick="__tenkaiSwitchTab('${blockId}','all',this)"
+        data-tab-key="all" data-active-bg="${allTabActiveBg}" data-active-color="${allTabActiveColor}"
+        style="cursor:pointer;border:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;
+          background:${allTabActiveBg};color:${allTabActiveColor};flex-shrink:0">全体</button>`,
+      ...topKimaris.map(s => {
+        const kColor = KIMARI_COLOR[s.kimari] || 'var(--accent2)';
+        const kBg    = KIMARI_BG[s.kimari]    || 'rgba(108,122,148,.1)';
+        return `<button type="button" onclick="__tenkaiSwitchTab('${blockId}','${s.kimari}',this)"
+          data-tab-key="${s.kimari}" data-active-bg="${kBg}" data-active-color="${kColor}"
+          style="cursor:pointer;border:none;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;
+            background:var(--bg2);color:var(--text3);flex-shrink:0">${s.kimari}<span style="font-weight:400;font-size:10px;margin-left:3px">${(s.prob*100).toFixed(1)}%</span></button>`;
+      }),
+    ].join('');
+
+    // ── パネル本体: 全体（初期表示）＋ 決まり手ごと（非表示）を全て事前生成 ──
+    const panelAllHtml = `<div data-panel-key="all" style="padding-left:4px">${renderP2Lines(mergedPlace2, merged3rdMap[grp.boat])}</div>`;
+    const panelKimariHtml = topKimaris.map(s => {
+      const kThird = kimariThirdMap[grp.boat]?.[s.kimari] || {};
+      return `<div data-panel-key="${s.kimari}" style="padding-left:4px;display:none">${renderP2Lines(s.place2List, kThird)}</div>`;
     }).join('');
 
     return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         ${boatCircle(grp.boat)}
         <span style="font-size:13px;font-weight:700;flex-shrink:0">${grp.name}</span>
-        ${kimariBadges}
+        ${tabButtonsHtml}
         <span style="font-size:13px;font-family:var(--mono);font-weight:700;color:var(--text);margin-left:auto;flex-shrink:0">${(totalProb*100).toFixed(1)}%</span>
       </div>
-      <div style="padding-left:4px">${p2Lines}</div>
+      <div id="${blockId}">${panelAllHtml}${panelKimariHtml}</div>
     </div>`;
   }).join('');
 

@@ -2316,7 +2316,29 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
   // ── 軸艇×2着艇の3着上位リストを事前計算（画面・買い目の共通データ源）──
   // buildScenarioSection / renderBuy の両方がここを参照することでズレをなくす。
   // merged3rdMap[axisBoat][secondBoat] = calc3rdScores の全kimari加重平均結果（score降順）
+  // ── [2026-07-19 追加] score配列 → normPct（整数%・合計100）付き配列に変換する共通ヘルパー ──
+  // merged3rdMap（全kimari加重平均）と kimariThirdMap（決まり手ごと単独）の
+  // どちらでも同じ丸め処理を使うために切り出した。ロジックは既存のmerged3rdMap
+  // 生成部分と完全に同一（挙動は変えていない）。
+  function _normalizeR3Entries(entries){
+    const _scoreTotal = entries.reduce((s, x) => s + x.score, 0) || 1;
+    const _rawPcts    = entries.map(x => x.score / _scoreTotal * 100);
+    const _floors     = _rawPcts.map(p => Math.floor(p));
+    const _rem        = 100 - _floors.reduce((s, p) => s + p, 0);
+    _rawPcts.map((p, i) => ({ i, frac: p - Math.floor(p) }))
+            .sort((a, b) => b.frac - a.frac)
+            .slice(0, _rem)
+            .forEach(({ i }) => { _floors[i] += 1; });
+    entries.forEach((x, i) => { x.normPct = _floors[i]; });
+    return entries;
+  }
+
   const merged3rdMap = {};
+  // [2026-07-19 追加] 決まり手タブ切替UI用: merged3rdMapとは別に、決まり手ごと
+  // 単独（加重平均前）の3着分布を保持する。既存のmerged3rdMap計算・戻り値には
+  // 一切手を加えていない（読み取り専用の追加データ）。
+  // 構造: kimariThirdMap[軸艇][決まり手][2着艇] = r3Entries（normPct付き）
+  const kimariThirdMap = {};
   for(const winner of ranked2){
     const ax = winner.boat;
     const axisScens = kimariTypes
@@ -2324,12 +2346,20 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
       .filter(x => x.prob > 0.001);
     const totalAxProb = axisScens.reduce((s, x) => s + x.prob, 0) || 1;
     merged3rdMap[ax] = {};
+    kimariThirdMap[ax] = {};
     for(const second of ranked2){
       if(second.boat === ax) continue;
       const r3Map = {};
       for(const scen of axisScens){
         const w = scen.prob / totalAxProb;
         const thirds = calc3rdScores(ranked2, tenjiScoreMap, ax, scen.kimari, second.boat);
+
+        // ── 決まり手単独の3着分布をそのまま保存（加重平均せず）──
+        if(!kimariThirdMap[ax][scen.kimari]) kimariThirdMap[ax][scen.kimari] = {};
+        kimariThirdMap[ax][scen.kimari][second.boat] = _normalizeR3Entries(
+          thirds.map(t3 => ({ boat: t3.boat, r3: t3.r3 ?? null, score: t3.score }))
+        );
+
         for(const t3 of thirds){
           if(!r3Map[t3.boat]) r3Map[t3.boat] = { boat: t3.boat, r3sum: 0, scoreSum: 0, r3Count: 0, scoreCount: 0 };
           if(t3.r3 != null){ r3Map[t3.boat].r3sum += t3.r3 * w; r3Map[t3.boat].r3Count += w; }
@@ -2340,20 +2370,11 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
         .map(x => ({ boat: x.boat, r3: x.r3Count > 0 ? x.r3sum / x.r3Count : null, score: x.scoreCount > 0 ? x.scoreSum / x.scoreCount : 0 }))
         .sort((a, b) => b.score - a.score);
       // ── 格納時点で score を正規化して normPct（整数%・合計100）を付加 ──
-      const _scoreTotal = r3Entries.reduce((s, x) => s + x.score, 0) || 1;
-      const _rawPcts    = r3Entries.map(x => x.score / _scoreTotal * 100);
-      const _floors     = _rawPcts.map(p => Math.floor(p));
-      const _rem        = 100 - _floors.reduce((s, p) => s + p, 0);
-      _rawPcts.map((p, i) => ({ i, frac: p - Math.floor(p) }))
-              .sort((a, b) => b.frac - a.frac)
-              .slice(0, _rem)
-              .forEach(({ i }) => { _floors[i] += 1; });
-      r3Entries.forEach((x, i) => { x.normPct = _floors[i]; });
-      merged3rdMap[ax][second.boat] = r3Entries;
+      merged3rdMap[ax][second.boat] = _normalizeR3Entries(r3Entries);
     }
   }
 
-  return { valid: true, scenarioProb, scenarioPlace2, kimariTypes, inn2Place, top3, scenarioVKimari, isValidFirst, merged3rdMap };
+  return { valid: true, scenarioProb, scenarioPlace2, kimariTypes, inn2Place, top3, scenarioVKimari, isValidFirst, merged3rdMap, kimariThirdMap };
 }
 
 // ── 展開シナリオセクション生成（強化版: 2着+3着確率表示・1着率信頼度バー付き）──
