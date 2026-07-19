@@ -5124,15 +5124,45 @@ function prefillScenEVCache(dateStr) {
           let _tsm = null;
           if (_tData) { try { _tsm = calcTenjiScore(_ranked, _tData, venue, _arek); } catch(e2){} }
           const _pTotal = _ranked.reduce((s,b)=>s+b.prob,0)||1;
-          const { wBase: _wb, wTenkai: _wt, wTenji: _wj } = calcDynamicWeights(_arek);
-          const _ttotal = _ranked.reduce((s,x)=>s+(x.tenkai_score??x.tenkai_prob),0)||1;
+          // [2026-07-19修正] 本線(renderBuy)と別系統だった旧・指数重み方式を廃止。
+          //   旧実装は tc(展示係数)を wTenkai と wTenji の両方に使い回しており、
+          //   ①展開係数(tenkai)が計算に一切反映されない ②展示係数が二重に効く、
+          //   という2つのバグがあり、テーブル表示の final_prob とバナー判定用の
+          //   1号艇 final_prob が食い違う原因になっていた。
+          //   ここでは renderBuy 本線と同じ「差分加算方式」に統一する
+          //   （wBase は本線同様未使用＝廃止。荒れ会場補正は wTenkai に一本化）。
+          //   ただし実測展示会場のコース別クリップテーブル等は重いため簡略化しており、
+          //   厳密な数値は本線(renderBuy)の final_prob を優先する。
+          const { wTenkai: _wt, wTenji: _wj } = calcDynamicWeights(_arek);
+          const _ttotal = _ranked.reduce((s,x)=>s+(x.tenkai_prob_pure ?? x.tenkai_score ?? x.tenkai_prob),0)||1;
+          const TENKAI_DIFF_GAIN_BANNER = 1.0;
+          const BONUS_BASE_TENJI_BANNER = 0.15;
           _ranked.forEach(b => {
-            const bn = b.prob/_pTotal;
+            const baseNorm   = b.prob/_pTotal;
+            const tenkaiNorm = (b.tenkai_prob_pure ?? b.tenkai_score ?? b.tenkai_prob)/_ttotal;
+            const tenkaiDiff = baseNorm > 0 ? (tenkaiNorm - baseNorm) : 0;
             let tc=1.0; if(_tsm) tc=_tsm[`__coef_${b.boat}`]??1.0;
-            b._multi_score = Math.pow(bn,_wb)*Math.pow(tc,_wt)*Math.pow(tc,_wj);
+            const tenkaiBonus = TENKAI_DIFF_GAIN_BANNER * tenkaiDiff * _wt;
+            const tenjiBonus  = BONUS_BASE_TENJI_BANNER * (tc - 1.0) * _wj;
+            b._multi_score = Math.max(0.001, baseNorm + tenkaiBonus + tenjiBonus);
           });
           const _mt = _ranked.reduce((s,b)=>s+b._multi_score,0)||1;
           _ranked.forEach(b=>{ b.final_prob=b._multi_score/_mt; });
+          // 本線と同じコース別キャリブレーションを適用し、テーブル表示との整合性を保つ
+          try {
+            const _b1c = _ranked.find(b => b.boat === 1);
+            if (_b1c && typeof calibrateCourse1Prob === 'function') {
+              const _raw1c = _b1c.final_prob;
+              const _cal1c = calibrateCourse1Prob(_raw1c, _b1c.name ?? null);
+              if (_cal1c != null && !isNaN(_cal1c) && Math.abs(_cal1c - _raw1c) > 1e-9) {
+                const _othersC = _ranked.filter(b => b.boat !== 1);
+                const _othersCTotal = _othersC.reduce((s, b) => s + b.final_prob, 0) || 1;
+                const _remainC = Math.max(0, 1 - _cal1c);
+                _othersC.forEach(b => { b.final_prob = _remainC * (b.final_prob / _othersCTotal); });
+                _b1c.final_prob = _cal1c;
+              }
+            }
+          } catch (_ccBanner) { /* 補正失敗時は無補正のまま続行 */ }
           const _b1 = _ranked.find(b=>b.boat===1);
           fp1Banner       = _b1?.final_prob ?? null;
           venueAvg1Banner = (vdata.inn_data||{}).course_rates?.[1] ?? null;
