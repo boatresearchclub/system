@@ -21,6 +21,7 @@ GitHub連携・ファイル監視には一切関与しない。
 """
 
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -857,6 +858,63 @@ def _apply_venue_band3040_bias(boats: list, venue: str) -> list:
 # 基準確率計算（コース別1着率 → prob）
 # ══════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════
+# [2026-07-20 追加] 実績の薄い選手を会場平均へ滑らかに縮小するヘルパー
+#
+# 【背景】従来は course_master / venue_course_master の reliable フラグ
+#   （20走が基準。グレードメイン1走・女子8走）で「使う/使わない」の
+#   二択になっており、reliable=False の場合は個人データを完全に無視して
+#   会場のそのコース平均（race_course_rates / venue_course_rates）を
+#   そのまま base_rate に採用していた。
+#
+#   これは「実績のない選手」を暗黙に「平均的な実力の選手」として扱う
+#   ことになり、st_corr / form_corr も個人データが無ければ 1.0（中立）
+#   になるため、補正の全段階で下振れさせる仕組みがどこにも無かった。
+#   少ないサンプルの勝率は分散が大きく、平均へ縮小（シュリンケージ）
+#   するのが統計的に妥当（build_master_json.py の bayesian_win_rate と
+#   同じ発想）だが、その縮小が「個人データの量」に応じて連続的に
+#   効くようにはなっていなかった。
+#
+# 【方針】build_master_json.py の calc_wco_trust と同じ対数補間方式で、
+#   出走数(runs)に応じて0〜1の信頼度(trust)を算出し、
+#   個人勝率と会場平均を trust で連続的にブレンドする。
+#   runs=0（本当にデータが無い）場合のみ、従来通り会場平均のみを使う。
+# ══════════════════════════════════════════════════════════════════
+_SHRINK_MIN_RUNS = 3   # これ未満は trust=0.0（会場平均のみ）
+_SHRINK_AT_MIN_TRUST = 0.0
+
+
+def _smooth_personal_trust(runs, min_runs: int = _SHRINK_MIN_RUNS, full_runs: int = 20) -> float:
+    """出走数(runs) → 信頼度(0.0〜1.0) を対数補間で算出する。
+
+    runs < min_runs         → 0.0（個人データは使わず会場平均のみ）
+    runs >= full_runs        → 1.0（個人データを全面採用）
+    min_runs 〜 full_runs    → 対数補間で滑らかに増加
+    """
+    if not runs or runs <= 0:
+        return 0.0
+    if runs < min_runs:
+        return 0.0
+    full_runs = max(full_runs, min_runs + 1)  # ゼロ割防止
+    if runs >= full_runs:
+        return 1.0
+    t = math.log(runs / min_runs) / math.log(full_runs / min_runs)
+    return round(max(0.0, min(1.0, t)), 4)
+
+
+def _shrink_to_pop(raw_rate, runs, pop_avg, full_runs: int = 20):
+    """個人勝率(raw_rate)を出走数(runs)に応じた信頼度で会場平均(pop_avg)へ
+    縮小ブレンドする。raw_rate や runs が無ければ None を返す
+    （呼び出し側で従来通りの空欄扱いにするため）。
+    """
+    if raw_rate is None or not runs or runs <= 0:
+        return None
+    trust = _smooth_personal_trust(runs, full_runs=full_runs)
+    if pop_avg is None:
+        return raw_rate  # 会場平均が取れない場合は個人値をそのまま使う（従来通り）
+    return raw_rate * trust + pop_avg * (1.0 - trust)
+
+
 def calc_prob_from_master(
     boats: list,
     venue: str,
@@ -925,9 +983,28 @@ def calc_prob_from_master(
         vc = venue_course_master.get(name, {}).get(venue, {}).get(c)
         cm = _get_course_entry(name, c)
 
-        venue_rate    = (vc.get("ts_win_rate") or vc.get("win_rate")) if vc and vc.get("reliable") else None
-        national_rate = (cm.get("ts_win_rate") or cm.get("win_rate")) if cm and cm.get("reliable") else None
-        venue_trust   = vc.get("trust", 0.0) if vc else 0.0
+        # ── [2026-07-20 変更] 母集団平均（会場のそのコース平均）を先に確保 ──
+        # reliable=False の個人データも、ここに向かって連続的に縮小する。
+        pop_avg = race_course_rates.get(c)
+        if pop_avg is None:
+            pop_avg = venue_course_rates.get(c)
+
+        cm_runs = (cm.get("runs") if cm else None) or 0
+        vc_runs = (vc.get("runs") if vc else None) or 0
+        cm_raw  = (cm.get("ts_win_rate") or cm.get("win_rate")) if cm else None
+        vc_raw  = (vc.get("ts_win_rate") or vc.get("win_rate")) if vc else None
+
+        # 信頼度に応じたフル反映ライン（全国=course_master_min_runs, 会場=venue_course_min_runs）
+        national_full_runs = MASTER.get("course_master_min_runs", 20) or 20
+        venue_full_runs     = MASTER.get("venue_course_min_runs", 20) or 20
+
+        # ── [2026-07-20 変更] reliable(0/1)の二択ではなく、runsに応じて
+        #    個人データを母集団平均へ連続的に縮小してから採用する。
+        #    runs=0（本当にデータ無し）なら _shrink_to_pop は None を返し、
+        #    従来通り下の venue_stat / insufficient フォールバックに委ねる。
+        national_rate = _shrink_to_pop(cm_raw, cm_runs, pop_avg, full_runs=national_full_runs)
+        venue_rate    = _shrink_to_pop(vc_raw, vc_runs, pop_avg, full_runs=venue_full_runs)
+        venue_trust   = _smooth_personal_trust(vc_runs, full_runs=venue_full_runs)
 
         if venue_rate is not None and national_rate is not None:
             base_rate = venue_rate * venue_trust + national_rate * (1.0 - venue_trust)
@@ -939,13 +1016,13 @@ def calc_prob_from_master(
             base_rate = national_rate
             dq = "course_national"
 
-        has_personal_data = (
-            (cm is not None and cm.get("reliable", False))
-            or (vc is not None and vc.get("reliable", False))
-        )
+        # [2026-07-20 変更] 「個人データあり」の基準を reliable フラグ(20走等)から
+        # _SHRINK_MIN_RUNS(3走)に緩和。3走未満（＝shrink処理でも trust=0 のまま
+        # 母集団平均のみになるケース）だけを「実質データなし」として警告対象にする。
+        has_personal_data = (cm_runs >= _SHRINK_MIN_RUNS) or (vc_runs >= _SHRINK_MIN_RUNS)
 
         if base_rate is None:
-            rv = race_course_rates.get(c) or venue_course_rates.get(c)
+            rv = pop_avg
             if rv is not None:
                 base_rate = rv
                 dq = "venue_stat"
