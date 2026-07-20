@@ -4493,7 +4493,8 @@ function updatePersistentBanners(rno){
       // 浮動小数点誤差対策: 小数第2位で丸めてから比較
       const tenjiDiff = (myT != null && prT != null) ? Math.round((prT - myT) * 100) / 100 : null;
       const leadOk = tenjiDiff != null ? (tenjiDiff >= 0.1) : false;
-      if(leadOk) slitLeadBoatsBan.push(bn);
+      // スリットALが出た艇はスリットリードには重複表示しない
+      if(leadOk && !makuriBoatsBan.includes(bn)) slitLeadBoatsBan.push(bn);
     }
     if(slitLeadBoatsBan.length > 0){
       const slitLeadCircles = slitLeadBoatsBan.map(bn =>
