@@ -230,8 +230,16 @@ def recalc_day(date_str: str, dry_run: bool) -> dict:
 
     if dry_run:
         if out_path.exists():
-            with open(out_path, encoding="utf-8") as f:
-                old_data = json.load(f)
+            # [2026-07-21 修正] 既存JSONが空/壊れている場合に json.load が例外を
+            # 投げて全体が停止していたバグを修正。壊れたファイルは警告を出して
+            # スキップし、他の日付の処理は継続する（本番書き込みには影響しない箇所）。
+            try:
+                with open(out_path, encoding="utf-8") as f:
+                    old_data = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                log(f"  [WARN] {out_path.name} の読み込みに失敗（壊れている/空の可能性）: {e}")
+                log(f"  [WARN] {out_path.name} は差分比較をスキップします（新規データとして扱われます）")
+                old_data = {}
             for venue, vdata in day_data.items():
                 old_vdata = old_data.get(venue, {})
                 for rno_str, rd in vdata.get("races", {}).items():
