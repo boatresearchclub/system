@@ -959,15 +959,21 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
   const boatCircleS = n =>
     `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:10px;font-weight:700;background:var(--boat${n}-bg,#333);color:var(--boat${n}-fg,#fff)">${n}</span>`;
 
-  // 軸候補: 実測会場のみ、タイム差(__diff_)が+0.40秒以上の艇（複数可）
-  if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
+  // 軸候補: 展示補正込みの3連対率（年間実績＋当日展示デルタ）が80%以上の艇（複数可）
+  //   「切」候補と同じ算出方法（base3r + __p3r_ デルタ）で判定する。
+  {
     const pivotBoats = [];
     ranked2.forEach(b => {
-      const diff = tenjiScoreMap[`__diff_${b.boat}`];
-      if (diff == null) return;
-      if (diff >= 0.40) pivotBoats.push({ boat: b.boat, diff });
+      const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
+      if (base3r == null) return; // 実績データが無い艇は比較対象外
+      let adj = base3r;
+      if (hasTenji && tenjiScoreMap && tenjiScoreMap.__isSuminoe) {
+        const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
+        adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
+      }
+      if (adj >= 0.80) pivotBoats.push({ boat: b.boat, adj });
     });
-    pivotBoats.sort((a, b) => b.diff - a.diff);
+    pivotBoats.sort((a, b) => b.adj - a.adj);
     if (pivotBoats.length > 0) {
       const circles = pivotBoats.map(x => boatCircleS(x.boat)).join('');
       suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(0,184,107,.13);color:var(--green);">軸${circles}</span>`;
