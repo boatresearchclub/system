@@ -4355,7 +4355,7 @@ function buildRaceBar(){
   Object.entries(DATA.races).sort((a,b)=>+a[0]-+b[0]).forEach(([rno,rd])=>{
     const btn = document.createElement('button');
     const past = isRacePast(rd.time);
-    const hasInsuf = rd.boats && rd.boats.some(b=>b.dq==='insufficient');
+    const hasInsuf = rd.boats && rd.boats.some(b=>b.dq==='insufficient' || b.dq_recent10==='insufficient');
     const kindLabel = getRaceKindLabel(rno, rd);
     btn.className = 'race-btn' + (parseInt(rno)===selectedRace?' active':'') + (past?' past':'');
     btn.id = `rc-${rno}`;
@@ -4423,6 +4423,24 @@ function updatePersistentBanners(rno){
         <span style="font-weight:700;flex-shrink:0">データ不足</span>
         <span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap">${circles}</span>
         <span style="font-size:10px;color:var(--text3);flex-shrink:0">展開分析精度低下</span>
+      </div>`;
+  }
+
+  // ── 直近10走データ不足バナー ──
+  // [2026-07-21 追加] コース別「直近10走」が10走に満たない選手は、その分だけ
+  // 基準1着率が機械的に下振れする仕様（合意済み）。既存の「データ不足」バナー
+  // とは原因が別（全国/会場実績の薄さ vs そのコースでの直近実戦経験の浅さ）
+  // なので、別枠のバナーとして表示する。
+  const recent10InsuffBoats = boats.filter(bt => bt.dq_recent10 === 'insufficient' && bt.dq !== 'insufficient');
+  if(recent10InsuffBoats.length > 0){
+    const circles2 = recent10InsuffBoats.map(bt =>
+      `<span class="boat-circle b${bt.boat}" style="width:20px;height:20px;font-size:10px;line-height:20px;display:inline-flex;align-items:center;justify-content:center">${bt.boat}</span>`
+    ).join('');
+    html += `<div class="insufficient-banner" style="background:rgba(255,159,10,0.07);border-color:rgba(255,159,10,0.25);color:#000">
+        <span style="font-size:13px;flex-shrink:0">🕐</span>
+        <span style="font-weight:700;flex-shrink:0">直近10走データ不足</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap">${circles2}</span>
+        <span style="font-size:10px;color:var(--text3);flex-shrink:0">当該コース経験浅・基準1着率下振れの可能性</span>
       </div>`;
   }
 

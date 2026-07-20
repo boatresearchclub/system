@@ -883,6 +883,12 @@ def _apply_venue_band3040_bias(boats: list, venue: str) -> list:
 _SHRINK_MIN_RUNS = 3   # これ未満は trust=0.0（会場平均のみ）
 _SHRINK_AT_MIN_TRUST = 0.0
 
+# [2026-07-21] 【非推奨】以下の _smooth_personal_trust / _shrink_to_pop は
+# calc_prob_from_master() が固定比率ブレンド(全国50/会場30/直近10走20)に
+# 変更されたことに伴い、現在は呼び出されていない（デッドコード）。
+# 「個人データあり」判定の _SHRINK_MIN_RUNS 定数のみ引き続き使用中。
+# 将来動的trustブレンドに戻す可能性を考慮し、関数自体は残置する。
+
 
 def _smooth_personal_trust(runs, min_runs: int = _SHRINK_MIN_RUNS, full_runs: int = 20) -> float:
     """出走数(runs) → 信頼度(0.0〜1.0) を対数補間で算出する。
@@ -983,56 +989,62 @@ def calc_prob_from_master(
         vc = venue_course_master.get(name, {}).get(venue, {}).get(c)
         cm = _get_course_entry(name, c)
 
-        # ── [2026-07-20 変更] 母集団平均（会場のそのコース平均）を先に確保 ──
-        # reliable=False の個人データも、ここに向かって連続的に縮小する。
+        # ── 母集団平均（会場のそのコース平均）を先に確保 ──
+        # 個人データが全く無い場合の最終フォールバックに使う。
         pop_avg = race_course_rates.get(c)
         if pop_avg is None:
             pop_avg = venue_course_rates.get(c)
 
         cm_runs = (cm.get("runs") if cm else None) or 0
         vc_runs = (vc.get("runs") if vc else None) or 0
-        cm_raw  = (cm.get("ts_win_rate") or cm.get("win_rate")) if cm else None
-        vc_raw  = (vc.get("ts_win_rate") or vc.get("win_rate")) if vc else None
 
-        # 信頼度に応じたフル反映ライン（全国=course_master_min_runs, 会場=venue_course_min_runs）
-        national_full_runs = MASTER.get("course_master_min_runs", 20) or 20
-        venue_full_runs     = MASTER.get("venue_course_min_runs", 20) or 20
+        # [2026-07-21 変更] 「基準1着率」第1層を固定比率の3元ブレンドに変更。
+        #   全国50% + 会場30% + 直近10走(コース別)20%
+        # 全国・会場は ts_win_rate（半減期90日の時系列補正）ではなく win_rate（素の値）
+        # を使う。直近性は直近10走成分が専任で担い、二重反映を避けるため。
+        # 【背景】従来はvenue_trust（会場出走数ベースの対数信頼度）で全国/会場を
+        #   連続的に動的ブレンドしていたが、直近10走成分の追加に伴い設計をシンプル化し、
+        #   固定比率に統一した（動的trustロジックは廃止）。
+        cm_raw = cm.get("win_rate") if cm else None
+        vc_raw = vc.get("win_rate") if vc else None
 
-        # ── [2026-07-20 変更] reliable(0/1)の二択ではなく、runsに応じて
-        #    個人データを母集団平均へ連続的に縮小してから採用する。
-        #    runs=0（本当にデータ無し）なら _shrink_to_pop は None を返し、
-        #    従来通り下の venue_stat / insufficient フォールバックに委ねる。
-        national_rate = _shrink_to_pop(cm_raw, cm_runs, pop_avg, full_runs=national_full_runs)
-        venue_rate    = _shrink_to_pop(vc_raw, vc_runs, pop_avg, full_runs=venue_full_runs)
-        venue_trust   = _smooth_personal_trust(vc_runs, full_runs=venue_full_runs)
+        # 直近10走（コース別）。走数が10未満（そのコースをまだ10走していない）
+        # の場合は「データ不足」として0扱いにする（合意済み仕様）。
+        # 新人・移籍直後などデータ不足の選手は、この分だけ基準1着率が
+        # 機械的に下振れするが、UI側の「データ不足」バナーで警告を出すため許容する。
+        r10_raw  = cm.get("recent10_win") if cm else None
+        r10_runs = cm.get("recent10_runs") if cm else None
+        recent10_insufficient = not (r10_runs is not None and r10_runs >= 10 and r10_raw is not None)
+        recent10_rate = 0.0 if recent10_insufficient else r10_raw
 
-        if venue_rate is not None and national_rate is not None:
-            base_rate = venue_rate * venue_trust + national_rate * (1.0 - venue_trust)
+        if cm_raw is not None and vc_raw is not None:
+            base_rate = cm_raw * 0.5 + vc_raw * 0.3 + recent10_rate * 0.2
             dq = "venue_local"
-        elif venue_rate is not None:
-            base_rate = venue_rate
+        elif vc_raw is not None:
+            # 全国データなし: 会場成分のみで長期分(0.5+0.3=0.8相当)を代用
+            base_rate = vc_raw * 0.8 + recent10_rate * 0.2
             dq = "venue_local"
-        elif national_rate is not None:
-            base_rate = national_rate
+        elif cm_raw is not None:
+            # 会場データなし: 全国成分のみで長期分(0.8相当)を代用
+            base_rate = cm_raw * 0.8 + recent10_rate * 0.2
             dq = "course_national"
+        else:
+            base_rate = None
 
-        # [2026-07-20 変更] 「個人データあり」の基準を reliable フラグ(20走等)から
-        # _SHRINK_MIN_RUNS(3走)に緩和。3走未満（＝shrink処理でも trust=0 のまま
-        # 母集団平均のみになるケース）だけを「実質データなし」として警告対象にする。
+        # 「個人データあり」の基準: 全国/会場いずれかに _SHRINK_MIN_RUNS(3走)以上の
+        # 実績があるか。無ければ「実質データなし」として警告対象にする。
         has_personal_data = (cm_runs >= _SHRINK_MIN_RUNS) or (vc_runs >= _SHRINK_MIN_RUNS)
 
         if base_rate is None:
             rv = pop_avg
             if rv is not None:
-                base_rate = rv
+                base_rate = rv * 0.8 + recent10_rate * 0.2
                 dq = "venue_stat"
         if base_rate is None:
-            fallback_rate = None
-            if vc:
-                fallback_rate = vc.get("ts_win_rate") or vc.get("win_rate")
+            fallback_rate = vc.get("win_rate") if vc else None
             if fallback_rate is None and cm:
-                fallback_rate = cm.get("ts_win_rate") or cm.get("win_rate")
-            base_rate = fallback_rate if fallback_rate is not None else 0.001
+                fallback_rate = cm.get("win_rate")
+            base_rate = (fallback_rate * 0.8 + recent10_rate * 0.2) if fallback_rate is not None else 0.001
             dq = "insufficient"
             has_insufficient = True
 
@@ -1090,7 +1102,12 @@ def calc_prob_from_master(
         scores.append(odds * combined)
         dq_list.append(dq)
 
-        raw_win_rate = (cm.get("ts_win_rate") or cm.get("win_rate")) if cm else None
+        # [2026-07-21 追加] 直近10走(コース別)データ不足フラグ。
+        # 既存dqとは別枠で持つ（dqの既存分岐ロジックへの影響を避けるため）。
+        # renderer.js側の「データ不足」バナーはこのフラグも見て警告表示する。
+        bt["dq_recent10"] = "insufficient" if recent10_insufficient else None
+
+        raw_win_rate = cm.get("win_rate") if cm else None
         base_rates.append(raw_win_rate)
 
     total = sum(scores) or 1.0
