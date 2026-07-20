@@ -411,6 +411,23 @@ table:not(.tenji-table):not(.prob-table) tr:last-child td {
 }
 .sim-resim-btn:hover { background:#1a7dff; }
 
+.sim-mc-section h4 {
+  font-size:10px; font-weight:700; letter-spacing:.12em;
+  color:#515f7a; text-transform:uppercase;
+}
+.sim-mc-table {
+  width:100%; border-collapse:collapse; margin:4px 0 2px;
+  font-size:11px; color:#28324a;
+}
+.sim-mc-table th {
+  background:#f2f5fa; font-weight:700; color:#515f7a;
+  padding:5px 4px; text-align:center; font-size:10px;
+}
+.sim-mc-table td {
+  padding:5px 4px; text-align:center;
+  border-top:1px solid rgba(0,40,90,0.08);
+}
+
 /* DATE NAVIGATOR */
 .date-nav { display: flex; align-items: center; gap: 3px; }
 .date-nav-btn { width: 20px; height: 20px; border-radius: 50%; background: var(--bg3); color: var(--accent); border: 1px solid var(--border2); font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s; padding: 0; line-height: 1; flex-shrink: 0; }

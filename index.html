@@ -971,6 +971,19 @@
       <div id="sim-patterns-list"></div>
     </div>
     <button class="sim-resim-btn" id="sim-resim-btn">🔄 再シミュレート</button>
+
+    <div class="sim-mc-section admin-only" style="margin-top:14px;border-top:1px solid rgba(0,0,0,.08);padding-top:10px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <h4 style="margin:0">🎲 モンテカルロ集計シミュレーション</h4>
+        <select id="sim-mc-trials" style="font-size:12px;padding:2px 4px">
+          <option value="100" selected>100回</option>
+          <option value="300">300回</option>
+          <option value="1000">1000回</option>
+        </select>
+        <button class="sim-resim-btn" id="sim-mc-btn" style="margin:0">▶ 実行</button>
+      </div>
+      <div id="sim-mc-panel" style="margin-top:6px"></div>
+    </div>
   </div>
 </div>
 
