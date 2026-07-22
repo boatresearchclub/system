@@ -839,7 +839,7 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
   // [2026-07-19 追加] 2着/3着の行群を生成する共通ヘルパー。
   // 元の p2Lines 生成ロジックをそのまま関数化しただけで、見た目・計算式は変更なし。
   function renderP2Lines(place2List, thirdMapForBoat){
-    const top4Place = place2List.slice(0, 4);
+    const top4Place = place2List.slice(0, 5);
     return top4Place.map(item => {
       const third3     = thirdMapForBoat?.[item.boat] || [];
       const third3html = third3.map(t3 => {
