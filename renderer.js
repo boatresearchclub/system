@@ -980,11 +980,13 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
     }
   }
 
-  // 切り候補: 展示補正後3連対率（年間実績＋当日展示デルタ）を6艇比較して最も低い1艇を表示。
-  //   相対比較のみで、閾値条件は無し。実測会場でなくても年間実績だけで比較できれば表示する。
+  // 切り候補: 展示補正後3連対率（年間実績＋当日展示デルタ）が10%を下回る艇を表示。
+  //   [2026-07-22 変更] 「展開分析タブ」の3連対率セルと同じ基準（10%未満）に統一。
+  //   旧仕様は閾値なしで最も低い1艇を機械的に表示していたため、10%を切っていない艇でも
+  //   「切」表示されてしまう不具合があった。0艇／複数艇どちらも起こり得る。
   {
-    let minVal = Infinity;
-    let cutBoat = null;
+    const CUT_THRESHOLD_P3R = 0.10;
+    const cutBoats = [];
     ranked2.forEach(b => {
       const base3r = getCourseMaster(b.name, String(b.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[b.name]?.annual_place3;
       if (base3r == null) return; // 実績データが無い艇は比較対象外
@@ -993,10 +995,11 @@ function buildScenarioSection(ranked2, place2Map, rawBoats, tenjiScoreMap, hasTe
         const deltaPt = tenjiScoreMap[`__p3r_${b.boat}`] ?? 0;
         adj = Math.max(0, Math.min(1, base3r + deltaPt / 100));
       }
-      if (adj < minVal) { minVal = adj; cutBoat = b.boat; }
+      if (adj < CUT_THRESHOLD_P3R) cutBoats.push(b.boat);
     });
-    if (cutBoat != null) {
-      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${boatCircleS(cutBoat)}</span>`;
+    if (cutBoats.length > 0) {
+      const circles = cutBoats.map(n => boatCircleS(n)).join('');
+      suminoePivotBadges += `<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;padding:2px 8px 2px 6px;border-radius:4px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切${circles}</span>`;
     }
   }
 
