@@ -2349,13 +2349,15 @@ function renderBuy(rno){
   // [2026-07-19修正] 展示情報取得前（!hasTenji）は最終確率テーブル自体が
   // 「－」表示で信頼できない値として隠されているのに、タブ強調表示だけ
   // hasTenjiを見ておらず生の final_prob で判定してしまっていたのを修正。
-  const _boat1ForIT = ranked2.find(b => b.boat === 1);
-  const _isInTepCond = hasTenji && _boat1ForIT && (_boat1ForIT.final_prob ?? 0) >= 0.75;
+  // [2026-07-22修正] 判定を _calcInTepCond() に統一（基準70%以上 または 最終75%以上）。
+  const _inTepRaw = _calcInTepCond(ranked2);
+  const _isInTepCond = hasTenji && _inTepRaw.condMet;
 
-  // イン否定条件（タブの強調表示判定）【改修: σ基準ユーティリティを使用】
+  // イン否定条件（タブの強調表示判定）
+  // [2026-07-22修正] σ基準は廃止。_calcInNegCond() に統一
+  // （基準確率 または 最終確率のいずれかが場平均より固定10%pt以上低ければ成立）。
   const _inNegRaw = _calcInNegCond(ranked2);
   const _isInNegCond  = hasTenji && _inNegRaw.condMet;
-  const _inNegUsingStd = _inNegRaw.usingStd;
 
   // ── タブUI ──
   const modeTabs = `
@@ -2372,14 +2374,14 @@ function renderBuy(rno){
                border-bottom:2px solid transparent;color:${_isInTepCond?'#4da8ff':'var(--text3)'};font-family:'Noto Sans JP',sans-serif;
                display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.2;">
         <span>🔒 イン鉄板</span>
-        <span style="font-size:9px;font-weight:400;color:var(--text3);">${_isInTepCond?'条件成立':'75%未満'}</span>
+        <span style="font-size:9px;font-weight:400;color:var(--text3);">${_isInTepCond?'条件成立':'基準70%/最終75%未満'}</span>
       </button>
       <button id="buy-tab-inneg" onclick="switchBuyMode('inneg')"
         style="flex:1;padding:8px 2px 6px;font-size:11px;font-weight:500;border:none;background:none;cursor:pointer;
                border-bottom:2px solid transparent;color:${_isInNegCond?'var(--orange)':'var(--text3)'};font-family:'Noto Sans JP',sans-serif;
                display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.2;">
         <span>⚡ イン否定</span>
-        <span style="font-size:9px;font-weight:400;color:var(--text3);">${_isInNegCond?'条件成立':(_inNegUsingStd?`場平均-${IN_NEG_N_SIGMA}σ未満`:'場平均-10%未満')}</span>
+        <span style="font-size:9px;font-weight:400;color:var(--text3);">${_isInNegCond?'条件成立':'場平均-10%未満'}</span>
       </button>
       <button id="buy-tab-hit" onclick="switchBuyMode('hit')"
         style="flex:1;padding:8px 2px 6px;font-size:11px;font-weight:500;border:none;background:none;cursor:pointer;
@@ -2613,18 +2615,19 @@ function switchBuyMode(mode){
 //   被り目は除外
 function buildInTepBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo){
   const boat1 = ranked2.find(b => b.boat === 1);
-  const fp1   = boat1?.final_prob ?? 0;
+  const { condMet, condDesc } = _calcInTepCond(ranked2);
 
-  // イン鉄板条件チェック
-  if(!boat1 || fp1 < 0.75){
+  // イン鉄板条件チェック（基準確率70%以上 または 最終確率75%以上）
+  if(!boat1 || !condMet){
     return `<div id="buy-mode-intep" style="display:none">
       <div style="padding:16px 12px;color:var(--text3);font-size:12px;line-height:1.7">
         <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:6px">🔒 イン鉄板</div>
-        <div>1号艇の最終確率が <strong>75%以上</strong> のとき表示されます。</div>
-        <div style="margin-top:4px;color:var(--text3);font-size:11px">現在: ${boat1 ? (fp1*100).toFixed(1)+'%' : 'データなし'}</div>
+        <div>1号艇の<strong>基準確率が70%以上</strong>、または<strong>最終確率が75%以上</strong>のとき表示されます。</div>
+        <div style="margin-top:4px;color:var(--text3);font-size:11px">現在: ${condDesc}</div>
       </div>
     </div>`;
   }
+
 
   const { scenarioProb, scenarioPlace2, merged3rdMap } = sd || {};
 
@@ -2796,26 +2799,24 @@ function buildInTepBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges
     </div>`;
 }
 
-// ── イン否定: σ基準の閾値ユーティリティ ──────────────────────────────────
+// ── イン否定 / イン鉄板: 条件判定ユーティリティ ─────────────────────────
 //
-// 【改修】固定10%pt → 会場別σ(標準偏差)基準に変更
+// [2026-07-22 改修] σ基準の条件式を廃止し、以下のシンプルな4条件に統一した。
+// TOPページのピックアップカード（top_page.js）・展開分析タブの強調表示・
+// 各買い目パネルは、すべてこの2関数だけを共通で参照する（重複実装の禁止）。
 //
-// 判定ロジック:
-//   ① MASTER_EXT.venue_stats[venue].course1_std が存在する場合
-//      → 閾値 = μ(venue_avg1) - N_SIGMA × σ  (N_SIGMA = 1.0)
-//   ② σデータなし（旧JSON互換フォールバック）
-//      → 閾値 = μ - FALLBACK_PT (固定 10%pt) ← 以前の挙動を維持
-//
-// Python側でσを追加するまでは②で動作し、追加後は即①に切り替わる。
+//   イン鉄板: 1号艇の基準確率(display_base)が70%以上 または 最終確率(final_prob)が75%以上
+//   イン否定: 1号艇の基準確率が場平均より10%pt以上低い または 最終確率が場平均より10%pt以上低い
 //
 // 戻り値:
-//   { condMet, venueAvg1, fp1, sigma, threshold, usingStd, condDesc }
+//   _calcInNegCond → { condMet, baseCondMet, finalCondMet, venueAvg1, base1, fp1, threshold, condDesc }
+//   _calcInTepCond → { condMet, baseCondMet, finalCondMet, base1, fp1, condDesc }
 // ─────────────────────────────────────────────────────────────────────────
-const IN_NEG_N_SIGMA    = 1.0;   // σの倍率（1.0σ ≈ 会場ごとの「1標準偏差下」）
-const IN_NEG_FALLBACK_PT = 0.10; // σデータがないときの固定マージン（10%pt）
+const IN_NEG_MARGIN_PT   = 0.10; // 場平均を下回る固定マージン（10%pt）
+const IN_TETSU_BASE_TH   = 0.70; // 基準確率の閾値
+const IN_TETSU_FINAL_TH  = 0.75; // 最終確率の閾値
 
 function _calcInNegCond(ranked2, venueOverride, vdataOverride) {
-  const _venue    = venueOverride ?? DATA.venue ?? null;
   // [2026-07-19修正] venueOverride指定時（例: top_page.jsの複数会場ループ）は
   // 開いているレースが無く DATA が null のことがあるため、渡された vdataOverride
   // （会場ごとのデータ）を優先する。未指定時は従来通りグローバル DATA を使う。
@@ -2823,55 +2824,61 @@ function _calcInNegCond(ranked2, venueOverride, vdataOverride) {
   const cRates    = innData.course_rates || [];
   const venueAvg1 = cRates[1] ?? null;
   const boat1     = ranked2.find(b => b.boat === 1);
-  const fp1       = boat1?.final_prob ?? null;
+  const fp1       = boat1?.final_prob   ?? null;
+  const base1     = boat1?.display_base ?? null;
 
-  // σ取得: MASTER_EXT.venue_stats[venue].course1_std（小数表現, 例: 0.08）
-  const sigma_raw  = MASTER_EXT?.venue_stats?.[_venue]?.course1_std ?? null;
-  const sigma      = (sigma_raw !== null && isFinite(sigma_raw) && sigma_raw > 0) ? sigma_raw : null;
-  const usingStd   = sigma !== null;
-  const margin     = usingStd ? (IN_NEG_N_SIGMA * sigma) : IN_NEG_FALLBACK_PT;
-  const threshold  = (venueAvg1 !== null) ? venueAvg1 - margin : null;
+  const threshold = (venueAvg1 !== null) ? venueAvg1 - IN_NEG_MARGIN_PT : null;
 
-  const condMet = (threshold !== null && fp1 !== null)
-    ? fp1 <= threshold
-    : false;
+  const baseCondMet  = (threshold !== null && base1 !== null) ? base1 <= threshold : false;
+  const finalCondMet = (threshold !== null && fp1   !== null) ? fp1   <= threshold : false;
+  const condMet = baseCondMet || finalCondMet;
 
   // 表示用説明文
   let condDesc;
   if (venueAvg1 === null) {
     condDesc = '場平均データなし';
-  } else if (usingStd) {
-    condDesc = `1号艇 ${fp1 != null ? (fp1*100).toFixed(1)+'%' : '?'} ／ 場平均 ${(venueAvg1*100).toFixed(1)}%`
-      + ` σ=${(sigma*100).toFixed(1)}%pt`
-      + `（閾値: 場平均-${IN_NEG_N_SIGMA}σ = ${(threshold*100).toFixed(1)}%）`;
   } else {
-    condDesc = `1号艇 ${fp1 != null ? (fp1*100).toFixed(1)+'%' : '?'} ／ 場平均 ${(venueAvg1*100).toFixed(1)}%`
-      + `（差: ${fp1 != null ? ((fp1 - venueAvg1)*100).toFixed(1) : '?'}%pt`
-      + ` ／ σデータなし・固定${(IN_NEG_FALLBACK_PT*100).toFixed(0)}%pt閾値）`;
+    condDesc = `基準 ${base1 != null ? (base1*100).toFixed(1)+'%' : '?'}`
+      + ` ／ 最終 ${fp1 != null ? (fp1*100).toFixed(1)+'%' : '?'}`
+      + ` ／ 場平均 ${(venueAvg1*100).toFixed(1)}%`
+      + `（閾値: 場平均-${(IN_NEG_MARGIN_PT*100).toFixed(0)}%pt = ${(threshold*100).toFixed(1)}%）`;
   }
 
-  return { condMet, venueAvg1, fp1, sigma, threshold, usingStd, condDesc };
+  return { condMet, baseCondMet, finalCondMet, venueAvg1, base1, fp1, threshold, condDesc };
+}
+
+function _calcInTepCond(ranked2) {
+  const boat1 = ranked2.find(b => b.boat === 1);
+  const fp1   = boat1?.final_prob   ?? null;
+  const base1 = boat1?.display_base ?? null;
+
+  const baseCondMet  = base1 !== null && base1 >= IN_TETSU_BASE_TH;
+  const finalCondMet = fp1   !== null && fp1   >= IN_TETSU_FINAL_TH;
+  const condMet = baseCondMet || finalCondMet;
+
+  const condDesc = `基準 ${base1 != null ? (base1*100).toFixed(1)+'%' : '?'}`
+    + ` ／ 最終 ${fp1 != null ? (fp1*100).toFixed(1)+'%' : '?'}`
+    + `（条件: 基準${(IN_TETSU_BASE_TH*100).toFixed(0)}%以上 または 最終${(IN_TETSU_FINAL_TH*100).toFixed(0)}%以上）`;
+
+  return { condMet, baseCondMet, finalCondMet, base1, fp1, condDesc };
 }
 
 // ── イン否定買い目パネル生成 ──
-// 【改修】条件: 1号艇 final_prob が 場平均 - N×σ 以下（σあり）
-//         または 場平均 - 10%pt 以下（σなし・フォールバック）
+// 条件: 1号艇の基準確率 または 最終確率 のいずれかが場平均より10%pt以上低い場合
 // 買い目:
 //   軸A・軸B = 1号艇以外の final_prob 上位2艇
 //   各軸に対して:
 //     ◯-2着上位2艇-3着上位3艇（折り返し含む）各6点 × 2軸 = 計24点 → 被り目除去
 function buildInNegBuyPanel(ranked2, sd, resultSan3, raceOdds3tEv, comboToBadges, normalizeCombo){
 
-  // ── 条件チェック（σ基準ユーティリティを使用）──
-  const {
-    condMet, venueAvg1, fp1: fp1_neg, sigma, threshold, usingStd, condDesc
-  } = _calcInNegCond(ranked2);
+  // ── 条件チェック（基準確率 または 最終確率 のいずれかが場平均-10%pt以下）──
+  const { condMet, condDesc } = _calcInNegCond(ranked2);
 
   if(!condMet){
     return `<div id="buy-mode-inneg" style="display:none">
       <div style="padding:16px 12px;color:var(--text3);font-size:12px;line-height:1.8">
         <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:6px">⚡ イン否定</div>
-        <div>1号艇の最終確率が <strong>${usingStd ? `場平均-${IN_NEG_N_SIGMA}σ以下` : `場平均より${(IN_NEG_FALLBACK_PT*100).toFixed(0)}%pt以上低い`}</strong> とき表示されます。</div>
+        <div>1号艇の<strong>基準確率</strong>または<strong>最終確率</strong>が<strong>場平均より10%pt以上低い</strong>とき表示されます。</div>
         <div style="margin-top:6px;font-size:11px;color:var(--text3)">${condDesc}</div>
       </div>
     </div>`;
