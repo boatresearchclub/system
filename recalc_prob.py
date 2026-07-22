@@ -38,8 +38,14 @@ HISTORY_KEEP_DAYS = 30
 # ── prob_scenario_engine を import（修正済みファイルが同フォルダにある前提）
 sys.path.insert(0, str(SCRIPTS_DIR))
 from prob_scenario_engine import (
-    calc_prob_from_master, normalize_name, resolve_player_name, MASTER
+    calc_prob_from_master, normalize_name, resolve_player_name, MASTER,
 )
+# [2026-07-22 追加] --auto（自動再計算）用。prob_scenario_engine.py が
+# LOGIC_VERSION未対応の古い版でも --auto 以外は動くようフォールバックする。
+try:
+    from prob_scenario_engine import LOGIC_VERSION as CURRENT_LOGIC_VERSION
+except ImportError:
+    CURRENT_LOGIC_VERSION = None
 
 # ────────────────────────────────────────────────────────────────────
 def log(msg):
@@ -194,6 +200,55 @@ def parse_csv(filepath):
 # 再計算メイン処理
 # ────────────────────────────────────────────────────────────────────
 
+def _extract_date_from_filename(fname: str) -> str | None:
+    """'today_20260722.json' / 'history_20260720.json' → '2026-07-22'"""
+    m = re.match(r"(?:today|history)_(\d{8})\.json$", fname)
+    if not m:
+        return None
+    nd = m.group(1)
+    return f"{nd[0:4]}-{nd[4:6]}-{nd[6:8]}"
+
+
+def _peek_logic_version(path: Path):
+    """
+    ファイルの中身をざっと覗いて、埋め込まれた _logic_version を1つ拾う。
+    全boatを舐めるとコストが高いので、最初に見つかったレースの
+    最初のboatだけ見る（同一ファイル内は同時に生成されるため代表値でよい）。
+
+    戻り値:
+        文字列（バージョン）/ None（フィールドなし=旧ロジック）/
+        "__unreadable__"（JSONとして読めない壊れたファイル）
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return "__unreadable__"
+    for _venue, vdata in data.items():
+        for _rno, rd in vdata.get("races", {}).items():
+            for bt in rd.get("boats", []):
+                return bt.get("_logic_version")
+        break
+    return None
+
+
+def find_stale_files() -> list:
+    """
+    LOGIC_VERSIONが現在と異なる（または埋め込まれていない=旧ロジック）
+    today_/history_ JSONを data/ 配下から全て洗い出す。
+    壊れて読めないファイルは対象外とする（実害はrecalc_day側で新規
+    CSVから上書きされるため無いが、ここでは検知対象を明確にする）。
+    """
+    stale = []
+    for path in sorted(DATA_DIR.glob("today_*.json")) + sorted(DATA_DIR.glob("history_*.json")):
+        v = _peek_logic_version(path)
+        if v == "__unreadable__":
+            continue
+        if v != CURRENT_LOGIC_VERSION:
+            stale.append(path)
+    return stale
+
+
 def recalc_day(date_str: str, dry_run: bool) -> dict:
     """
     指定日付のCSVをすべて再パースして history_YYYYMMDD.json / today_YYYYMMDD.json を上書き。
@@ -280,6 +335,11 @@ def main():
                         help=f"直近N日分のみ処理（デフォルト: {HISTORY_KEEP_DAYS}日）")
     parser.add_argument("--dry-run", action="store_true",
                         help="書き込まずに差分表示のみ")
+    parser.add_argument("--auto",    action="store_true",
+                        help="LOGIC_VERSIONが古い/未設定のファイルだけ自動検出して再計算"
+                             "（--days は無視され、data/ 配下を全走査する）")
+    parser.add_argument("--today",   action="store_true",
+                        help="当日分のみ再計算（--days/--autoより優先）")
     args = parser.parse_args()
 
     log(f"DATA_DIR = {DATA_DIR}")
@@ -292,6 +352,70 @@ def main():
     if not CSV_DIR.exists():
         log(f"ERROR: CSV_DIR が存在しません: {CSV_DIR}")
         sys.exit(1)
+
+    if args.today:
+        # ── 当日のみ再計算 ──────────────────────────────────────────
+        # ロジック変更直後にまず当日分の少量データだけ素早く再計算し、
+        # アプリで目視確認するためのショートカット。
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        log(f"当日({date_str})のみ再計算します...")
+        result = recalc_day(date_str, dry_run=args.dry_run)
+        if result["venues"] == 0:
+            log(f"  {date_str}: {result.get('reason','')}")
+        else:
+            status = "書き込み済み" if result["written"] else f"スキップ({result.get('reason','')})"
+            log(f"  {date_str}: {result['venues']}会場 → {status}")
+        log("─" * 50)
+        if not args.dry_run and result["venues"] > 0 and result["written"]:
+            log("※ 元ファイルは .bak として保存済み")
+        return
+
+    if args.auto:
+        # ── 自動検知モード ──────────────────────────────────────────
+        # prob_scenario_engine.py の LOGIC_VERSION と各JSONに埋め込まれた
+        # _logic_version を比較し、古い（または未設定=旧ロジック）ファイル
+        # だけを自動的に再計算する。ロジックを変更した直後にこれを実行すれば、
+        # 「どの日付を再計算すべきか」を自分で判断する必要がなくなる。
+        if CURRENT_LOGIC_VERSION is None:
+            log("ERROR: prob_scenario_engine.py に LOGIC_VERSION がありません。")
+            log("       先に prob_scenario_engine.py を最新版に更新してください。")
+            sys.exit(1)
+
+        log(f"現在のLOGIC_VERSION = {CURRENT_LOGIC_VERSION}")
+        log("data/ 配下を走査してバージョンが古いファイルを検出中...")
+        stale_paths = find_stale_files()
+
+        if not stale_paths:
+            log("再計算が必要なファイルはありませんでした（全て最新ロジックです）")
+            return
+
+        log(f"対象: {len(stale_paths)}件")
+        for p in stale_paths:
+            log(f"  - {p.name}")
+
+        stale_dates = sorted({
+            d for p in stale_paths
+            if (d := _extract_date_from_filename(p.name)) is not None
+        })
+
+        total_w = 0
+        total_s = 0
+        for date_str in stale_dates:
+            result = recalc_day(date_str, dry_run=args.dry_run)
+            if result["venues"] == 0:
+                total_s += 1
+                log(f"  {date_str}: {result.get('reason','')}（元CSVが見つからないため再計算不可）")
+                continue
+            status = "書き込み済み" if result["written"] else f"スキップ({result.get('reason','')})"
+            log(f"  {date_str}: {result['venues']}会場 → {status}")
+            total_w += 1
+
+        log("─" * 50)
+        log(f"完了: {total_w}日分を再計算 / {total_s}日分は元CSVなしでスキップ")
+        if not args.dry_run and total_w > 0:
+            log("※ 元ファイルは .bak として保存済み")
+            log("※ GitHub Pages に反映するには git push が必要です")
+        return
 
     dates   = _target_dates(args)
     total_w = 0
