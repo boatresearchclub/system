@@ -39,6 +39,7 @@ HISTORY_KEEP_DAYS = 30
 sys.path.insert(0, str(SCRIPTS_DIR))
 from prob_scenario_engine import (
     calc_prob_from_master, normalize_name, resolve_player_name, MASTER,
+    _inject_tenji_scores,
 )
 # [2026-07-22 追加] --auto（自動再計算）用。prob_scenario_engine.py が
 # LOGIC_VERSION未対応の古い版でも --auto 以外は動くようフォールバックする。
@@ -46,6 +47,18 @@ try:
     from prob_scenario_engine import LOGIC_VERSION as CURRENT_LOGIC_VERSION
 except ImportError:
     CURRENT_LOGIC_VERSION = None
+
+# ── 買い目点数最適化ロジック（auto_push.py と同じ）─────────────────
+try:
+    from betting_optimizer import classify_race as _classify_race
+    _OPTIMIZER_AVAILABLE = True
+except ImportError:
+    _OPTIMIZER_AVAILABLE = False
+    log_warn = "[警告] betting_optimizer.py が見つかりません。推奨点数は全レース10点になります。"
+    print(log_warn, flush=True)
+
+# 展示情報ディレクトリ（_inject_tenji_scores が参照する。auto_push.py と同じ場所）
+TENJI_DIR = DATA_COLLECT_DIR / "data"
 
 # ────────────────────────────────────────────────────────────────────
 def log(msg):
@@ -187,12 +200,126 @@ def parse_csv(filepath):
         )
         rd["boats"].sort(key=lambda b: -b["prob"])
 
+    # ── 買い目点数最適化パターンを付与（auto_push.py と同一ロジック）──
+    if _OPTIMIZER_AVAILABLE:
+        for rno, rd in races.items():
+            boats_sorted = rd["boats"]
+            pred_rank1   = boats_sorted[0] if boats_sorted else None
+            boat1_data   = next((b for b in boats_sorted if b["boat"] == 1), None)
+
+            if pred_rank1 and boat1_data:
+                pred1_base = pred_rank1.get("prob", 0.0)
+                boat1_base = boat1_data.get("prob", 0.0)
+                pred1_tenkai = pred_rank1.get("tenkai_score", pred_rank1.get("prob", 0.0))
+                boat1_tenkai = boat1_data.get("tenkai_score", boat1_data.get("prob", 0.0))
+                pred1_tenji = pred_rank1.get("tenji_score_coef") or 1.0
+                boat1_tenji = boat1_data.get("tenji_score_coef") or 1.0
+                are_index = float(rd.get("arek", 50.0))
+
+                common_args = dict(
+                    venue           = venue,
+                    pred_rank1_boat = int(pred_rank1["boat"]),
+                    boat1_base      = boat1_base,
+                    boat1_tenkai    = boat1_tenkai,
+                    pred1_base      = pred1_base,
+                    pred1_tenkai    = pred1_tenkai,
+                    boat1_tenji     = boat1_tenji,
+                    pred1_tenji     = pred1_tenji,
+                    are_index       = are_index,
+                )
+                pat_hit = _classify_race(**common_args, buy_mode="hit")
+                pat_rec = _classify_race(**common_args, buy_mode="rec")
+                pat = pat_hit if pat_hit is not None else pat_rec
+
+                if pat is None:
+                    rd["opt_pattern"]         = "除外会場"
+                    rd["opt_points"]          = 0
+                    rd["opt_points_hit"]      = 0
+                    rd["opt_points_rec"]      = 0
+                    rd["opt_pass_reason_hit"] = ""
+                    rd["opt_pass_reason_rec"] = ""
+                    rd["opt_flags"]           = {}
+                else:
+                    rd["opt_pattern"]         = pat.name
+                    rd["opt_points"]          = pat.points
+                    rd["opt_points_hit"]      = pat_hit.points if pat_hit else 0
+                    rd["opt_points_rec"]      = pat_rec.points if pat_rec else 0
+                    rd["opt_pass_reason_hit"] = pat_hit.pass_reason if pat_hit else ""
+                    rd["opt_pass_reason_rec"] = pat_rec.pass_reason if pat_rec else ""
+                    rd["opt_flags"] = {
+                        "makuri_alert":   pat.flags.makuri_alert,
+                        "sashi_alert":    pat.flags.sashi_alert,
+                        "low_dividend":   pat.flags.low_dividend,
+                        "sweet_spot":     pat.flags.sweet_spot,
+                        "high_pop_zone":  pat.flags.high_pop_zone,
+                        "kimari_predict": pat.flags.kimari_predict,
+                    }
+            else:
+                rd["opt_pattern"]         = "中立1号艇"
+                rd["opt_points"]          = 10
+                rd["opt_points_hit"]      = 10
+                rd["opt_points_rec"]      = 10
+                rd["opt_pass_reason_hit"] = ""
+                rd["opt_pass_reason_rec"] = ""
+                rd["opt_flags"]           = {}
+    else:
+        for rno, rd in races.items():
+            rd["opt_pattern"]         = "（未設定）"
+            rd["opt_points"]          = 10
+            rd["opt_pass_reason_hit"] = ""
+            rd["opt_pass_reason_rec"] = ""
+            rd["opt_flags"]           = {}
+
+    # ── race_info（グレード/女子戦/タイトル/節間）を auto_push.py と同一に構築 ──
+    race_info = {}
+    try:
+        _ri_path2 = get_race_index_path(date)
+        if _ri_path2.exists():
+            with open(_ri_path2, encoding="utf-8") as _f:
+                _ri = json.load(_f)
+            _vi = _ri.get("venues", {}).get(venue, {})
+            if _vi:
+                _period = _vi.get("period", "")
+                _period_match = False
+                if _period and date:
+                    try:
+                        _year = datetime.now().year
+                        _parts = _period.replace(" ", "").split("-")
+                        if len(_parts) == 2:
+                            _start = datetime.strptime(f"{_year}/{_parts[0]}", "%Y/%m/%d").date()
+                            _end   = datetime.strptime(f"{_year}/{_parts[1]}", "%Y/%m/%d").date()
+                            _csv_d = datetime.strptime(date, "%Y-%m-%d").date()
+                            _period_match = _start <= _csv_d <= _end
+                    except Exception:
+                        pass
+                if _period_match:
+                    race_info = {
+                        "grade":    _vi.get("grade", ""),
+                        "is_joshi": bool(_vi.get("is_joshi", False)),
+                        "title":    _vi.get("title", ""),
+                        "period":   _period,
+                        "day":      _vi.get("day", ""),
+                    }
+    except Exception:
+        pass
+
+    # ── 展示スコアを boats に付与（auto_push.py と同一）──
+    _inject_tenji_scores(races, venue, date)
+
     return {
-        "venue":    venue,
-        "date":     date,
-        "is_joshi": is_joshi,
-        "grade":    race_grade,
-        "races":    {str(k): v for k, v in sorted(races.items())},
+        "venue":     venue,
+        "date":      date,
+        "race_info": race_info,
+        "inn_data": {
+            "inn_rate":    venue_stats.get("inn_rate", 0.5),
+            "arek_score":  venue_stats.get("arek_score", 50),
+            "course_rates": [0] + [
+                venue_stats.get("course_rates", {}).get(str(c), 0)
+                for c in range(1, 7)
+            ],
+            "inn_2place": venue_stats.get("inn_2place", {}),
+        },
+        "races": {str(k): v for k, v in sorted(races.items())},
     }
 
 
