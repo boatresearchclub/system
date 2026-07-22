@@ -4734,6 +4734,13 @@ function updateEV(){
 
 // ── 初期化 ──
 (async function(){
+  // [2026-07-22 追加] 締め切りアラートカードは会場タブ構築やレース詳細描画より
+  // 依存データが軽い（ALL_DATA / RACE_INDEX_DATA は既に読み込み済み）ため、
+  // 重い同期処理（buildVenueTabs / buildRaceBar / renderDetail等）より先に
+  // 一度描画しておく。従来は try...finally の finally 内でしか呼ばれておらず、
+  // renderDetail 等の重い処理が終わるまでカードが表示されなかった。
+  try { updateAlertStrip(); } catch(e) { /* 初期化順序の都合で失敗しても無視 */ }
+
   // ── 展示キャッシュ＋シナリオ買い目キャッシュをアイドル時間に一括初期化（改善⑤）──
   // _initScenComboCache は localStorage フルスキャンが重いため requestIdleCallback に移動
   if (typeof requestIdleCallback === 'function') {
