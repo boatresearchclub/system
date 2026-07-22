@@ -1572,12 +1572,48 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-23 追加] personalConvTrust — 「試投頻度」と「実際の勝率」の混同を補正
+  //
+  // 問題: attackPower[boat][k] は決まり手の内訳（条件付き分布）であり、
+  //   その艇がそもそも勝ててきたか（絶対的な強さ）を反映していない。
+  //   実績ゼロの選手でも決まり手の型が合えば boost がフルにかかってしまう。
+  //
+  // 対応: 個人の実績勝率（ts_win_rate×0.7 + recent10_win×0.3）を
+  //   会場×コース平均勝率と比較した convRatio を算出し、
+  //   走数に応じた信頼度 actualTrust でブレンドして boost に掛け合わせる。
+  //
+  // ACTUAL_TRUST_MIN/FULL: 20〜80走で信頼度を線形補間（2026-07-23 実データ検証の上で決定。
+  //   全体中央値runs=69走、FULL=100だと上位10%しか満点にならず保守的すぎるため80に調整）。
+  // ══════════════════════════════════════════════════════════════════
+  const ACTUAL_TRUST_MIN  = 20;
+  const ACTUAL_TRUST_FULL = 80;
+
+  const personalConvTrust = {};
+  others.forEach(b => {
+    const cm   = getCourseMaster(b.name, String(b.boat));
+    const runs = cm?.runs ?? 0;
+    const tsWin       = cm?.ts_win_rate   ?? 0;
+    const recent10Win = cm?.recent10_win  ?? 0;
+    const actualRate  = (tsWin * 0.7) + (recent10Win * 0.3);
+
+    const venueCourseAvg = masterExt?.venue_stats?.[resolvedVenue]?.course_rates?.[String(b.boat)] ?? null;
+    const convRatio = (venueCourseAvg && venueCourseAvg > 0) ? (actualRate / venueCourseAvg) : 1.0;
+    const convRatioClipped = Math.max(0.15, Math.min(2.0, convRatio));
+
+    const actualTrust = Math.max(0, Math.min(1,
+      (runs - ACTUAL_TRUST_MIN) / (ACTUAL_TRUST_FULL - ACTUAL_TRUST_MIN)
+    ));
+    personalConvTrust[b.boat] = 1.0 * (1 - actualTrust) + convRatioClipped * actualTrust;
+  });
+
   const condRaw = {};
   others.forEach(b => {
     const baseShare = b.prob / othersProbTotal; // 1号艇を除いた相対能力
+    const effectiveBoost = boost[b.boat] * personalConvTrust[b.boat];
     condRaw[b.boat] = Math.max(0,
       baseShare
-      * (1.0 + boost[b.boat] * CONDITIONAL_BOOST_SCALE)
+      * (1.0 + effectiveBoost * CONDITIONAL_BOOST_SCALE)
       * layer3[b.boat]
       * chainBoostMap[b.boat]  // ★連動ボーナス
     );
@@ -1814,7 +1850,8 @@ function calcPlace2Probs(boats, ranked){
       const baseP2 = inn2Place[sc] ?? null;
 
       // winner_course_order: 「1号艇(wc='1')が1着のとき、自艇(sc)が2着に来た率」
-      const personEntry = winnerCO[b.name]?.[sc]?.['1'];
+      // [2026-07-22] 決まり手別キーに対応。'逃げ'固有データがあれば優先、無ければ'全体'にフォールバック。
+      const personEntry = winnerCO[b.name]?.[sc]?.['1']?.['逃げ'] ?? winnerCO[b.name]?.[sc]?.['1']?.['全体'];
       const personRate2 = (personEntry && personEntry.rate2 != null) ? personEntry.rate2 : null;
       const personTrust = (personEntry && personEntry.trust != null) ? personEntry.trust : 0;
 
@@ -1874,8 +1911,10 @@ function calcPlace2Probs(boats, ranked){
             if(wsum > 0){
               const baseTR = p2sum / wsum;
               // ── winner_course_order で個人補正 ──
-              // キー: winnerCO[自艇名][自コース(sc)][勝者コース(wc)]
-              const personEntry = winnerCO[self.name]?.[sc]?.[wc];
+              // キー: winnerCO[自艇名][自コース(sc)][勝者コース(wc)][決まり手(kimari)]
+              // [2026-07-22] 決まり手別キーに対応。この関数はkimari加重平均後のbaseTRに
+              // 対する個人補正なので、対応する個人データも'全体'(決まり手横断の集計値)を使う。
+              const personEntry = winnerCO[self.name]?.[sc]?.[wc]?.['全体'];
               const personRate2 = (personEntry && personEntry.rate2 != null) ? personEntry.rate2 : null;
               const personTrust = (personEntry && personEntry.trust != null) ? personEntry.trust : 0;
               let p2;
@@ -2187,7 +2226,8 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
           let _dataTrust2 = 0;
           if(useInn2){
             const baseP2 = inn2Place[sc] ?? null;
-            const personEntry2 = winnerCO[b.name]?.[sc]?.['1'];
+            // [2026-07-22] 決まり手別キーに対応('逃げ'固有→無ければ'全体')
+            const personEntry2 = winnerCO[b.name]?.[sc]?.['1']?.['逃げ'] ?? winnerCO[b.name]?.[sc]?.['1']?.['全体'];
             const personRate2  = personEntry2?.rate2 ?? null;
             const personTrust2 = personEntry2?.trust ?? 0;
             _avgRank2 = personEntry2?.avg_rank ?? null;
@@ -2210,7 +2250,10 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
             const remEntry  = remForThis[sc];
             const baseTR    = remEntry?.rate2 ?? null;
             const trTrust   = remEntry?.trust ?? 0;
-            const personEntry = winnerCO[b.name]?.[sc]?.[wc];
+            // [2026-07-22] 決まり手別キーに対応。この'kimari'は展開シナリオの
+            // 「全体/差し/まくり/まくり差し」タブに対応するループ変数。
+            // 決まり手固有の個人データがあれば優先、無ければ'全体'にフォールバック。
+            const personEntry = winnerCO[b.name]?.[sc]?.[wc]?.[kimari] ?? winnerCO[b.name]?.[sc]?.[wc]?.['全体'];
             const personRate2 = personEntry?.rate2 ?? null;
             const personTrust = personEntry?.trust ?? 0;
             _avgRank2 = personEntry?.avg_rank ?? null;
@@ -2508,7 +2551,10 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         ? rawR3i * 0.6 + (rawR3 ?? rawR3i) * 0.4
         : rawR3;
       const trTrust     = remEntry?.trust  ?? 0;
-      const personEntry = winnerCO[b.name]?.[sc]?.[wc];
+      // [2026-07-22] 決まり手別キーに対応。kimariは引数で受け取っている
+      // (呼び出し元の展開シナリオタブに対応)。固有データがあれば優先、
+      // 無ければ'全体'(決まり手横断の集計値)にフォールバック。
+      const personEntry = winnerCO[b.name]?.[sc]?.[wc]?.[kimari] ?? winnerCO[b.name]?.[sc]?.[wc]?.['全体'];
       const personR3    = personEntry?.rate3  ?? null;
       const personTrust = personEntry?.trust  ?? 0;
       // ① avg_rank 補正係数（着順が良いほどスコアUP: avg_rank=2.0→1.2倍, 3.5→0.7倍）
