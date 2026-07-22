@@ -5347,11 +5347,9 @@ function renderScenEVSection(){
   // レースをまたいだランキングとして、全体をEV降順に再ソート
   allEvCombos.sort((a, b) => b._ev - a._ev);
 
-  // ── 買い目が1つも残らない場合は「ケン」推奨を表示して終了 ──────
+  // ── 買い目が1つも残らない場合は何も表示しない（的中カードのみを表示する運用） ──
   if (allEvCombos.length === 0) {
-    el.innerHTML = `<div class="scen-ev-empty" style="padding:16px 10px;color:var(--red);font-size:13px;line-height:1.6;text-align:center;font-weight:700;border:1px dashed var(--red);border-radius:8px;background:rgba(255,59,48,0.06)">
-      期待値が基準を超える買い目がありません。
-    </div>`;
+    el.innerHTML = '';
     return;
   }
 
