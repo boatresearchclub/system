@@ -1807,10 +1807,10 @@ function renderBuy(rno){
   const buy2 = buy2Hit_raw;
 
 
-  // ── 展示補正後3連対率を6艇比較し、最も低い艇を「切」候補としてマーク ──
+  // ── 展示補正後3連対率が10%を下回る艇を「切」候補としてマーク ──
   // 出走表と同じ年間3連対率(annual_place3)に、実測テーブル会場のみ当日展示の
-  // 3連対率デルタ(__p3r_)を加算した「補正後の値」で6艇を比較する。相対比較のみ、閾値条件は無し。
-  // データが無い艇（annual_place3 null）は比較対象から除外する。
+  // 3連対率デルタ(__p3r_)を加算した「補正後の値」を算出し、その値が10%未満の艇を
+  // すべて「切」候補とする（0艇の場合も、複数艇に該当する場合もあり得る）。
   // データが無い艇（annual_place3 null）は比較対象から除外する。
   const p3rAdjustedByBoat = {};
   ranked2.forEach(b => {
@@ -1823,13 +1823,12 @@ function renderBuy(rno){
     }
     p3rAdjustedByBoat[b.boat] = adj;
   });
-  let p3rCutBoat = null;
-  {
-    let minVal = Infinity;
-    Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
-      if (val < minVal) { minVal = val; p3rCutBoat = Number(boatStr); }
-    });
-  }
+  // [変更] 最終の3連対率(補正後)が10%を下回る艇を「切」候補とする（0艇／複数艇どちらもあり得る）。
+  const CUT_THRESHOLD_P3R = 0.10;
+  const p3rCutBoats = new Set();
+  Object.entries(p3rAdjustedByBoat).forEach(([boatStr, val]) => {
+    if (val < CUT_THRESHOLD_P3R) p3rCutBoats.add(Number(boatStr));
+  });
 
   // ─ STEP6: 確率テーブル生成
   const probRows = ranked2.map((bt,i)=>{
@@ -1896,11 +1895,11 @@ function renderBuy(rno){
     // 基準値: 出走表と同じ MASTER_EXT.player_index[name].annual_place3（年間3連対率）
     // 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島/福岡）のみ、当日展示に基づく3連対率デルタ(__p3r_)を加算表示。
     // それ以外の会場は実測デルタを持たないため基準値のみ表示（根拠のない加算はしない）。
-    // [2026-07-17 追加] 6艇比較で補正後の値が最も低い艇には「切」バッジを付ける。
+    // [2026-07-22 変更] 補正後の3連対率が10%を下回る艇には「切」バッジを付ける（複数艇可）。
     let place3rCell;
     {
       const base3r = getCourseMaster(bt.name, String(bt.boat))?.place3_rate ?? MASTER_EXT?.player_index?.[bt.name]?.annual_place3; // コース別3連対率（無ければ年間トータル値にフォールバック）
-      const isCutCandidate = p3rCutBoat != null && bt.boat === p3rCutBoat;
+      const isCutCandidate = p3rCutBoats.has(bt.boat);
       const cutBadge = isCutCandidate
         ? `<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,59,59,.10);color:var(--red);margin-left:4px">切</span>`
         : '';

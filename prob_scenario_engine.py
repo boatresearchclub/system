@@ -31,6 +31,13 @@ from datetime import datetime
 SCRIPTS_DIR      = Path(__file__).parent
 DATA_COLLECT_DIR = Path(r"C:\Users\user\Desktop\データ収集\scripts")
 
+# ── ロジックバージョン ────────────────────────────────────────────
+# calc_prob_from_master() の計算ロジックを変更するたびに、この値も
+# 必ず更新すること（日付更新でOK）。recalc_prob.py --auto は、
+# 各JSONに埋め込まれた _logic_version とこの値を比較し、
+# 古い（または未設定=旧ロジック）ファイルだけを自動検出して再計算する。
+LOGIC_VERSION = "2026-07-22"
+
 MASTER_JSON        = DATA_COLLECT_DIR / "master_data.json"
 KIMARI_TUNING_JSON = DATA_COLLECT_DIR / "kimari_tuning.json"
 TENJI_DIR          = DATA_COLLECT_DIR / "tenji_data"
@@ -1127,6 +1134,12 @@ def calc_prob_from_master(
 
     # 展開スコアを付与
     boats = _calc_tenkai_scores(boats, venue)
+
+    # [2026-07-22 追加] recalc_prob.py --auto が「古いロジックで生成された
+    # ファイルか」を判定できるよう、各boatにロジックバージョンを埋め込む。
+    for bt in boats:
+        bt["_logic_version"] = LOGIC_VERSION
+
     return boats
 
 
