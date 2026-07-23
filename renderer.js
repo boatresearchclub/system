@@ -1437,11 +1437,13 @@ function renderBuy(rno){
       ? `${A.name}（${A.boat}号）軸だが、まくり・差しが入りやすい展開。`
       : `${A.name}（${A.boat}号）中心だが${B.name}（${B.boat}号）との競り合いも。`;
 
-  const probDiff   = A.final_prob - B.final_prob;
   // 乖離率（%）: DIVERGENCE_THRESHOLD_HIT と同一単位で比較する
   // 旧: probDiff <= 0.05（固定5%）→ 新: DIVERGENCE_THRESHOLD_HIT（デフォルト12%）未満を僅差とみなす
-  const probDiffPct = probDiff * 100;
-  const isDualAxis  = probDiffPct < DIVERGENCE_THRESHOLD_HIT;
+  // [2026-07-23改修] 生データ計算は getAxisConfidence() に一本化（挙動は従来と同一）。
+  // この時点では venueAvg1_buy 未定義のため venueAvg1=null で呼ぶ（乖離率計算には不要）。
+  const _acEarly    = getAxisConfidence(ranked2, null);
+  const probDiffPct = _acEarly.divergencePct;
+  const isDualAxis  = !_acEarly.isSingleAxisReliable;
 
   // ─ STEP4 & STEP5: 展開シナリオベースの買い目生成
   //
@@ -1499,8 +1501,12 @@ function renderBuy(rno){
   const sd = calcScenarioData(ranked2, rawBoats, tenjiScoreMap);
 
   // ── 軸信頼度判定（if(sd.valid)の外で定義しないと参照エラーになる）──
+  // [2026-07-23改修] 生データ・判定は getAxisConfidence() に一本化（挙動は従来と同一）。
+  // ここで venueAvg1_buy が確定するため、venue平均込みで再取得する
+  // （_acEarly は乖離率算出専用。ac が以後の唯一の参照元）。
   const venueAvg1_buy = cRates_buy[1] ?? 0.45;
-  const top1FinalProb = ranked2[0]?.final_prob ?? 0;
+  const ac = getAxisConfidence(ranked2, venueAvg1_buy);
+  const top1FinalProb = ac.top1FinalProb;
 
   // ── 【改修】的中重視モード: 1着固定軸の採用条件 ──
   // 仕様（変更）:
@@ -1510,13 +1516,12 @@ function renderBuy(rno){
   //    乖離が閾値未満（isDualAxis=true）の場合は2頭軸展開に自動移行。
   // ※ 旧条件「1号艇が場平均以上 AND top2以内」は廃止。
   //    1号艇かどうかは axisReliable の判定に含めない（rec側で制御）。
-  const boat1ForAxis   = ranked2.find(b => b.boat === 1);
-  const boat1FinalProb = boat1ForAxis?.final_prob ?? 0;
+  const boat1FinalProb = ac.boat1Final ?? 0;
   const boat1RankAmongFinal = [...ranked2]
     .sort((a, b) => (b.final_prob ?? 0) - (a.final_prob ?? 0))
     .findIndex(b => b.boat === 1);
   // axisReliable: 乖離率が閾値以上（= isDualAxis が偽）のとき真
-  const axisReliable = !isDualAxis; // isDualAxis=true（僅差）のとき false になる
+  const axisReliable = ac.isSingleAxisReliable; // isDualAxis と等価な否定関係を維持
   // 後方互換: boat1AboveAvg は rec 側の判定で引き続き使用
   const boat1AboveAvg = boat1FinalProb >= venueAvg1_buy;
 
@@ -2816,6 +2821,56 @@ const IN_NEG_MARGIN_PT   = 0.10; // 場平均を下回る固定マージン（10
 const IN_TETSU_BASE_TH   = 0.70; // 基準確率の閾値
 const IN_TETSU_FINAL_TH  = 0.75; // 最終確率の閾値
 
+// ─────────────────────────────────────────────────────────────────────────
+// ── 軸信頼度：全買い目モード共通の単一情報源 ──────────────────────────
+//
+// [2026-07-23改修] シナリオ買い(hit)の axisReliable・イン鉄板・イン否定は、
+// 従来それぞれ別の場所で ranked2[0]/[1] の抽出・1号艇の確率抽出・場平均の
+// 取得を再計算しており、同じ生データが3箇所に分散していた。
+// 本関数はその「生データの取得」だけを一本化する。
+//
+// ★ 注意: 3つの判定は意図的に異なる指標を見ている（統合しない）。
+//   ・シナリオ買い(hit)の isSingleAxisReliable
+//       → 「1位艇」と「2位艇」の"相対"乖離率（誰が1位でも対象になる）
+//   ・イン鉄板 / イン否定の isInTetsuban / isInHitei
+//       → 常に「1号艇」を主語にした絶対確率 / 場平均との相対差
+//         （1号艇が1位でないレースでも、イン鉄板・イン否定は1号艇基準の
+//           まま判定する。これは仕様として確定済み — 2026-07-23合意）
+//
+// 各買い目パネルは、生データ・判定結果ともに以後この関数の戻り値だけを
+// 参照する（renderBuy() 内および _calcInNegCond/_calcInTepCond での
+// 再計算・再取得は禁止）。
+// ─────────────────────────────────────────────────────────────────────────
+function getAxisConfidence(ranked2, venueAvg1) {
+  const top1  = ranked2[0];
+  const top2  = ranked2[1];
+  const boat1 = ranked2.find(b => b.boat === 1);
+
+  const top1FinalProb = top1?.final_prob ?? 0;
+  const top2FinalProb = top2?.final_prob ?? 0;
+  const divergencePct = (top1FinalProb - top2FinalProb) * 100; // 1位vs2位の相対乖離率(%pt)
+
+  const boat1Final = boat1?.final_prob   ?? null;
+  const boat1Base  = boat1?.display_base ?? null;
+  // 1号艇（基準確率／最終確率それぞれ）と場平均との差(%pt)。プラスなら平均より強い
+  const boat1FinalVsAvgPt = (venueAvg1 != null && boat1Final != null) ? (boat1Final - venueAvg1) * 100 : null;
+  const boat1BaseVsAvgPt  = (venueAvg1 != null && boat1Base  != null) ? (boat1Base  - venueAvg1) * 100 : null;
+
+  return {
+    // ── 生データ（3モード共通のソース） ──
+    top1Boat: top1?.boat ?? null,
+    top1FinalProb, top2FinalProb, divergencePct,
+    boat1Final, boat1Base, venueAvg1, boat1FinalVsAvgPt, boat1BaseVsAvgPt,
+
+    // ── 判定結果（閾値定数は変更していない＝挙動は従来と同一） ──
+    isSingleAxisReliable: divergencePct >= DIVERGENCE_THRESHOLD_HIT,
+    isInTetsuban: (boat1Base ?? -1) >= IN_TETSU_BASE_TH || (boat1Final ?? -1) >= IN_TETSU_FINAL_TH,
+    // イン否定: 基準確率 または 最終確率 のいずれかが場平均-10%pt以下（元の _calcInNegCond と同一条件）
+    isInHitei: (boat1BaseVsAvgPt !== null && boat1BaseVsAvgPt <= -(IN_NEG_MARGIN_PT * 100))
+            || (boat1FinalVsAvgPt !== null && boat1FinalVsAvgPt <= -(IN_NEG_MARGIN_PT * 100)),
+  };
+}
+
 function _calcInNegCond(ranked2, venueOverride, vdataOverride) {
   // [2026-07-19修正] venueOverride指定時（例: top_page.jsの複数会場ループ）は
   // 開いているレースが無く DATA が null のことがあるため、渡された vdataOverride
@@ -2823,15 +2878,17 @@ function _calcInNegCond(ranked2, venueOverride, vdataOverride) {
   const innData   = vdataOverride?.inn_data ?? (DATA ? DATA.inn_data : null) ?? {};
   const cRates    = innData.course_rates || [];
   const venueAvg1 = cRates[1] ?? null;
-  const boat1     = ranked2.find(b => b.boat === 1);
-  const fp1       = boat1?.final_prob   ?? null;
-  const base1     = boat1?.display_base ?? null;
 
+  // [2026-07-23改修] 生データ・判定は getAxisConfidence() に一本化。
+  // ここでは元の戻り値の形（threshold等）を保つための整形のみ行う。
+  const ac  = getAxisConfidence(ranked2, venueAvg1);
+  const base1 = ac.boat1Base;
+  const fp1   = ac.boat1Final;
   const threshold = (venueAvg1 !== null) ? venueAvg1 - IN_NEG_MARGIN_PT : null;
 
-  const baseCondMet  = (threshold !== null && base1 !== null) ? base1 <= threshold : false;
-  const finalCondMet = (threshold !== null && fp1   !== null) ? fp1   <= threshold : false;
-  const condMet = baseCondMet || finalCondMet;
+  const baseCondMet  = ac.boat1BaseVsAvgPt  !== null && ac.boat1BaseVsAvgPt  <= -(IN_NEG_MARGIN_PT * 100);
+  const finalCondMet = ac.boat1FinalVsAvgPt !== null && ac.boat1FinalVsAvgPt <= -(IN_NEG_MARGIN_PT * 100);
+  const condMet = ac.isInHitei; // baseCondMet || finalCondMet と同値
 
   // 表示用説明文
   let condDesc;
@@ -2848,13 +2905,15 @@ function _calcInNegCond(ranked2, venueOverride, vdataOverride) {
 }
 
 function _calcInTepCond(ranked2) {
-  const boat1 = ranked2.find(b => b.boat === 1);
-  const fp1   = boat1?.final_prob   ?? null;
-  const base1 = boat1?.display_base ?? null;
+  // [2026-07-23改修] 生データ・判定は getAxisConfidence() に一本化。
+  // venueAvg1 は不要なため null を渡す（isInTetsuban の計算に影響しない）。
+  const ac    = getAxisConfidence(ranked2, null);
+  const base1 = ac.boat1Base;
+  const fp1   = ac.boat1Final;
 
   const baseCondMet  = base1 !== null && base1 >= IN_TETSU_BASE_TH;
   const finalCondMet = fp1   !== null && fp1   >= IN_TETSU_FINAL_TH;
-  const condMet = baseCondMet || finalCondMet;
+  const condMet = ac.isInTetsuban; // baseCondMet || finalCondMet と同値
 
   const condDesc = `基準 ${base1 != null ? (base1*100).toFixed(1)+'%' : '?'}`
     + ` ／ 最終 ${fp1 != null ? (fp1*100).toFixed(1)+'%' : '?'}`
