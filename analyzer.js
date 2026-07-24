@@ -1808,6 +1808,51 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
 //
 // 返り値: { [boat番号]: place2スコア（正規化済み 0-1） }
 //
+// ── 個人成績のフィールド内相対評価（同一レース内の艇同士で比較）──
+//
+// 【狙い】
+//   従来の「個人成績 × trust + 会場/全国平均 × (1-trust)」は個人成績を
+//   “平均へ回帰させる”方向にしか働かず、「今日の対戦相手（同じレースの
+//   他艇）と比べてどれだけ強いか」という相対評価にはなっていなかった。
+//
+//   ここでは、同一レースに出走する艇同士（個人指標を持つ艇のみ）で
+//   平均・標準偏差を取り、z-scoreとして相対的な強弱を数値化する。
+//   trust（データ信頼度）は「平均に引き戻す度合い」ではなく、
+//   「サンプル不足によるノイズを抑える度合い」として使う
+//   （trustが低い艇はz=0寄りになり調整が弱まるだけで、平均値そのものには
+//   吸着しない）。
+//
+// 【使い方】
+//   items: [{ key, raw, trust }] の配列を渡す。
+//   raw   : 個人指標の生値（personRate2 / personR3 など）。無ければ null。
+//   trust : 0〜1のデータ信頼度。
+//   戻り値: { key: multiplier } のマップ（multiplierは基準確率に掛ける乗数）。
+//
+const FIELD_RELATIVE_K = 0.18;      // 感度係数（0.10〜0.30程度で調整可）
+const FIELD_RELATIVE_CLIP = [0.6, 1.6]; // 乗数の上下限（極端な吹き上がり防止）
+
+function computeFieldZAdjust(items){
+  const adjust = {};
+  items.forEach(it => { adjust[it.key] = 1.0; });
+
+  const withData = items.filter(it => it.raw != null && !isNaN(it.raw));
+  if(withData.length < 2) return adjust; // 個人データを持つ艇が1艇以下なら比較不能→調整なし
+
+  const mean = withData.reduce((s, it) => s + it.raw, 0) / withData.length;
+  const variance = withData.reduce((s, it) => s + (it.raw - mean) ** 2, 0) / withData.length;
+  const std = Math.sqrt(variance);
+  if(std <= 0) return adjust; // 全艇同値（分散ゼロ）なら調整なし
+
+  withData.forEach(it => {
+    const z = (it.raw - mean) / std;
+    const trust = Math.max(0, Math.min(1, it.trust ?? 0));
+    const zAdj = z * trust; // trust低→zを0側に抑制（ノイズ対策。平均回帰ではない）
+    const mult = Math.max(FIELD_RELATIVE_CLIP[0], Math.min(FIELD_RELATIVE_CLIP[1], 1 + FIELD_RELATIVE_K * zAdj));
+    adjust[it.key] = mult;
+  });
+  return adjust;
+}
+
 function calcPlace2Probs(boats, ranked){
   const place2Score = {};
   ranked.forEach(b => { place2Score[b.boat] = 0; });
@@ -1844,20 +1889,33 @@ function calcPlace2Probs(boats, ranked){
   // ── 逃げ展開での2着: inn_2place ベース + winner_course_order 個人補正 ──
   if(hasInn2 && nigeWinProb > 0){
     const othersTP = ranked.filter(r => r.boat !== 1).reduce((s, r) => s + r.tenkai_prob, 0) || 1;
-    for(const b of ranked){
-      if(b.boat === 1) continue;
+    const nigeCandidates = ranked.filter(r => r.boat !== 1);
+
+    // winner_course_order: 「1号艇(wc='1')が1着のとき、自艇(sc)が2着に来た率」
+    // [2026-07-22] 決まり手別キーに対応。'逃げ'固有データがあれば優先、無ければ'全体'にフォールバック。
+    const personInfoNige = {};
+    nigeCandidates.forEach(b => {
+      const sc = String(b.boat);
+      const personEntry = winnerCO[b.name]?.[sc]?.['1']?.['逃げ'] ?? winnerCO[b.name]?.[sc]?.['1']?.['全体'];
+      personInfoNige[b.boat] = {
+        rate: (personEntry && personEntry.rate2 != null) ? personEntry.rate2 : null,
+        trust: (personEntry && personEntry.trust != null) ? personEntry.trust : 0,
+      };
+    });
+    // ── フィールド内（同レース5艇）相対評価 ──
+    const fieldAdjustNige = computeFieldZAdjust(
+      nigeCandidates.map(b => ({ key: b.boat, raw: personInfoNige[b.boat].rate, trust: personInfoNige[b.boat].trust }))
+    );
+
+    for(const b of nigeCandidates){
       const sc     = String(b.boat);
       const baseP2 = inn2Place[sc] ?? null;
-
-      // winner_course_order: 「1号艇(wc='1')が1着のとき、自艇(sc)が2着に来た率」
-      // [2026-07-22] 決まり手別キーに対応。'逃げ'固有データがあれば優先、無ければ'全体'にフォールバック。
-      const personEntry = winnerCO[b.name]?.[sc]?.['1']?.['逃げ'] ?? winnerCO[b.name]?.[sc]?.['1']?.['全体'];
-      const personRate2 = (personEntry && personEntry.rate2 != null) ? personEntry.rate2 : null;
-      const personTrust = (personEntry && personEntry.trust != null) ? personEntry.trust : 0;
+      const { rate: personRate2, trust: personTrust } = personInfoNige[b.boat];
 
       let p2;
-      if(baseP2 != null && personRate2 != null && personTrust > 0.3){
-        // 個人実績と inn_2place をブレンド（personTrust で重み付け）※閾値: 0.3（count>=10相当）
+      if(baseP2 != null && personRate2 != null){
+        // [2026-07-24 修正] personTrust>0.3 のハードカットオフを撤廃。
+        // trustが低くても連続的にブレンドする（3着側と同じ方針に統一）。
         p2 = personRate2 * personTrust + baseP2 * (1 - personTrust);
       } else if(baseP2 != null){
         p2 = baseP2;
@@ -1865,6 +1923,8 @@ function calcPlace2Probs(boats, ranked){
         // inn_2place にもデータなし → tenkai_prob 相対値
         p2 = tpMap[b.boat] / othersTP;
       }
+      // ── フィールド内相対評価を乗数として反映 ──
+      p2 = p2 * (fieldAdjustNige[b.boat] ?? 1.0);
       place2Score[b.boat] += nigeWinProb * p2;
     }
   }
@@ -1895,8 +1955,27 @@ function calcPlace2Probs(boats, ranked){
           .filter(([k]) => k in tenkaiRemaining && tenkaiRemaining[k][wc])
           .reduce((s, [, v]) => s + v, 0);
         if(validKimariTot > 0){
-          for(const self of ranked){
-            if(self.boat === winner.boat) continue;
+          const selfCandidates = ranked.filter(b => b.boat !== winner.boat);
+
+          // ── winner_course_order で個人補正値を先に集計（フィールド相対評価用）──
+          // キー: winnerCO[自艇名][自コース(sc)][勝者コース(wc)][決まり手(kimari)]
+          // [2026-07-22] 決まり手別キーに対応。この関数はkimari加重平均後のbaseTRに
+          // 対する個人補正なので、対応する個人データも'全体'(決まり手横断の集計値)を使う。
+          const personInfoNN = {};
+          selfCandidates.forEach(self => {
+            const sc = String(self.boat);
+            const personEntry = winnerCO[self.name]?.[sc]?.[wc]?.['全体'];
+            personInfoNN[self.boat] = {
+              rate: (personEntry && personEntry.rate2 != null) ? personEntry.rate2 : null,
+              trust: (personEntry && personEntry.trust != null) ? personEntry.trust : 0,
+            };
+          });
+          // ── フィールド内（同レース内、勝者以外の艇）相対評価 ──
+          const fieldAdjustNN = computeFieldZAdjust(
+            selfCandidates.map(self => ({ key: self.boat, raw: personInfoNN[self.boat].rate, trust: personInfoNN[self.boat].trust }))
+          );
+
+          for(const self of selfCandidates){
             const sc = String(self.boat);
             // ── tenkai_remaining の全国実績を決まり手加重平均で集計 ──
             let p2sum = 0, wsum = 0;
@@ -1910,21 +1989,18 @@ function calcPlace2Probs(boats, ranked){
             }
             if(wsum > 0){
               const baseTR = p2sum / wsum;
-              // ── winner_course_order で個人補正 ──
-              // キー: winnerCO[自艇名][自コース(sc)][勝者コース(wc)][決まり手(kimari)]
-              // [2026-07-22] 決まり手別キーに対応。この関数はkimari加重平均後のbaseTRに
-              // 対する個人補正なので、対応する個人データも'全体'(決まり手横断の集計値)を使う。
-              const personEntry = winnerCO[self.name]?.[sc]?.[wc]?.['全体'];
-              const personRate2 = (personEntry && personEntry.rate2 != null) ? personEntry.rate2 : null;
-              const personTrust = (personEntry && personEntry.trust != null) ? personEntry.trust : 0;
+              const { rate: personRate2, trust: personTrust } = personInfoNN[self.boat];
               let p2;
-              if(personRate2 != null && personTrust > 0.3){
-                // 会場別実績と個人実績をブレンド ※閾値: 0.3（count>=10相当）
+              if(personRate2 != null){
+                // [2026-07-24 修正] personTrust>0.3 のハードカットオフを撤廃。
+                // trustが低くても連続的にブレンドする。
                 const wNat = (1 - personTrust);
                 p2 = (personRate2 * personTrust + baseTR * wNat);
               } else {
                 p2 = baseTR;
               }
+              // ── フィールド内相対評価を乗数として反映 ──
+              p2 = p2 * (fieldAdjustNN[self.boat] ?? 1.0);
               place2Score[self.boat] += winnerProb * p2;
               usedRemaining = true;
             } else {
@@ -2539,8 +2615,23 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
 
   const remForThis = tenkaiRem?.[kimari]?.[wc] || null;
 
-  const result = ranked2
-    .filter(b => b.boat !== winnerBoat && b.boat !== secondBoat)
+  const candidates3rd = ranked2.filter(b => b.boat !== winnerBoat && b.boat !== secondBoat);
+
+  // ── フィールド内（同レース、勝者・2着艇以外の艇）相対評価を先に集計 ──
+  const personInfo3rd = {};
+  candidates3rd.forEach(b => {
+    const sc = String(b.boat);
+    const personEntry = winnerCO[b.name]?.[sc]?.[wc]?.[kimari] ?? winnerCO[b.name]?.[sc]?.[wc]?.['全体'];
+    personInfo3rd[b.boat] = {
+      rate: personEntry?.rate3 ?? null,
+      trust: personEntry?.trust ?? 0,
+    };
+  });
+  const fieldAdjust3rd = computeFieldZAdjust(
+    candidates3rd.map(b => ({ key: b.boat, raw: personInfo3rd[b.boat].rate, trust: personInfo3rd[b.boat].trust }))
+  );
+
+  const result = candidates3rd
     .map(b => {
       const sc = String(b.boat);
       const remEntry    = remForThis?.[sc];
@@ -2625,7 +2716,9 @@ function calc3rdScores(ranked2, tenjiScoreMap, winnerBoat, kimari, secondBoat){
         tenjiDelta = clipped - 1.0;
       }
       // [2026-07-12 修正] 乗算方式→加算方式に変更（1着・2着補正と統一）。
-      const score = Math.max(0.0001, baseScore * rankCoef + tenjiDelta);
+      const scoreBeforeField = Math.max(0.0001, baseScore * rankCoef + tenjiDelta);
+      // ── フィールド内相対評価を乗数として反映 ──
+      const score = scoreBeforeField * (fieldAdjust3rd[b.boat] ?? 1.0);
 
       return { boat: b.boat, name: b.name, r3, score };
     });
