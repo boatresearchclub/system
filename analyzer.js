@@ -1092,50 +1092,112 @@ function buildWeatherContext(tenjiData, venue) {
 }
 
 /**
- * [提案A] スリット隊形補正
- * 3〜4コース艇が内側（1〜2コース）より平均ST順位で優位なとき、
- * まくり / まくり差し パイを拡大し、逃げパイを縮小する係数を返す。
+ * [提案A改] スリット隊形補正（艇単位スコア + 可変境界版）
  *
- * 数理:
- *   stDiff = 内側平均ST順 − 外側平均ST順  (正値 → 外が速い)
- *   ratio  = clamp(stDiff / ST_DIFF_SCALE, 0, 1)
- *   makuriBoost  = 1 + SLIT_MAKURI_MAX * ratio
- *   nigeDiscount = 1 − SLIT_NIGE_DISCOUNT * ratio
+ * 【旧ロジックの課題】
+ *   旧: 「1-2号艇の平均ST順」vs「3-6号艇の平均ST順」という固定境界の
+ *       グループ平均比較だった。そのため
+ *         - 4艇まとめて平均するので、1艇だけ突出して速くても薄まる
+ *         - 「どの艇が」有利かが艇単位で分からない（全艇一律の係数）
+ *         - コース区分が常に1-2/3-6固定で、実際のST分布の形（隊形）を無視
+ *
+ * 【新ロジック】
+ *   ① 6艇のST順位を同一レース内でz-score化（st_rankは値が小さいほど
+ *      スタートが速いため符号反転: z = (平均st_rank − 自艇st_rank) / 標準偏差）
+ *      → 正値 = フィールド平均よりスタートが速い、という艇単位のスコア。
+ *   ② 各艇について「自分より内側（小さいコース番号）の艇」を可変的に
+ *      集めてその平均zと比較する（advantage = 自艇z − 内側艇平均z）。
+ *      → 2号艇は1号艇とだけ比較、5号艇は1〜4号艇平均と比較、というように
+ *        「実際にまくる／差すために追い抜く必要がある相手」を艇ごとに
+ *        動的に設定する（固定の1-2/3-6境界を撤廃）。
+ *   ③ 1号艇の被脅威度 = 2〜6号艇のadvantageのうち最大値（最も脅威となる
+ *      1艇の優位性で1号艇の守備難度を決める）。
+ *   ④ 各艇のまくり優位度は自艇のadvantageをそのままブースト値に変換。
  *
  * @param {object[]} boats  レース艇データ
- * @returns {{ makuriBoost: number, nigeDiscount: number }}
+ * @returns {{ makuriBoost: number, nigeDiscount: number, perBoat: object }}
+ *   perBoat: { [boat番号]: { z, insideAvgZ, advantage, makuriBoost } } 艇単位の内訳（デバッグ・管理者表示用）
  */
 function calcSlitFormationBoost(boats) {
   const SLIT_MAKURI_MAX    = 0.40;  // まくりパイ最大+40%
   const SLIT_NIGE_DISCOUNT = 0.30;  // 逃げパイ最大−30%
-  const ST_DIFF_SCALE      = 1.5;   // このランク差で最大効果
+  const ST_DIFF_SCALE      = 1.5;   // このz差（≒旧ランク差相当）で最大効果
 
-  const inside  = boats.filter(b => b.boat === 1 || b.boat === 2);
-  // [修正] まくりの主体は5・6コース（ダッシュ艇）なので outside を全ダッシュ艇に拡張
-  const outside = boats.filter(b => b.boat >= 3);
+  const emptyPerBoat = {};
+  boats.forEach(b => { emptyPerBoat[b.boat] = { z: 0, insideAvgZ: null, advantage: 0, makuriBoost: 1.0 }; });
 
-  function avgStRank(arr) {
-    const valid = arr.map(b => {
-      const r = getCourseMaster(b.name, String(b.boat))?.st_rank;
-      return typeof r === 'number' ? r : null;
-    }).filter(v => v !== null);
-    if (valid.length === 0) return null;
-    return valid.reduce((s, v) => s + v, 0) / valid.length;
+  // ── Step1: 艇ごとのST順位を取得 ──
+  const stEntries = boats.map(b => {
+    const r = getCourseMaster(b.name, String(b.boat))?.st_rank;
+    return { boat: b.boat, st: (typeof r === 'number') ? r : null };
+  });
+  const valid = stEntries.filter(x => x.st !== null);
+  if (valid.length < 2) {
+    return { makuriBoost: 1.0, nigeDiscount: 1.0, perBoat: emptyPerBoat };
   }
 
-  const insideAvg  = avgStRank(inside);
-  const outsideAvg = avgStRank(outside);
-  if (insideAvg === null || outsideAvg === null) {
-    return { makuriBoost: 1.0, nigeDiscount: 1.0 };
+  // ── Step2: フィールド内z-score（st_rankは低いほど速い→符号反転して「速さ」に統一）──
+  const mean = valid.reduce((s, x) => s + x.st, 0) / valid.length;
+  const variance = valid.reduce((s, x) => s + (x.st - mean) ** 2, 0) / valid.length;
+  const std = Math.sqrt(variance);
+
+  const zMap = {};
+  boats.forEach(b => { zMap[b.boat] = 0; });
+  if (std > 0) {
+    valid.forEach(x => { zMap[x.boat] = (mean - x.st) / std; }); // 正値 = 平均より速い
   }
 
-  const stDiff = insideAvg - outsideAvg;  // 正値 = アウトが速い
-  if (stDiff <= 0) return { makuriBoost: 1.0, nigeDiscount: 1.0 };
+  // ── Step3: 艇ごとに「自分より内側（コース番号が小さい）艇」平均zとの
+  //           差分＝可変境界の攻撃優位度（advantage）を算出 ──
+  const perBoat = {};
+  boats.forEach(b => {
+    const insideBoats = boats.filter(o => o.boat < b.boat);
+    if (insideBoats.length === 0) {
+      // 1号艇自身にはadvantage概念なし（後段でnigeDiscountとして別途算出）
+      perBoat[b.boat] = { z: zMap[b.boat], insideAvgZ: null, advantage: 0, makuriBoost: 1.0 };
+      return;
+    }
+    const insideAvgZ = insideBoats.reduce((s, o) => s + zMap[o.boat], 0) / insideBoats.length;
+    const advantage = zMap[b.boat] - insideAvgZ; // 正値 = 内側艇群より自分の方がスタートが速い
+    const ratio = Math.max(0, Math.min(advantage / ST_DIFF_SCALE, 1.0));
+    perBoat[b.boat] = {
+      z: zMap[b.boat],
+      insideAvgZ,
+      advantage,
+      makuriBoost: 1.0 + SLIT_MAKURI_MAX * ratio,
+    };
+  });
 
-  const ratio        = Math.min(stDiff / ST_DIFF_SCALE, 1.0);
-  const makuriBoost  = 1.0 + SLIT_MAKURI_MAX    * ratio;
-  const nigeDiscount = 1.0 - SLIT_NIGE_DISCOUNT * ratio;
-  return { makuriBoost, nigeDiscount };
+  // ── Step4: 1号艇の被脅威度 = 2〜6号艇advantageの最大値 ──
+  const threatVals = boats.filter(b => b.boat !== 1).map(b => perBoat[b.boat].advantage);
+  const maxThreat = threatVals.length ? Math.max(...threatVals) : 0;
+  const threatRatio = Math.max(0, Math.min(maxThreat / ST_DIFF_SCALE, 1.0));
+  const nigeDiscount = 1.0 - SLIT_NIGE_DISCOUNT * threatRatio;
+
+  // ── Step5: 各艇の「被脅威度＝逆側」を算出 ──
+  // advantage が「自分より内側の艇に対する攻撃優位」だったのに対し、
+  // vulnerability は「自分より外側の艇から見た自分への脅威度」＝自分が
+  // 何号艇からどれだけ捲られ／差される危険があるかを艇単位で数値化したもの。
+  // 1号艇の場合はこれが従来の nigeDiscount の元になっている maxThreat と一致する。
+  boats.forEach(b => {
+    const outsideBoats = boats.filter(o => o.boat > b.boat);
+    const vulnerability = outsideBoats.length
+      ? Math.max(...outsideBoats.map(o => perBoat[o.boat].advantage))
+      : 0; // 6号艇は外側に誰もいないので被脅威度0
+    const vRatio = Math.max(0, Math.min(vulnerability / ST_DIFF_SCALE, 1.0));
+    perBoat[b.boat].vulnerability = vulnerability;
+    perBoat[b.boat].defenseMult   = 1.0 - SLIT_NIGE_DISCOUNT * vRatio;
+  });
+
+  // ── 互換用の全体スカラー: 最大脅威艇のmakuriBoostを代表値として使用 ──
+  // （既存の会場vKimariパイ一律乗算処理との後方互換のため。艇単位の内訳は
+  //   perBoat 側を参照すれば個別に取り出せる）
+  const repEntry = boats
+    .filter(b => b.boat !== 1)
+    .reduce((best, b) => (perBoat[b.boat].advantage > (best ? perBoat[best.boat].advantage : -Infinity) ? b : best), null);
+  const makuriBoost = repEntry ? perBoat[repEntry.boat].makuriBoost : 1.0;
+
+  return { makuriBoost, nigeDiscount, perBoat };
 }
 
 /**
@@ -1320,7 +1382,9 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
   const FLOOR_PROB = 0.0001;
 
   // ── [2-A] スリット隊形補正 → 会場vKimariパイの再配分に使用 ──
-  const { makuriBoost, nigeDiscount } = calcSlitFormationBoost(boats);
+  // [2026-07-27 改修] 艇単位z-score + 可変境界版。perBoatSlit は艇ごとの
+  // 内訳（advantage/makuriBoost）で、デバッグ・管理者表示用に final 出力へ添付する。
+  const { makuriBoost, nigeDiscount, perBoat: perBoatSlit } = calcSlitFormationBoost(boats);
 
   // ── 会場vKimariにスリット補正を乗算 → 再正規化（ゼロサムΣ=1保証） ──
   const slitMul = {
@@ -1607,6 +1671,22 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
     personalConvTrust[b.boat] = 1.0 * (1 - actualTrust) + convRatioClipped * actualTrust;
   });
 
+  // ══════════════════════════════════════════════════════════════════
+  // [2026-07-27 追加] スリット隊形の艇単位優位/劣位を Stage2 に反映
+  //
+  // perBoatSlit[boat].makuriBoost  : 自分より内側の艇に対する攻撃優位（advantageの順方向）
+  // perBoatSlit[boat].defenseMult  : 自分より外側の艇からの被脅威度（advantageの逆方向）
+  // → 両方を掛け合わせることで「有利になる艇は上振れ・不利になる艇は下振れ」を
+  //   艇単位で同時に表現する（例: 3号艇だけ速いレースでは3号艇はattackで上振れ、
+  //   4〜6号艇はdefenseで下振れ、という非対称な効果が個別に出る）。
+  // 会場vKimariパイへの一律乗算（Step2-A）とは独立した、艇個別の乗数レイヤー。
+  // ══════════════════════════════════════════════════════════════════
+  const slitBoatMult = {};
+  others.forEach(b => {
+    const s = perBoatSlit[b.boat] || { makuriBoost: 1.0, defenseMult: 1.0 };
+    slitBoatMult[b.boat] = s.makuriBoost * s.defenseMult;
+  });
+
   const condRaw = {};
   others.forEach(b => {
     const baseShare = b.prob / othersProbTotal; // 1号艇を除いた相対能力
@@ -1616,6 +1696,7 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
       * (1.0 + effectiveBoost * CONDITIONAL_BOOST_SCALE)
       * layer3[b.boat]
       * chainBoostMap[b.boat]  // ★連動ボーナス
+      * slitBoatMult[b.boat]   // ★スリット隊形（艇単位の優位/劣位）
     );
   });
   const condTotal = Object.values(condRaw).reduce((s, v) => s + v, 0) || 1;
@@ -1786,6 +1867,13 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
       _l3_wind:            layer3WindPre[b.boat],  // うち気象成分
       _slit_makuri_boost:  makuriBoost,
       _slit_nige_discount: nigeDiscount,
+      // [2026-07-27 追加] 艇単位のスリット隊形内訳（デバッグ・管理者表示用）
+      // advantage/makuriBoost = 自分より内側の艇に対する攻撃優位（順方向）
+      // vulnerability/defenseMult = 自分より外側の艇からの被脅威度（逆方向）
+      _slit_advantage:     perBoatSlit[b.boat]?.advantage ?? 0,
+      _slit_boat_makuri:   perBoatSlit[b.boat]?.makuriBoost ?? 1.0,
+      _slit_vulnerability: perBoatSlit[b.boat]?.vulnerability ?? 0,
+      _slit_defense_mult:  perBoatSlit[b.boat]?.defenseMult ?? 1.0,
       _wind_type:          weatherCtxPre.windType,
       _tenji_dev:          tenjiDevMapPre[b.boat] ?? 0,
       _nige_prob:          b.boat === 1 ? nigeProb : null, // デバッグ用: Stage1の独立逃げ確率
