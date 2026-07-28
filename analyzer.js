@@ -1879,6 +1879,11 @@ function calcTenkaiProbsExtended(boats, arek, tenjiData = null, venue = null, op
       _nige_prob:          b.boat === 1 ? nigeProb : null, // デバッグ用: Stage1の独立逃げ確率
       _v2_nige_override:   b.boat === 1 ? v2NigeOverride : null, // デバッグ用: v2補正後
       _chain_boost:        chainBoostMap[b.boat] ?? null, // デバッグ用: 連動ボーナス係数
+      // [2026-07-28 追加] 「基準1着率」(tenkai_prob_pure)専用の内部値を可視化。
+      // 純基準(_baseNorm)からどう展開補正(pt)が導かれたかを追跡できるようにする。
+      _nige_prob_pure:     b.boat === 1 ? nigeProbPureClipped : null, // 1号艇: layer3抜きの逃げ確率(クリップ後)
+      _base_share_pure:    b.boat !== 1 ? (b.prob / othersProbTotal) : null, // 2〜6号艇: 1号艇を除いた中での素の取り分
+      _cond_share_pure:    b.boat !== 1 ? (conditionalSharePure[b.boat] ?? null) : null, // 2〜6号艇: 決まり手boost後の取り分(正規化済み)
     }))
     .sort((a, b) => b.tenkai_prob - a.tenkai_prob);
 }
