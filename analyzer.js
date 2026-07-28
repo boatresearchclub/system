@@ -1290,6 +1290,82 @@ function calcTenjiDeviation(boats, tenjiData) {
 }
 
 /**
+ * [2026-07-28 新設] 展開確率・基準1着率 シンプル版【二層モデル】
+ *
+ * ┌─────────────────────────────────────────────────────┐
+ * │ 第1層: 選手能力（b.prob）＝マスターデータそのもの     │
+ * │   全国・会場・直近10走のブレンド（prob_scenario_engine.py） │
+ * ├─────────────────────────────────────────────────────┤
+ * │ 第2層: 当日補正（展示タイム乖離 + 気象）              │
+ * └─────────────────────────────────────────────────────┘
+ *
+ * final_prob = normalize( prob × layer3_modifier )
+ *
+ * calcTenkaiProbsExtended との違い:
+ *   - Stage1（1号艇の独立逃げ確率モデル）を使わない
+ *   - Stage2（決まり手マッチアップによる条件付きシェア再配分）を使わない
+ *   - スリット隊形補正・連動ボーナス・1号艇キャリブレーションを使わない
+ *   - つまり「決まり手」は一切見ない。展示・気象だけをマスターデータに掛ける。
+ *
+ * [2026-07-28 バックテスト結果]
+ *   過去40日・3900レースで比較した結果、Stage1/2フル版との1着的中率の差は
+ *   ほぼ誤差範囲（全体54.15% vs 54.21%、2〜6号艇のみでも7.65% vs 7.76%＝
+ *   1791件中わずか2件差）。決まり手マッチアップモデルの実効果は極めて小さい
+ *   ことが確認されたため、まずはこちらをシンプルな代替として提供する。
+ *
+ * @param {object[]}    boats      レース艇データ（boat, name, prob 必須）
+ * @param {object|null} tenjiData  展示キャッシュ（省略可）
+ * @param {string}      venue      会場名（省略可）
+ * @returns {object[]}  final_prob / layer3_modifier 付き配列
+ */
+function calcTenkaiProbsSimple(boats, tenjiData = null, venue = null) {
+  const resolvedVenue = venue ?? DATA?.venue ?? '';
+  const L3_CLIP_MIN = 0.80;
+  const L3_CLIP_MAX = 1.20;
+
+  // 住之江は展示が特殊(タイム型式が異なる等)のため従来通り展示補正を無効化
+  const tenjiDevMap = resolvedVenue === '住之江'
+    ? (() => { const m = {}; boats.forEach(b => { m[b.boat] = 0; }); return m; })()
+    : calcTenjiDeviation(boats, tenjiData);
+
+  const weatherCtx  = buildWeatherContext(tenjiData, resolvedVenue);
+  const windBoost   = calcWindKimariBoost(weatherCtx);
+  const vKimari     = MASTER_EXT?.venue_kimari?.[resolvedVenue] || null;
+
+  // 風のkimari別ブーストは、会場の決まり手構成比で加重平均した「場全体の風係数」として全艇共通適用
+  // （決まり手マッチアップを使わないシンプル版なので、艇ごとの決まり手適性では重み付けしない）
+  let windCoef = 1.0;
+  if (vKimari) {
+    const vkTotal = Object.values(vKimari).reduce((s, v) => s + v, 0) || 1;
+    windCoef = 0;
+    for (const [k, rate] of Object.entries(vKimari)) {
+      windCoef += (rate / vkTotal) * (windBoost[k] ?? 1.0);
+    }
+  }
+
+  const layer3 = {};
+  boats.forEach(b => {
+    const tenjiMul = 1.0 + (tenjiDevMap[b.boat] ?? 0);
+    const raw = tenjiMul * windCoef;
+    layer3[b.boat] = Math.min(L3_CLIP_MAX, Math.max(L3_CLIP_MIN, raw));
+  });
+
+  const rawScores = {};
+  boats.forEach(b => { rawScores[b.boat] = Math.max(0.0001, (b.prob || 0) * layer3[b.boat]); });
+  const total = Object.values(rawScores).reduce((s, v) => s + v, 0) || 1;
+
+  return boats.map(b => ({
+    ...b,
+    final_prob:       rawScores[b.boat] / total,
+    tenkai_prob:      rawScores[b.boat] / total,
+    tenkai_score:     rawScores[b.boat] / total,
+    tenkai_prob_pure: (b.prob || 0) / (boats.reduce((s, x) => s + (x.prob || 0), 0) || 1), // 展示/気象抜きの純基準
+    layer2_modifier:  1.0, // シンプル版は決まり手マッチアップを使わないため常に中立
+    layer3_modifier:  layer3[b.boat],
+  })).sort((a, b) => b.final_prob - a.final_prob);
+}
+
+/**
  * 展開確率・基準1着率 拡張版【三層独立相対評価モデル】
  *
  * ┌─────────────────────────────────────────────────────┐
