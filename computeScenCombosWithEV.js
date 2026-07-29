@@ -869,6 +869,49 @@
     return p; // fallback（到達しないはず）
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // [2026-07-28 追加] 展開分析タブの2着率モデル（calcPlace2Probs）の較正テーブル
+  //
+  //   1着率と同様、calcPlace2Probsの生の出力も「高い予測ほど過大評価」という
+  //   同種のズレが実データ(40日3900レース、train/test分割で検証済み)で確認できた
+  //   ため、同じ区分線形補正の仕組みをそのまま適用する。
+  //   各コースとも、サンプル数が十分ある範囲（おおよそ0〜35〜45%）のみ補正し、
+  //   それ以上は生の値に戻す（データ不足のため）。
+  const PLACE2_CALIB_POINTS = {
+    1: [[0.000, 0.000], [0.068, 0.149], [0.145, 0.174], [0.237, 0.222], [0.336, 0.248], [1.000, 1.000]],
+    2: [[0.000, 0.000], [0.162, 0.197], [0.252, 0.207], [0.344, 0.281], [0.437, 0.316], [1.000, 1.000]],
+    3: [[0.000, 0.000], [0.081, 0.068], [0.159, 0.164], [0.247, 0.216], [0.340, 0.281], [0.434, 0.338], [1.000, 1.000]],
+    4: [[0.000, 0.000], [0.073, 0.103], [0.148, 0.151], [0.240, 0.210], [0.335, 0.253], [1.000, 1.000]],
+    5: [[0.000, 0.000], [0.064, 0.091], [0.137, 0.145], [0.234, 0.201], [1.000, 1.000]],
+    6: [[0.000, 0.000], [0.041, 0.071], [0.129, 0.202], [1.000, 1.000]],
+  };
+  window.PLACE2_CALIB_POINTS = PLACE2_CALIB_POINTS;
+
+  /**
+   * calcPlace2Probs() の生の出力を実測ベースで補正する（区分線形補間）。
+   * 呼び出し側で6艇分まとめて呼んだ後、合計が1になるよう再正規化すること。
+   * @param {number} rawProb  補正前のplace2_prob (0〜1)
+   * @param {number} boat     枠番（1〜6）
+   * @returns {number}        補正後の値（0〜1、要再正規化）
+   */
+  window.calibratePlace2Prob = function (rawProb, boat) {
+    if (rawProb == null || isNaN(rawProb)) return rawProb;
+    const pts = PLACE2_CALIB_POINTS[boat];
+    if (!pts || pts.length < 2) return rawProb;
+    const p = Math.max(0, Math.min(1, rawProb));
+    if (p <= pts[0][0]) return pts[0][1];
+    if (p >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+    for (let i = 1; i < pts.length; i++) {
+      const [x0, y0] = pts[i - 1];
+      const [x1, y1] = pts[i];
+      if (p <= x1) {
+        const t = (x1 - x0) > 1e-9 ? (p - x0) / (x1 - x0) : 0;
+        return y0 + t * (y1 - y0);
+      }
+    }
+    return p;
+  };
+
   /**
    * calibration.js の calcWinProbCalibrationByCourse() 結果
    * （{ course(2-6): [ {estAvg, actual, count}, ... ] }）で

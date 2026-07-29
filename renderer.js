@@ -1075,17 +1075,15 @@ function renderBuy(rno){
   const _tKey_ext  = tenjiKey(_slug_ext, DATA.date, rno);
   const _tData_ext = _tenjiCache[_tKey_ext] || null;
 
-  // ★★★ 修正⑦: 解決済みデータを明示的に渡す ★★★
-  const ranked = calcTenkaiProbsExtended(
+  // ★★★ [2026-07-28] Stage1/2（決まり手マッチアップ・スリット隊形・1号艇個別逃げ
+  //     モデル）をバックテストで検証した結果、1着的中率・Brierスコアともほぼ
+  //     改善が見られなかった（2〜6号艇のみでも1791件中2件差）ため、
+  //     マスターデータ(prob) × 展示 × 気象 のシンプル版に切り替える。
+  //     calcTenkaiProbsExtended は互換のため関数自体は残置。 ★★★
+  const ranked = calcTenkaiProbsSimple(
     rawBoats,
-    arek,
     _tData_ext,
-    DATA.venue,
-    {
-      masterExt: _masterSnapshot,
-      venueKimari: _venueKimariSnapshot,
-      innData: _innDataSnapshot,
-    }
+    DATA.venue
   );
 
   // ─ STEP2: 3スコア独立計算 → 加重合成（base:50% / tenkai:30% / tenji:20%）──
@@ -1425,7 +1423,20 @@ function renderBuy(rno){
   ranked.sort((a, b) => b.final_prob - a.final_prob);
 
   // ─ STEP3: 2着率計算（inn_2place ベース）
-  const place2Map = calcPlace2Probs(rawBoats, ranked);
+  let place2Map = calcPlace2Probs(rawBoats, ranked);
+  // [2026-07-28 追加] 実測ベースの較正（区分線形補正）を適用し、6艇合計が100%になるよう再正規化。
+  // 較正関数が未定義（古いキャッシュ等）の場合は無補正のまま続行する。
+  try {
+    if (typeof calibratePlace2Prob === 'function') {
+      const calibrated = {};
+      Object.keys(place2Map).forEach(boatStr => {
+        calibrated[boatStr] = calibratePlace2Prob(place2Map[boatStr], Number(boatStr));
+      });
+      const total2 = Object.values(calibrated).reduce((s, v) => s + (v || 0), 0) || 1;
+      Object.keys(calibrated).forEach(boatStr => { calibrated[boatStr] = calibrated[boatStr] / total2; });
+      place2Map = calibrated;
+    }
+  } catch (_p2c) { /* 較正失敗時は無補正のまま続行（フォールバック） */ }
   // place2Map を各ボートに付与して2着ランクを作成
   const ranked2 = [...ranked].map(b=>({...b, place2_prob: place2Map[b.boat]||0}));
 
@@ -1843,56 +1854,16 @@ function renderBuy(rno){
     // 基準列: probを6艇で正規化し、展開補正（tenkaiDiff）を加味した相対確率（合計100%）
     const basePct = (bt.display_base * 100).toFixed(1);
 
-    // [2026-07-27 追加] 管理者限定: 「基準」列は内部的に 純基準(_baseNorm) + 展開補正
-    // が合成された値のため、両者を分解して個別に確認できるようにする。
-    // 一般ユーザー向けの basePct（display_base）自体は一切変更しない。
+    // [2026-07-27 追加/2026-07-28 簡素化] 管理者限定: 「純基準」＝キャリブレーション適用前の
+    // 素の基準値(_baseNorm)。「基準」列(display_base)との差は、Stage1/2撤廃後は
+    // 1号艇コース別キャリブレーション補正のみに由来する（決まり手マッチアップは
+    // もう存在しないため、この差分を「展開補正」として分解する意味がなくなった）。
     let pureBaseCell;
-    let tenkaiAdjCell;
     {
       const pureBase = bt._baseNorm;
-      if (pureBase == null) {
-        pureBaseCell  = `<span style="font-size:10px;color:var(--text3)">—</span>`;
-        tenkaiAdjCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
-      } else {
-        pureBaseCell = `<span style="font-family:var(--mono)">${(pureBase * 100).toFixed(1)}%</span>`;
-        // 展開補正の実効分（display_base − 純基準）。1号艇のキャリブレーション補正
-        // 適用後の再配分もここに反映されるため、basePct = pureBasePct + この値、
-        // という関係が常に厳密に成り立つわけではない点に留意（デバッグ用の目安値）。
-        const adjPt = (bt.display_base - pureBase) * 100;
-        if (Math.abs(adjPt) < 0.05) {
-          tenkaiAdjCell = `<span style="font-size:10px;color:var(--text3)">±0.0</span>`;
-        } else {
-          const color = adjPt >= 0 ? 'var(--green)' : 'var(--red)';
-          const mark  = adjPt >= 0 ? '▲' : '▼';
-          tenkaiAdjCell = `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${adjPt >= 0 ? '+' : '−'}${Math.abs(adjPt).toFixed(1)}</span>`;
-        }
-      }
-    }
-
-    // [2026-07-28 追加] 管理者限定: 展開補正(pt)がどう作られたかの内訳。
-    // 1号艇: 逃げ確率(layer3抜き)そのもの。
-    // 2〜6号艇: 「1号艇を除いた中での素の取り分(_base_share_pure)」→
-    //   「決まり手boost(layer2_modifier)を掛けた後の取り分(_cond_share_pure)」
-    //   の変化を見れば、決まり手マッチアップが実際にシェアを増減させたかが分かる。
-    let kimariBreakdownCell;
-    if (bt.boat === 1) {
-      const np = bt._nige_prob_pure;
-      kimariBreakdownCell = (np == null)
+      pureBaseCell = (pureBase == null)
         ? `<span style="font-size:10px;color:var(--text3)">—</span>`
-        : `<span style="font-size:10px;color:var(--text2)">逃げ確率 ${(np * 100).toFixed(1)}%</span>`;
-    } else {
-      const baseShare = bt._base_share_pure;
-      const condShare  = bt._cond_share_pure;
-      const l2 = bt.layer2_modifier;
-      if (baseShare == null || condShare == null) {
-        kimariBreakdownCell = `<span style="font-size:10px;color:var(--text3)">—</span>`;
-      } else {
-        const shiftPt = (condShare - baseShare) * 100; // 決まり手boostだけによるシェア変化(pt)。1号艇分配前の値なので基準列のptとは別軸
-        const color = shiftPt >= 0 ? 'var(--green)' : 'var(--red)';
-        const mark  = shiftPt >= 0 ? '▲' : '▼';
-        kimariBreakdownCell = `<span style="font-size:10px;color:var(--text2)">×${(l2 ?? 1).toFixed(2)}</span> `
-          + `<span style="font-size:10px;font-weight:600;color:${color}">${mark}${Math.abs(shiftPt).toFixed(1)}</span>`;
-      }
+        : `<span style="font-family:var(--mono)">${(pureBase * 100).toFixed(1)}%</span>`;
     }
 
     // 展示補正列: 実際の1着率加減値のみ表示（係数は加減値の単位違いに過ぎず冗長なため廃止）
@@ -1982,8 +1953,6 @@ function renderBuy(rno){
       <td class="col-name" style="padding:4px 4px;font-size:0.82rem;text-align:center">${bt.name}</td>
       <td style="padding:4px 4px;text-align:center;font-family:var(--mono);font-size:0.82rem;color:var(--text3)">${basePct}%</td>
       <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${pureBaseCell}</td>
-      <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${tenkaiAdjCell}</td>
-      <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${kimariBreakdownCell}</td>
       <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${tenjiCorrCell}</td>
       <td class="admin-only" style="padding:4px 3px;text-align:center;font-size:0.82rem">${slitCorrCell}</td>
       <td style="padding:4px 4px;text-align:center;font-family:var(--mono);font-size:0.82rem;font-weight:700;color:var(--accent2)">${finalCell}${diffCell}</td>
@@ -2080,9 +2049,7 @@ function renderBuy(rno){
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">枠</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center">選手名</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="6艇のprobに展開補正を加味して正規化し、コース別キャリブレーションまで適用した1着率（展示・スリット補正は含まない／合計100%）">基準</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-27 追加/管理者限定] 「基準」列から展開補正を除いた純粋な能力値（_baseNorm）。今回メンバーの噛み合い・展開要因は一切含まない">純基準</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-27 追加/管理者限定] 「基準」列 − 「純基準」列（display_base − _baseNorm）。展開補正（今回メンバーの噛み合い等）が基準1着率に対して実際に何pt寄与しているかの目安値。1号艇はキャリブレーション再配分の影響も含むため参考値">展開補正</th>
-          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-28 追加/管理者限定] 展開補正の内訳。1号艇=layer3抜きの逃げ確率そのもの。2〜6号艇=「決まり手boost係数(×◯◯)」と「1号艇除外シェアから見たboost後シェア変化(pt)」。展開補正の符号がこの決まり手boostと一致しない場合、ゼロサム正規化側(1号艇の逃げ確率配分)が主因の可能性が高い">決まり手内訳</th>
+          <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-27 追加/2026-07-28 更新/管理者限定] キャリブレーション適用前の素の基準値（_baseNorm=prob/全艇合計）。「基準」列との差は1号艇コース別キャリブレーション補正のみに由来する（2026-07-28に決まり手マッチアップ・Stage1/2は撤廃済み）">純基準</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="展示タイムの係数（1.0基準: ▲=有利 ▼=不利）。（）内は実際に1着率へ加算される値のpt換算目安（renorm前のため最終確率列の差分とは一致しない参考値）">展示補正</th>
           <th class="admin-only" style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 4px;text-align:center" title="[2026-07-13〜] 実測テーブル会場（住之江/常滑/蒲郡/三国/鳴門/多摩川/平和島/戸田/芦屋/大村/児島/尼崎/びわこ/徳山/若松/丸亀/宮島/福岡）のみ表示。該当diffが属する本当の生テーブル値(整数・補間なし)。展示補正列（コース別クリップ後・補間済みの実効値）と大きく異なる艇はクリップが効いている。それ以外の会場は—">スリット補正</th>
           <th style="font-size:10px;color:var(--text3);font-weight:500;padding:3px 6px;text-align:center" title="基準・展開・展示を均等（1:1:1）で合成・正規化した最終1着率（合計は常に100%）">最終確率</th>
@@ -5342,7 +5309,7 @@ function prefillScenEVCache(dateStr) {
           const _slug   = SLUG_MAP[venue] || venue;
           const _tKey   = tenjiKey(_slug, vdata.date, rno);
           const _tData  = _tenjiCache[_tKey] || null;
-          const _ranked = calcTenkaiProbsExtended(_rd2.boats, _arek, _tData, venue);
+          const _ranked = calcTenkaiProbsSimple(_rd2.boats, _tData, venue);
           let _tsm = null;
           if (_tData) { try { _tsm = calcTenjiScore(_ranked, _tData, venue, _arek); } catch(e2){} }
           const _pTotal = _ranked.reduce((s,b)=>s+b.prob,0)||1;
