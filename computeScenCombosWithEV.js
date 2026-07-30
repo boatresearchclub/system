@@ -1465,7 +1465,7 @@
                   const _tk = (typeof tenjiKey === 'function') ? tenjiKey(_sl, vdata.date, rno) : null;
                   if (_tk && typeof _tenjiCache !== 'undefined') _tSM = _tenjiCache[_tk] || {};
                 } catch(_te) {}
-                const _ranked = calcTenkaiProbsExtended(_rd.boats, _arek, _tSM, venue);
+                const _ranked = calcTenkaiProbsSimple(_rd.boats, _tSM, venue);
                 if (_ranked && _ranked.length >= 2) {
                   // Extended版は既にfinal_probを正規化済みで返す。念のため未設定の艇だけ保険で埋める。
                   if (_ranked.some(b => b.final_prob == null)) {
@@ -1573,7 +1573,7 @@
                   const _tk2 = (typeof tenjiKey === 'function') ? tenjiKey(_sl2, vdata.date, rno) : null;
                   if (_tk2 && typeof _tenjiCache !== 'undefined') _tSM2 = _tenjiCache[_tk2] || {};
                 } catch(_te2) {}
-                const _ranked2 = calcTenkaiProbsExtended(_rd2.boats, _arek2, _tSM2, venue);
+                const _ranked2 = calcTenkaiProbsSimple(_rd2.boats, _tSM2, venue);
                 if (_ranked2 && _ranked2.length > 0) {
                   // Extended版は既にfinal_prob正規化済み。未設定艇のみ保険で埋める。
                   if (_ranked2.some(b => b.final_prob == null)) {
@@ -1728,8 +1728,7 @@
         // → calibrateCourse1Prob 等の補正テーブルが「学習する対象」と「適用される対象」が
         //   別モデルのままだと、テーブルをいくらリセット/再学習しても
         //   系統誤差が解消しない（実測: 全23会場で1号艇が平均+8.5pt過小評価、方向が完全に揃っていた）。
-        const _arek = (typeof rd.arek === 'number' && rd.arek > 0) ? rd.arek : 54.7;
-        ranked2 = calcTenkaiProbsExtended(rawBoats, _arek, tenjiScoreMap, venue);
+        ranked2 = calcTenkaiProbsSimple(rawBoats, tenjiScoreMap, venue);
         if (!ranked2 || ranked2.length < 2) return _empty;
 
         try {
