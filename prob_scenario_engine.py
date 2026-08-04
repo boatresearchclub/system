@@ -1005,36 +1005,82 @@ def calc_prob_from_master(
         cm_runs = (cm.get("runs") if cm else None) or 0
         vc_runs = (vc.get("runs") if vc else None) or 0
 
-        # [2026-07-21 変更] 「基準1着率」第1層を固定比率の3元ブレンドに変更。
-        #   全国50% + 会場30% + 直近10走(コース別)20%
-        # 全国・会場は ts_win_rate（半減期90日の時系列補正）ではなく win_rate（素の値）
-        # を使う。直近性は直近10走成分が専任で担い、二重反映を避けるため。
-        # 【背景】従来はvenue_trust（会場出走数ベースの対数信頼度）で全国/会場を
-        #   連続的に動的ブレンドしていたが、直近10走成分の追加に伴い設計をシンプル化し、
-        #   固定比率に統一した（動的trustロジックは廃止）。
+        # [2026-08-03 変更] 「基準1着率」を加算3元ブレンドから
+        #   「コース別勝率 × 当地補正係数」の乗算方式に変更。
+        #
+        # 【背景】旧方式（全国50%+会場30%+直近10走20%の加算）は、
+        #   venue_course_master が実運用マスタに未投入だったため会場成分(vc_raw)
+        #   が常にNoneとなり、実質「全国のみ」で動いていた（2026-08-03発覚）。
+        #   バックテスト（2026年1月・5〜8月、計9,547レース）で、
+        #   「コース別勝率(cm_raw) × 当地補正係数(vc_raw/cm_raw, 0.5〜2.0クリップ)」
+        #   の乗算方式を検証したところ、加算方式より一貫して精度が高かった:
+        #     Brier Score : 0.1008 → 0.0956（約5%改善）
+        #     LogLoss     : 0.3631 → 0.3160（約13%改善）
+        #     1着的中率   : 56.83% → 58.03%（+1.2pt）
+        #
+        # 【設計】
+        #   base = cm_raw（全国コース別1着率）。走数不足時は pop_avg にフォールバック。
+        #   当地補正係数 = vc_raw(会場×コース別) / cm_raw（全国コース別）を
+        #     0.5〜2.0にクリップして乗算。vc_runs不足時は補正なし(1.0)。
+        #   加算方式にあった直近10走成分は base_rate 本体には含めない
+        #     （バックテストで有意な寄与が確認できていないため）。
+        #     dq_recent10 の「データ不足」警告フラグ自体は維持する。
         cm_raw = cm.get("win_rate") if cm else None
         vc_raw = vc.get("win_rate") if vc else None
 
-        # 直近10走（コース別）。走数が10未満（そのコースをまだ10走していない）
-        # の場合は「データ不足」として0扱いにする（合意済み仕様）。
-        # 新人・移籍直後などデータ不足の選手は、この分だけ基準1着率が
-        # 機械的に下振れするが、UI側の「データ不足」バナーで警告を出すため許容する。
+        # 直近10走（コース別）。base_rate計算には使わないが、
+        # UI側「データ不足」バナー用のフラグとして維持。
         r10_raw  = cm.get("recent10_win") if cm else None
         r10_runs = cm.get("recent10_runs") if cm else None
         recent10_insufficient = not (r10_runs is not None and r10_runs >= 10 and r10_raw is not None)
         recent10_rate = 0.0 if recent10_insufficient else r10_raw
 
-        if cm_raw is not None and vc_raw is not None:
-            base_rate = cm_raw * 0.5 + vc_raw * 0.3 + recent10_rate * 0.2
-            dq = "venue_local"
-        elif vc_raw is not None:
-            # 全国データなし: 会場成分のみで長期分(0.5+0.3=0.8相当)を代用
-            base_rate = vc_raw * 0.8 + recent10_rate * 0.2
-            dq = "venue_local"
-        elif cm_raw is not None:
-            # 会場データなし: 全国成分のみで長期分(0.8相当)を代用
-            base_rate = cm_raw * 0.8 + recent10_rate * 0.2
-            dq = "course_national"
+        # [2026-08-04 再修正] 実データ確認の結果、venue_course_master の
+        # reliable(runs>=20)判定はon/offの二値で、閾値未満の走数情報を
+        # 完全に捨ててしまう（reliable比率はわずか2.3%）ことが判明。
+        # 小標本でも部分的に情報を活かしつつ過学習を避けるため、
+        # 既存の _smooth_personal_trust() による対数補間の連続信頼度加重
+        # に置き換える。
+        #   trust=0（走数<1、つまりデータ無し）  → 補正なし(local_factor=1.0)
+        #   trust=1（走数>=8）                    → フル補正
+        #   1〜8走                                → 対数補間で連続的に効かせる
+        #
+        # min_runs/full_runsは実データ(master_data.json, 2026年1月+5〜8月
+        # 計9,592レース)でグリッドサーチして決定。(1,8)〜(1,3)の範囲で
+        # 指標がほぼ横ばいのプラトーになっており、(5,20)のような厳しい閾値
+        # よりも(1,8)の方が明確に良いことを確認済み:
+        #   (5,20): Brier=0.0998 LogLoss=0.3341 的中率=56.70%
+        #   (1,8) : Brier=0.0980 LogLoss=0.3285 的中率=57.61%
+        #   参考・旧base_rate(会場成分無効時): Brier=0.1008 LogLoss=0.3633 的中率=56.81%
+        cm_reliable = bool(cm.get("reliable")) if cm else False
+        _LOCAL_FACTOR_CLIP = (0.5, 2.0)
+        _LOCAL_FACTOR_MIN_RUNS  = 1
+        _LOCAL_FACTOR_FULL_RUNS = 8
+
+        # lane_rate: 個人のコース別勝率。reliable=False(走数不足)なら
+        # 会場のそのコース平均(pop_avg)にフォールバックする。
+        if cm_raw is not None and cm_reliable:
+            lane_rate = cm_raw
+        elif pop_avg is not None:
+            lane_rate = pop_avg
+        else:
+            lane_rate = cm_raw  # pop_avgも無ければ個人値をそのまま使う（従来通り）
+
+        if lane_rate is not None:
+            local_factor = 1.0
+            if vc_raw is not None and cm_raw is not None and cm_raw > 0:
+                trust = _smooth_personal_trust(
+                    vc_runs,
+                    min_runs=_LOCAL_FACTOR_MIN_RUNS,
+                    full_runs=_LOCAL_FACTOR_FULL_RUNS,
+                )
+                if trust > 0:
+                    raw_factor = vc_raw / cm_raw
+                    # trust=0で1.0（補正なし）、trust=1でフル補正へ連続的に近づける
+                    local_factor = 1.0 + (raw_factor - 1.0) * trust
+                    local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], local_factor))
+            base_rate = lane_rate * local_factor
+            dq = "venue_local" if local_factor != 1.0 else "course_national"
         else:
             base_rate = None
 
@@ -1045,13 +1091,13 @@ def calc_prob_from_master(
         if base_rate is None:
             rv = pop_avg
             if rv is not None:
-                base_rate = rv * 0.8 + recent10_rate * 0.2
+                base_rate = rv
                 dq = "venue_stat"
         if base_rate is None:
             fallback_rate = vc.get("win_rate") if vc else None
             if fallback_rate is None and cm:
                 fallback_rate = cm.get("win_rate")
-            base_rate = (fallback_rate * 0.8 + recent10_rate * 0.2) if fallback_rate is not None else 0.001
+            base_rate = fallback_rate if fallback_rate is not None else 0.001
             dq = "insufficient"
             has_insufficient = True
 
@@ -1114,8 +1160,11 @@ def calc_prob_from_master(
         # renderer.js側の「データ不足」バナーはこのフラグも見て警告表示する。
         bt["dq_recent10"] = "insufficient" if recent10_insufficient else None
 
-        raw_win_rate = cm.get("win_rate") if cm else None
-        base_rates.append(raw_win_rate)
+        # [2026-08-03 バグ修正] 従来はここで cm.get("win_rate")（全国コース別の
+        # 素の値）を再取得して格納しており、実際にスコア計算(odds化)に使った
+        # base_rate（当地補正込み）とUI表示値が食い違っていた。
+        # 計算に使った値をそのまま格納するよう修正。
+        base_rates.append(base_rate)
 
     total = sum(scores) or 1.0
     for i, bt in enumerate(boats):
