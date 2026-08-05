@@ -119,7 +119,7 @@ function _calibrateMerged3rdEntries(entries) {
   }));
   const total = calibrated.reduce((s, x) => s + (x.r3 || 0), 0);
   if (total > 0) {
-    calibrated.forEach(x => { x.normPct = Math.round((x.r3 / total) * 1000) / 10; });
+    calibrated.forEach(x => { x.normPct = Math.round((x.r3 / total) * 100); });
     calibrated.sort((a, b) => (b.r3 || 0) - (a.r3 || 0));
   }
   return calibrated;
