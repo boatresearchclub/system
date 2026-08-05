@@ -272,8 +272,18 @@
     return null;
   }
 
-  const SCEN2_CALIB_POINTS = _loadScenCalibFromLS(_SCEN2_CALIB_LS_KEY) || [[0.00, 0.00], [1.00, 1.00]];
-  const SCEN3_CALIB_POINTS = _loadScenCalibFromLS(_SCEN3_CALIB_LS_KEY) || [[0.00, 0.00], [1.00, 1.00]];
+  // [2026-08-05 変更] デフォルト値を無補正([[0,0],[1,1]])から、実データ
+  // (81日・10,052レース、train/test 7:3検証済み)で構築した初期較正値に変更。
+  // localStorageに自己学習済みのテーブルが既にあればそちらを優先する
+  // （_loadScenCalibFromLS が非nullを返せばそちらが使われる）ため、
+  // 既存ユーザーの学習済みデータへの影響はない。新規/キャッシュクリア後の
+  // ユーザーが「無補正」からではなく、実測済みの妥当な値からスタートできる。
+  //   [2着] test Brier: 0.13778(無補正) → 0.13508(この初期値)
+  //   [3着] test Brier: 0.13997(無補正) → 0.13767(この初期値)
+  const SCEN2_CALIB_DEFAULT = [[0.000, 0.000], [0.023, 0.063], [0.059, 0.100], [0.092, 0.130], [0.126, 0.145], [0.164, 0.170], [0.211, 0.186], [0.273, 0.231], [0.385, 0.308], [1.000, 0.308]];
+  const SCEN3_CALIB_DEFAULT = [[0.000, 0.000], [0.015, 0.070], [0.056, 0.121], [0.095, 0.158], [0.123, 0.169], [0.146, 0.179], [0.169, 0.191], [0.196, 0.212], [0.248, 0.235], [1.000, 0.235]];
+  const SCEN2_CALIB_POINTS = _loadScenCalibFromLS(_SCEN2_CALIB_LS_KEY) || SCEN2_CALIB_DEFAULT;
+  const SCEN3_CALIB_POINTS = _loadScenCalibFromLS(_SCEN3_CALIB_LS_KEY) || SCEN3_CALIB_DEFAULT;
   window.SCEN2_CALIB_POINTS = SCEN2_CALIB_POINTS; // JSON書き出し用に公開
   window.SCEN3_CALIB_POINTS = SCEN3_CALIB_POINTS;
 
