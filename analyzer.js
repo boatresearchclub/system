@@ -56,6 +56,75 @@ function getCourseMaster(name, course) {
 const FIXED_3RD_RATE_BY_COURSE = { 1: 0.14, 2: 0.17, 3: 0.18, 4: 0.19, 5: 0.17, 6: 0.15 };
 const FIXED_3RD_RATE_DEFAULT   = 0.16;
 
+// ─────────────────────────────────────────────────────────────────────────
+// [2026-08-05 追加] 展開シナリオツリー画面表示用の2着/3着確率較正。
+//
+// 【対象】calcScenarioData() が返す scenarioPlace2[winner][kimari] の p2、
+// および merged3rdMap[winner][second] の normPct。いずれも「実際に発生した
+// (勝者, 決まり手, [2着])」の枝に限定して実績と突き合わせた較正値
+// （81日・10,052レース、実際の決まり手と一致する枝のみ抽出、
+// train/test 7:3で検証済み）。
+//   scenarioPlace2: test Brier 0.14841 → 0.14608
+//   merged3rdMap  : test Brier 0.18940 → 0.18501
+// weighted2nd/weighted3rd（computeScenCombosWithEV.js側）とは粒度が異なる
+// （こちらは決まり手で条件付けした値）ため、別テーブルとして持つ。
+// ─────────────────────────────────────────────────────────────────────────
+const SCENARIO_DISPLAY_PLACE2_CALIB = [
+  [0.000, 0.000], [0.006, 0.041], [0.041, 0.071], [0.082, 0.103],
+  [0.126, 0.148], [0.180, 0.188], [0.253, 0.239], [0.354, 0.322],
+  [0.557, 0.487], [1.000, 0.487],
+];
+const SCENARIO_DISPLAY_PLACE3_CALIB = [
+  [0.000, 0.000], [0.040, 0.084], [0.102, 0.148], [0.153, 0.186],
+  [0.205, 0.202], [0.258, 0.280], [0.318, 0.287], [0.393, 0.345],
+  [0.531, 0.469], [1.000, 0.469],
+];
+
+function _interpScenDisplayCalib(points, rawProb) {
+  if (rawProb == null || isNaN(rawProb)) return rawProb;
+  const p = Math.max(0, Math.min(1, rawProb));
+  if (p <= points[0][0]) return points[0][1];
+  if (p >= points[points.length - 1][0]) return points[points.length - 1][1];
+  for (let i = 1; i < points.length; i++) {
+    const [x0, y0] = points[i - 1];
+    const [x1, y1] = points[i];
+    if (p <= x1) {
+      const t = (x1 - x0) > 1e-9 ? (p - x0) / (x1 - x0) : 0;
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return p;
+}
+
+// scenarioPlace2[winner][kimari] の候補リスト（p2の合計が1になるよう正規化済み前提）
+// を較正し、合計が1になるよう再正規化して返す。
+function _calibrateScenarioPlace2List(list) {
+  if (!Array.isArray(list) || list.length === 0) return list;
+  const calibrated = list.map(item => ({
+    ...item,
+    p2: _interpScenDisplayCalib(SCENARIO_DISPLAY_PLACE2_CALIB, item.p2),
+  }));
+  const total = calibrated.reduce((s, x) => s + (x.p2 || 0), 0);
+  if (total > 0) calibrated.forEach(x => { x.p2 = x.p2 / total; });
+  return calibrated;
+}
+
+// merged3rdMap[winner][second] のエントリ（r3・score・normPct持ち）を較正し、
+// normPct(合計100)を再計算して返す。
+function _calibrateMerged3rdEntries(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return entries;
+  const calibrated = entries.map(e => ({
+    ...e,
+    r3: e.r3 != null ? _interpScenDisplayCalib(SCENARIO_DISPLAY_PLACE3_CALIB, e.r3) : e.r3,
+  }));
+  const total = calibrated.reduce((s, x) => s + (x.r3 || 0), 0);
+  if (total > 0) {
+    calibrated.forEach(x => { x.normPct = Math.round((x.r3 / total) * 1000) / 10; });
+    calibrated.sort((a, b) => (b.r3 || 0) - (a.r3 || 0));
+  }
+  return calibrated;
+}
+
 // buildWeatherBar / buildCourseOrderBanner / buildTenjiSection は renderer.js で定義済み
 
 // VENUE_TENJI_CONFIG / SUMINOE_TENJI_TABLE / VENUE_SLUG_MAP は config.js で定義済み
@@ -2706,6 +2775,20 @@ function calcScenarioData(ranked2, rawBoats, tenjiScoreMap, venueOverride, vdata
         .sort((a, b) => b.score - a.score);
       // ── 格納時点で score を正規化して normPct（整数%・合計100）を付加 ──
       merged3rdMap[ax][second.boat] = _normalizeR3Entries(r3Entries);
+    }
+  }
+
+  // ── [2026-08-05追加] 画面表示用の較正を適用 ──
+  // scenarioPlace2[winner][kimari] の各リストと、merged3rdMap[winner][second]
+  // の各エントリ配列を、実測ベースの較正テーブルで補正する。
+  for (const winnerBoat of Object.keys(scenarioPlace2)) {
+    for (const kimari of Object.keys(scenarioPlace2[winnerBoat])) {
+      scenarioPlace2[winnerBoat][kimari] = _calibrateScenarioPlace2List(scenarioPlace2[winnerBoat][kimari]);
+    }
+  }
+  for (const winnerBoat of Object.keys(merged3rdMap)) {
+    for (const secondBoat of Object.keys(merged3rdMap[winnerBoat])) {
+      merged3rdMap[winnerBoat][secondBoat] = _calibrateMerged3rdEntries(merged3rdMap[winnerBoat][secondBoat]);
     }
   }
 
