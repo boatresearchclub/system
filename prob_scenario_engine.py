@@ -36,7 +36,71 @@ DATA_COLLECT_DIR = Path(r"C:\Users\user\Desktop\データ収集\scripts")
 # 必ず更新すること（日付更新でOK）。recalc_prob.py --auto は、
 # 各JSONに埋め込まれた _logic_version とこの値を比較し、
 # 古い（または未設定=旧ロジック）ファイルだけを自動検出して再計算する。
-LOGIC_VERSION = "2026-07-22"
+LOGIC_VERSION = "2026-08-10-index-aligned"
+
+# ══════════════════════════════════════════════════════════════════
+# [2026-08-10] INDEX（index.html の runPredict()）ロジックへの一本化
+# ══════════════════════════════════════════════════════════════════
+# 唐津6R(2026-08-10)でINDEXとZIPの1着率予想が食い違った件を受け、
+# ZIPの基準1着率計算をINDEXの経験ベイズ縮小推定＋Isotonic較正に
+# 完全一本化する（ユーザー判断: 完全一致優先、st_corr/form_corr/
+# オッズ合成/venue_band3040バイアス等のZIP独自補正は撤去）。
+#
+# 【重要な制約 - 要確認】
+#   INDEXは以下の3つの独自データテーブルを使っているが、今回渡された
+#   MASTER（master_ext.json由来のスキーマ）にはこれらの直接の等価物が
+#   見当たらなかった。そのため次の代替マッピングで実装している:
+#
+#   1. globalAll = DATA.categories[grade].course_excl[c]
+#      （「グレード別・全国」のコース別勝率。SG/G1/G2/G3/一般/女子で別集計）
+#      → MASTERに全国グレード別集計テーブルが見当たらないため、
+#        venue_stats[venue].course_rates[c]（会場のコース別実測、
+#        全グレード込み）で代用している。本番のmaster_data.jsonに
+#        全国グレード別テーブルが別途あるなら、そちらに差し替えるべき。
+#
+#   2. venueCourseAgg = VENUE_COURSE_NATIONAL[venue][c] = {n, win, top3}
+#      （会場×コースの「全選手合算」実測値。個人非依存）
+#      → 同上のvenue_stats[venue].course_rates[c]で代用（rateのみでnが
+#        無いため、このレベルのshrinkは省略し実測値をそのまま
+#        venueCourseBaseWinとして使っている）。
+#
+#   3. VENUE_WOMEN_COURSE（女子戦専用の会場×コース集計）
+#      → 同様の理由でMASTERに見当たらないため、女子戦でも上記(1)(2)と
+#        同じ venue_stats[venue].course_rates[c] にフォールバックしている。
+#
+#   個人×コース成績（cm = course_master[name][c]）と
+#   当地成績（vc = venue_course_master[name][venue][c]）は
+#   MASTERに実データがあるため、INDEXのK_LANE/K_VENUEによる
+#   shrinkはそのまま忠実に再現できている。
+#
+#   → 本番のmaster_data.jsonに(1)(2)の全国集計テーブルが実在するなら、
+#      _venue_course_base_win() 内のTODOを実データに差し替えて
+#      完全再現に近づけること。
+USE_INDEX_ALIGNED_LOGIC = True  # False にすると旧ZIPロジック(st_corr/form_corr/オッズ合成/band補正)に戻る
+
+K_LANE       = 20   # 個人×コース成績を「会場考慮ベース」へ縮小する重み（INDEXと同じ）
+K_VENUE      = 15   # 当地成績を本人通算成績へ縮小する重み（INDEXと同じ）
+K_VENUE_BASE = 300  # 会場×コース実測を全国グレード平均へ縮小する重み（INDEXと同じ定数。上記TODO(1)が本番データで埋まったら有効化）
+
+# INDEX (index.html) の CALIB_WIN_CURVE をそのまま移植。
+# Isotonic回帰による較正曲線（0〜100%を1%刻みでサンプリング、85%でキャップ）。
+CALIB_WIN_CURVE = [0.0,1.5,2.5,3.7,4.1,5.4,5.6,7.1,8.1,9.4,9.5,10.9,12.0,12.1,13.0,14.8,15.3,16.6,17.3,18.4,19.7,19.7,19.9,24.5,24.5,26.1,28.0,28.0,29.4,30.5,30.5,30.5,31.3,31.3,31.3,35.1,35.1,35.1,35.5,35.5,38.0,40.6,40.6,44.6,44.6,44.6,44.9,47.8,50.1,50.6,51.2,53.9,54.1,56.1,56.2,56.4,56.4,56.5,57.0,58.7,59.6,61.7,62.5,62.5,62.5,63.8,63.8,67.5,68.3,68.3,69.1,70.1,71.4,71.4,71.4,74.7,74.7,74.7,77.1,77.1,81.4,81.4,81.4,81.4,81.8,81.8,81.8,81.8,81.8,85.0,85.0,85.0,85.0,85.0,85.0,85.0,85.0,85.0,85.0,85.0,85.0]
+
+
+def shrink(n, rate, prior_rate, k):
+    """INDEX(index.html)のshrink()と同一の経験ベイズ縮小推定。"""
+    n = n or 0
+    rate = rate or 0.0
+    return (n * rate + k * (prior_rate or 0.0)) / (n + k)
+
+
+def apply_win_calibration(pct):
+    """INDEXのapplyCalibration()と同一（0〜100スケールのpctを受け取る）。"""
+    p = max(0.0, min(100.0, pct))
+    i0 = int(math.floor(p))
+    i1 = min(100, i0 + 1)
+    frac = p - i0
+    return CALIB_WIN_CURVE[i0] + (CALIB_WIN_CURVE[i1] - CALIB_WIN_CURVE[i0]) * frac
 
 MASTER_JSON        = DATA_COLLECT_DIR / "master_data.json"
 KIMARI_TUNING_JSON = DATA_COLLECT_DIR / "kimari_tuning.json"
@@ -928,44 +992,7 @@ def _shrink_to_pop(raw_rate, runs, pop_avg, full_runs: int = 20):
     return raw_rate * trust + pop_avg * (1.0 - trust)
 
 
-# ══════════════════════════════════════════════════════════════════
-# [2026-08-10 追加] INDEX（出走表予想タブ / runPredict()）で使われている
-# 経験ベイズ縮小推定を、この Python 側の基準1着率計算に移植したもの。
-#
-# 考え方は _smooth_personal_trust + _shrink_to_pop（対数補間トラスト）と
-# 似ているが、INDEX 側は「疑似サンプル数 k」を使うシンプルな加重平均
-# （n件の実測値と、k件相当の事前値の重み付き平均）で、
-#   ・n=0 のとき shrink() = priorRate（事前値のみ）
-#   ・n→∞ のとき shrink() → rate（実測値のみ）
-#   ・n=k のとき実測と事前がちょうど半々
-# と、走数に応じて滑らかに連続的な重みが付く。閾値による二値切り替え
-# （reliable=True/False）が発生しない点が現行ロジックとの主な違い。
-#
-# USE_EBAYES_SHRINK で切り替え可能。True にすると calc_prob_from_master()
-# 内の lane_rate / local_factor 算出をこの方式に置き換える。
-# 本採用前に backtest.js / prob_calibration.py で Brier Score・LogLoss・
-# 1着的中率を必ず比較検証すること（現行ロジックも2026-08-03/08-04に
-# 同様の grid search で調整されているため、無検証での切り替えは非推奨）。
-# ══════════════════════════════════════════════════════════════════
-USE_EBAYES_SHRINK = False  # True: shrink()方式 / False: 従来の二値reliable+対数補間トラスト方式
-
-K_LANE = 20   # 個人のコース別勝率(cm_raw) → 会場のそのコース平均(pop_avg)への縮小重み（レース数換算）
-K_VENUE = 15  # 当地(会場×コース)勝率(vc_raw) → 本人の全国コース別勝率(cm_raw)への縮小重み（レース数換算）
-
-
-def shrink(n, rate, prior_rate, k):
-    """経験ベイズ縮小推定: n件の実測値rateを、重みk(疑似サンプル数)で
-    事前値prior_rateへ縮小ブレンドする。INDEX（runPredictのshrink()）と同じ式。
-    prior_rate が None の場合は縮小できないため rate をそのまま返す。
-    """
-    n = n or 0
-    rate = rate or 0.0
-    if prior_rate is None:
-        return rate
-    return (n * rate + k * prior_rate) / (n + k)
-
-
-def calc_prob_from_master(
+def _calc_prob_from_master_legacy(
     boats: list,
     venue: str,
     race_no: int = 0,
@@ -973,7 +1000,10 @@ def calc_prob_from_master(
     grade: str = "一般",
 ) -> list:
     """
-    選手ごとのコース別1着率 → prob を計算して boats に付与する。
+    [旧ロジック] 選手ごとのコース別1着率 → prob を計算して boats に付与する。
+    st_corr/form_corr/オッズ空間合成/venue_band3040バイアス補正を含む
+    ZIP独自方式（2026-07-22版）。USE_INDEX_ALIGNED_LOGIC=False で使われる。
+    バックテスト比較用に残してある。
 
     grade 優先順位:
       SG / G1  → course_master_g1（reliable=False は一般マスタにフォールバック）
@@ -1094,59 +1124,32 @@ def calc_prob_from_master(
         _LOCAL_FACTOR_MIN_RUNS  = 1
         _LOCAL_FACTOR_FULL_RUNS = 8
 
-        if USE_EBAYES_SHRINK:
-            # ── [2026-08-10] INDEX方式: 経験ベイズ縮小推定(shrink)で連続的にブレンド ──
-            # ステップ1: 個人のコース別勝率(cm_raw)を、走数(cm_runs)に応じて
-            #            会場のそのコース平均(pop_avg)へ縮小推定。
-            #            reliable二値判定は使わない（走数がそのまま連続的に効く）。
-            prior_for_lane = pop_avg if pop_avg is not None else cm_raw
-            if cm_raw is not None:
-                lane_rate = shrink(cm_runs, cm_raw, prior_for_lane, K_LANE)
-            elif pop_avg is not None:
-                lane_rate = pop_avg
-            else:
-                lane_rate = None
-
-            if lane_rate is not None:
-                local_factor = 1.0
-                if vc_raw is not None and cm_raw is not None and cm_raw > 0:
-                    # ステップ2: 当地(会場×コース)勝率を、走数(vc_runs)に応じて
-                    #            本人の全国コース別勝率(cm_raw)へ縮小推定してから係数化
-                    blended_local = shrink(vc_runs, vc_raw, cm_raw, K_VENUE)
-                    raw_factor = blended_local / cm_raw
-                    local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], raw_factor))
-                base_rate = lane_rate * local_factor
-                dq = "venue_local" if local_factor != 1.0 else "course_national"
-            else:
-                base_rate = None
+        # lane_rate: 個人のコース別勝率。reliable=False(走数不足)なら
+        # 会場のそのコース平均(pop_avg)にフォールバックする。
+        if cm_raw is not None and cm_reliable:
+            lane_rate = cm_raw
+        elif pop_avg is not None:
+            lane_rate = pop_avg
         else:
-            # ── 従来方式: reliable(走数>=20)二値 + 対数補間トラストによる当地補正 ──
-            # lane_rate: 個人のコース別勝率。reliable=False(走数不足)なら
-            # 会場のそのコース平均(pop_avg)にフォールバックする。
-            if cm_raw is not None and cm_reliable:
-                lane_rate = cm_raw
-            elif pop_avg is not None:
-                lane_rate = pop_avg
-            else:
-                lane_rate = cm_raw  # pop_avgも無ければ個人値をそのまま使う（従来通り）
+            lane_rate = cm_raw  # pop_avgも無ければ個人値をそのまま使う（従来通り）
 
-            if lane_rate is not None:
-                local_factor = 1.0
-                if vc_raw is not None and cm_raw is not None and cm_raw > 0:
-                    trust = _smooth_personal_trust(
-                        vc_runs,
-                        min_runs=_LOCAL_FACTOR_MIN_RUNS,
-                        full_runs=_LOCAL_FACTOR_FULL_RUNS,
-                    )
-                    if trust > 0:
-                        raw_factor = vc_raw / cm_raw
-                        # trust=0で1.0（補正なし）、trust=1でフル補正へ連続的に近づける
-                        local_factor = 1.0 + (raw_factor - 1.0) * trust
-                        local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], local_factor))
-                base_rate = lane_rate * local_factor
-                dq = "venue_local" if local_factor != 1.0 else "course_national"
-            else:
-                base_rate = None
+        if lane_rate is not None:
+            local_factor = 1.0
+            if vc_raw is not None and cm_raw is not None and cm_raw > 0:
+                trust = _smooth_personal_trust(
+                    vc_runs,
+                    min_runs=_LOCAL_FACTOR_MIN_RUNS,
+                    full_runs=_LOCAL_FACTOR_FULL_RUNS,
+                )
+                if trust > 0:
+                    raw_factor = vc_raw / cm_raw
+                    # trust=0で1.0（補正なし）、trust=1でフル補正へ連続的に近づける
+                    local_factor = 1.0 + (raw_factor - 1.0) * trust
+                    local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], local_factor))
+            base_rate = lane_rate * local_factor
+            dq = "venue_local" if local_factor != 1.0 else "course_national"
+        else:
+            base_rate = None
 
         # 「個人データあり」の基準: 全国/会場いずれかに _SHRINK_MIN_RUNS(3走)以上の
         # 実績があるか。無ければ「実質データなし」として警告対象にする。
@@ -1254,6 +1257,155 @@ def calc_prob_from_master(
         bt["_logic_version"] = LOGIC_VERSION
 
     return boats
+
+
+def _venue_course_base_win(venue: str, c: str) -> float | None:
+    """
+    INDEXの venueCourseBaseWin 相当（会場×コースの「全国グレード平均へ
+    縮小推定した」ベース値）。
+
+    TODO(要確認): 本来はINDEXと同じ2段構成:
+        venueCourseBaseWin = shrink(venueCourseAgg.n, venueCourseAgg.win,
+                                     globalAll.win, K_VENUE_BASE)
+      だが、MASTERに (a) 会場×コース「全選手合算」実測のn、
+      (b) 全国グレード別コース平均 globalAll、のいずれも見当たらないため、
+      venue_stats[venue].course_rates[c]（会場のコース別実測、shrink無し）
+      をそのまま代用している。
+      本番の master_data.json にこれらの全国集計テーブルがあるなら、
+      ここを差し替えて K_VENUE_BASE による shrink を有効化すること。
+    """
+    venue_stats = MASTER.get("venue_stats", {}).get(venue, {})
+    return venue_stats.get("course_rates", {}).get(c)
+
+
+def calc_prob_from_master_index_aligned(
+    boats: list,
+    venue: str,
+    race_no: int = 0,
+    is_joshi: bool = False,
+    grade: str = "一般",
+) -> list:
+    """
+    [INDEX一本化ロジック / 2026-08-10]
+    index.html の runPredict() と同一の経験ベイズ縮小推定(3段)＋
+    Isotonic較正曲線で基準1着率(bt["prob"])を計算する。
+
+    INDEXとの対応関係:
+      base   = shrink(個人×コース成績, venueCourseBaseWin, K_LANE)
+      localFactor = shrink(当地成績, 本人通算成績, K_VENUE) / 本人通算成績  [0.6, 1.6]
+      score  = base * localFactor
+      → 6艇合計100%正規化 → CALIB_WIN_CURVEで較正 → 再正規化
+
+    st_corr / form_corr / オッズ空間合成 / venue_band3040バイアス補正は
+    INDEXに存在しないため、このロジックでは一切使わない
+    （USE_INDEX_ALIGNED_LOGIC=Falseで旧ロジックに戻せる）。
+
+    grade='女子' の場合もINDEXと同様に扱うが、女子戦専用の会場×コース
+    集計(VENUE_WOMEN_COURSE)がMASTERに無いため _venue_course_base_win()
+    は一般戦と同じテーブルにフォールバックする（TODOはそちら参照）。
+    """
+    course_master_joshi = MASTER.get("course_master_joshi", {})
+    course_master_base  = MASTER.get("course_master", {})
+    course_master = course_master_joshi if (is_joshi and course_master_joshi) else course_master_base
+
+    venue_course_master = MASTER.get("venue_course_master", {})
+    player_index         = MASTER.get("player_index", {})
+
+    scores, dq_list, base_rates = [], [], []
+    has_insufficient = False
+
+    for bt in boats:
+        name   = normalize_name(bt.get("name", ""))
+        course = int(bt.get("boat", 1))
+        c      = str(course)
+
+        # ── ステップ1: 個人×コース成績を「会場考慮ベース」へ縮小推定 ──
+        cm = course_master.get(name, {}).get(c) or course_master_base.get(name, {}).get(c)
+        lane_n   = (cm.get("runs") if cm else None) or 0
+        lane_win = (cm.get("win_rate") if cm else None) or 0.0
+
+        venue_course_base_win = _venue_course_base_win(venue, c)
+        if venue_course_base_win is None:
+            # 会場データが無い場合はINDEXと同じく個人成績をそのまま使う
+            base = lane_win if lane_n > 0 else 0.001
+        else:
+            base = shrink(lane_n, lane_win, venue_course_base_win, K_LANE)
+
+        # ── ステップ2: 当地補正（当地成績を本人通算成績へ縮小推定してから比率化）──
+        vc = venue_course_master.get(name, {}).get(venue, {}).get(c)
+        venue_n   = (vc.get("runs") if vc else None) or 0
+        venue_win = (vc.get("win_rate") if vc else None) or 0.0
+
+        pi = player_index.get(name)
+        overall_win = (pi.get("overall_win") if pi else None) or 0.0
+
+        local_factor = 1.0
+        if overall_win > 0:
+            blended = shrink(venue_n, venue_win, overall_win, K_VENUE)
+            local_factor = max(0.6, min(1.6, blended / overall_win))
+
+        base_rate = max(base * local_factor, 0.001)
+
+        has_personal_data = lane_n > 0 or venue_n > 0
+        if not has_personal_data:
+            has_insufficient = True
+            dq = "insufficient"
+        else:
+            dq = "venue_local" if abs(local_factor - 1.0) > 1e-9 else "course_national"
+
+        scores.append(base_rate)
+        dq_list.append(dq)
+        base_rates.append(base_rate)
+
+    # ── ステップ3: 6艇合計100%正規化 → Isotonic較正 → 再正規化 ──
+    # （INDEXと同じ順序。score/base_rateは％表記ではなく比率のままなので
+    #   較正曲線の入出力に合わせて一時的に0-100スケールへ変換する）
+    total = sum(scores) or 1.0
+    pct_raw = [100.0 * s / total for s in scores]
+    pct_cal = [apply_win_calibration(p) for p in pct_raw]
+    cal_sum = sum(pct_cal) or 1.0
+    final_pct = [100.0 * p / cal_sum for p in pct_cal]
+
+    for i, bt in enumerate(boats):
+        bt["prob"]       = round(final_pct[i] / 100.0, 4)
+        bt["base_score"] = round(scores[i], 4)
+        bt["score"]      = round(scores[i], 4)     # 後方互換
+        bt["base_rate"]  = round(base_rates[i], 4)
+        bt["dq"]         = dq_list[i]
+
+    if has_insufficient:
+        for bt in boats:
+            bt["prob_warning"] = True
+
+    # 展開スコアを付与（INDEXの計算範囲外だが、renderer.js等の後段が
+    # 引き続き参照するため据え置き）
+    boats = _calc_tenkai_scores(boats, venue)
+
+    for bt in boats:
+        bt["_logic_version"] = LOGIC_VERSION
+
+    return boats
+
+
+def calc_prob_from_master(
+    boats: list,
+    venue: str,
+    race_no: int = 0,
+    is_joshi: bool = False,
+    grade: str = "一般",
+) -> list:
+    """
+    公開エントリポイント。USE_INDEX_ALIGNED_LOGIC で新旧ロジックを切替。
+    recalc_from_json.py / auto_push.py はこの関数名をそのまま呼ぶため、
+    呼び出し側の変更は不要。
+    """
+    if USE_INDEX_ALIGNED_LOGIC:
+        return calc_prob_from_master_index_aligned(
+            boats, venue=venue, race_no=race_no, is_joshi=is_joshi, grade=grade
+        )
+    return _calc_prob_from_master_legacy(
+        boats, venue=venue, race_no=race_no, is_joshi=is_joshi, grade=grade
+    )
 
 
 def _check_tenji_config_sync():
