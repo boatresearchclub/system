@@ -928,6 +928,43 @@ def _shrink_to_pop(raw_rate, runs, pop_avg, full_runs: int = 20):
     return raw_rate * trust + pop_avg * (1.0 - trust)
 
 
+# ══════════════════════════════════════════════════════════════════
+# [2026-08-10 追加] INDEX（出走表予想タブ / runPredict()）で使われている
+# 経験ベイズ縮小推定を、この Python 側の基準1着率計算に移植したもの。
+#
+# 考え方は _smooth_personal_trust + _shrink_to_pop（対数補間トラスト）と
+# 似ているが、INDEX 側は「疑似サンプル数 k」を使うシンプルな加重平均
+# （n件の実測値と、k件相当の事前値の重み付き平均）で、
+#   ・n=0 のとき shrink() = priorRate（事前値のみ）
+#   ・n→∞ のとき shrink() → rate（実測値のみ）
+#   ・n=k のとき実測と事前がちょうど半々
+# と、走数に応じて滑らかに連続的な重みが付く。閾値による二値切り替え
+# （reliable=True/False）が発生しない点が現行ロジックとの主な違い。
+#
+# USE_EBAYES_SHRINK で切り替え可能。True にすると calc_prob_from_master()
+# 内の lane_rate / local_factor 算出をこの方式に置き換える。
+# 本採用前に backtest.js / prob_calibration.py で Brier Score・LogLoss・
+# 1着的中率を必ず比較検証すること（現行ロジックも2026-08-03/08-04に
+# 同様の grid search で調整されているため、無検証での切り替えは非推奨）。
+# ══════════════════════════════════════════════════════════════════
+USE_EBAYES_SHRINK = False  # True: shrink()方式 / False: 従来の二値reliable+対数補間トラスト方式
+
+K_LANE = 20   # 個人のコース別勝率(cm_raw) → 会場のそのコース平均(pop_avg)への縮小重み（レース数換算）
+K_VENUE = 15  # 当地(会場×コース)勝率(vc_raw) → 本人の全国コース別勝率(cm_raw)への縮小重み（レース数換算）
+
+
+def shrink(n, rate, prior_rate, k):
+    """経験ベイズ縮小推定: n件の実測値rateを、重みk(疑似サンプル数)で
+    事前値prior_rateへ縮小ブレンドする。INDEX（runPredictのshrink()）と同じ式。
+    prior_rate が None の場合は縮小できないため rate をそのまま返す。
+    """
+    n = n or 0
+    rate = rate or 0.0
+    if prior_rate is None:
+        return rate
+    return (n * rate + k * prior_rate) / (n + k)
+
+
 def calc_prob_from_master(
     boats: list,
     venue: str,
@@ -1057,32 +1094,59 @@ def calc_prob_from_master(
         _LOCAL_FACTOR_MIN_RUNS  = 1
         _LOCAL_FACTOR_FULL_RUNS = 8
 
-        # lane_rate: 個人のコース別勝率。reliable=False(走数不足)なら
-        # 会場のそのコース平均(pop_avg)にフォールバックする。
-        if cm_raw is not None and cm_reliable:
-            lane_rate = cm_raw
-        elif pop_avg is not None:
-            lane_rate = pop_avg
-        else:
-            lane_rate = cm_raw  # pop_avgも無ければ個人値をそのまま使う（従来通り）
+        if USE_EBAYES_SHRINK:
+            # ── [2026-08-10] INDEX方式: 経験ベイズ縮小推定(shrink)で連続的にブレンド ──
+            # ステップ1: 個人のコース別勝率(cm_raw)を、走数(cm_runs)に応じて
+            #            会場のそのコース平均(pop_avg)へ縮小推定。
+            #            reliable二値判定は使わない（走数がそのまま連続的に効く）。
+            prior_for_lane = pop_avg if pop_avg is not None else cm_raw
+            if cm_raw is not None:
+                lane_rate = shrink(cm_runs, cm_raw, prior_for_lane, K_LANE)
+            elif pop_avg is not None:
+                lane_rate = pop_avg
+            else:
+                lane_rate = None
 
-        if lane_rate is not None:
-            local_factor = 1.0
-            if vc_raw is not None and cm_raw is not None and cm_raw > 0:
-                trust = _smooth_personal_trust(
-                    vc_runs,
-                    min_runs=_LOCAL_FACTOR_MIN_RUNS,
-                    full_runs=_LOCAL_FACTOR_FULL_RUNS,
-                )
-                if trust > 0:
-                    raw_factor = vc_raw / cm_raw
-                    # trust=0で1.0（補正なし）、trust=1でフル補正へ連続的に近づける
-                    local_factor = 1.0 + (raw_factor - 1.0) * trust
-                    local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], local_factor))
-            base_rate = lane_rate * local_factor
-            dq = "venue_local" if local_factor != 1.0 else "course_national"
+            if lane_rate is not None:
+                local_factor = 1.0
+                if vc_raw is not None and cm_raw is not None and cm_raw > 0:
+                    # ステップ2: 当地(会場×コース)勝率を、走数(vc_runs)に応じて
+                    #            本人の全国コース別勝率(cm_raw)へ縮小推定してから係数化
+                    blended_local = shrink(vc_runs, vc_raw, cm_raw, K_VENUE)
+                    raw_factor = blended_local / cm_raw
+                    local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], raw_factor))
+                base_rate = lane_rate * local_factor
+                dq = "venue_local" if local_factor != 1.0 else "course_national"
+            else:
+                base_rate = None
         else:
-            base_rate = None
+            # ── 従来方式: reliable(走数>=20)二値 + 対数補間トラストによる当地補正 ──
+            # lane_rate: 個人のコース別勝率。reliable=False(走数不足)なら
+            # 会場のそのコース平均(pop_avg)にフォールバックする。
+            if cm_raw is not None and cm_reliable:
+                lane_rate = cm_raw
+            elif pop_avg is not None:
+                lane_rate = pop_avg
+            else:
+                lane_rate = cm_raw  # pop_avgも無ければ個人値をそのまま使う（従来通り）
+
+            if lane_rate is not None:
+                local_factor = 1.0
+                if vc_raw is not None and cm_raw is not None and cm_raw > 0:
+                    trust = _smooth_personal_trust(
+                        vc_runs,
+                        min_runs=_LOCAL_FACTOR_MIN_RUNS,
+                        full_runs=_LOCAL_FACTOR_FULL_RUNS,
+                    )
+                    if trust > 0:
+                        raw_factor = vc_raw / cm_raw
+                        # trust=0で1.0（補正なし）、trust=1でフル補正へ連続的に近づける
+                        local_factor = 1.0 + (raw_factor - 1.0) * trust
+                        local_factor = max(_LOCAL_FACTOR_CLIP[0], min(_LOCAL_FACTOR_CLIP[1], local_factor))
+                base_rate = lane_rate * local_factor
+                dq = "venue_local" if local_factor != 1.0 else "course_national"
+            else:
+                base_rate = None
 
         # 「個人データあり」の基準: 全国/会場いずれかに _SHRINK_MIN_RUNS(3走)以上の
         # 実績があるか。無ければ「実質データなし」として警告対象にする。
